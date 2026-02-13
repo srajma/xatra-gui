@@ -27,15 +27,16 @@ if ! python -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 12) el
 fi
 
 echo "Installing backend dependencies..."
-uv pip install -r requirements.txt
+# uv pip install -r requirements.txt
+uv sync
 
 # Prefer a sibling local xatra checkout for development; otherwise use installed package from requirements.
-if [ -f "../xatra:master/pyproject.toml" ]; then
-    echo "Installing local xatra from ../xatra:master (editable)..."
-    uv pip install -e ../xatra:master
+if [ -f "../xatra.master/pyproject.toml" ]; then
+    echo "Installing local xatra from ../xatra.master (editable)..."
+    uv add --editable ../xatra.master
 elif [ -f "../xatra/pyproject.toml" ]; then
     echo "Installing local xatra from ../xatra (editable)..."
-    uv pip install -e ../xatra
+    uv add --editable ../xatra
 fi
 
 # Free the backend port if something is still running from a previous session

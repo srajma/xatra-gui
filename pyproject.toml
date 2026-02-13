@@ -1,0 +1,16 @@
+[project]
+name = ""
+version = "0.0.1"
+dependencies = [
+    "fastapi",
+    "uvicorn",
+    "python-multipart",
+    "pydantic",
+    "xatra",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+xatra = { path = "../xatra.master", editable = true }
