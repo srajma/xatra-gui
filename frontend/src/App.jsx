@@ -93,6 +93,88 @@ xatra.TitleBox("<b>My Map</b>")
   const pickerIframeRef = useRef(null);
   const territoryLibraryIframeRef = useRef(null);
 
+  const injectTerritoryLabelOverlayPatch = (html) => {
+    if (!html || typeof html !== 'string') return html;
+    const marker = '__xatraLabelOverlayPatchV1';
+    if (html.includes(marker)) return html;
+    const patchScript = `
+<script>
+(function() {
+  if (window.__xatraLabelOverlayPatchV1) return;
+  window.__xatraLabelOverlayPatchV1 = true;
+  const styles = {
+    union: { color: '#16a34a', fillColor: '#16a34a', fillOpacity: 0.2, weight: 3, opacity: 1.0 },
+    difference: { color: '#e11d48', fillColor: '#e11d48', fillOpacity: 0.2, weight: 3, opacity: 1.0 },
+    intersection: { color: '#4f46e5', fillColor: '#4f46e5', fillOpacity: 0.2, weight: 3, opacity: 1.0 },
+    pending: { color: '#0ea5e9', fillColor: '#0ea5e9', fillOpacity: 0.2, weight: 3, opacity: 1.0 },
+  };
+  const highlighted = new Map();
+
+  function reset() {
+    highlighted.forEach(function(original, layer) {
+      if (!layer) return;
+      if (layer.setStyle) {
+        layer.setStyle(original.style);
+      }
+      if (typeof layer.setOpacity === 'function' && original.opacity != null) {
+        layer.setOpacity(original.opacity);
+      }
+    });
+    highlighted.clear();
+  }
+
+  function apply(groups) {
+    reset();
+    if (!Array.isArray(groups) || groups.length === 0) return;
+    if (typeof layers === 'undefined' || !layers || !Array.isArray(layers.flags)) return;
+    const labelToStyle = new Map();
+    groups.forEach(function(group) {
+      const op = (group && group.op) ? String(group.op) : 'pending';
+      const style = styles[op] || styles.pending;
+      const names = (group && Array.isArray(group.names)) ? group.names : [];
+      names.forEach(function(name) {
+        labelToStyle.set(String(name), style);
+      });
+    });
+    if (labelToStyle.size === 0) return;
+
+    layers.flags.forEach(function(groupLayer) {
+      const label = groupLayer && groupLayer._flagData ? groupLayer._flagData.label : null;
+      if (!label || !labelToStyle.has(String(label)) || !groupLayer.eachLayer) return;
+      const style = labelToStyle.get(String(label));
+      groupLayer.eachLayer(function(subLayer) {
+        if (!subLayer || !subLayer.setStyle) return;
+        if (!highlighted.has(subLayer)) {
+          highlighted.set(subLayer, {
+            style: {
+              color: subLayer.options && subLayer.options.color,
+              fillColor: subLayer.options && subLayer.options.fillColor,
+              fillOpacity: subLayer.options && subLayer.options.fillOpacity,
+              weight: subLayer.options && subLayer.options.weight,
+              dashArray: subLayer.options && subLayer.options.dashArray,
+            },
+            opacity: (subLayer.options && subLayer.options.opacity) != null ? subLayer.options.opacity : null,
+          });
+        }
+        subLayer.setStyle(style);
+      });
+    });
+  }
+
+  window.addEventListener('message', function(event) {
+    if (event.data && event.data.type === 'setLabelSelectionOverlayFixed') {
+      apply(event.data.groups || []);
+    } else if (event.data && event.data.type === 'clearLabelSelectionOverlayFixed') {
+      reset();
+    }
+  });
+})();
+</script>
+`;
+    if (html.includes('</body>')) return html.replace('</body>', `${patchScript}</body>`);
+    return `${html}${patchScript}`;
+  };
+
   useEffect(() => {
     try {
       localStorage.setItem('xatra-theme', isDarkMode ? 'dark' : 'light');
@@ -344,7 +426,7 @@ xatra.TitleBox("<b>My Map</b>")
       ...selectionBatches,
       ...(pickedTerritorySelection.length ? [{ op: 'pending', names: pickedTerritorySelection }] : []),
     ];
-    ref.contentWindow.postMessage({ type: 'setLabelSelectionOverlay', groups }, '*');
+    ref.contentWindow.postMessage({ type: 'setLabelSelectionOverlayFixed', groups }, '*');
   }, [selectionBatches, pickedTerritorySelection, territoryLibraryHtml]);
 
   const getFlagOccurrenceInfo = (flagIndex) => {
@@ -610,7 +692,7 @@ xatra.TitleBox("<b>My Map</b>")
           if (data.error) {
               setError(data.error);
           } else if (data.html) {
-              setTerritoryLibraryHtml(data.html);
+              setTerritoryLibraryHtml(injectTerritoryLabelOverlayPatch(data.html));
               const names = Array.isArray(data.available_names) ? data.available_names : [];
               if (names.length) setTerritoryLibraryNames(names);
           }

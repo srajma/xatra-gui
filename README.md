@@ -39,9 +39,9 @@ Bugs
   - [x] This tip: `Type xatra. or map. for map methods. Use Ctrl+Space for suggestions.` should not say `map.`, it should just be `Type xatra. for map methods. Use Ctrl+Space for suggestions.`
   - [x] I have vimium installed, and when I try typing in the code editor it doesn't realize I'm in insert mode. This is weird, since I haven't had this issue on other sites using Monaco. Can you figure out how to fix this? 
     - [x] The current attempted fixes, "Force focus" etc. don't work, and should be removed to avoid bloat. Instead, just put a blaring banner at the top of the code screen saying "If you are using<b>Vimium</b>, please DISABLE it on this website."
-  - [ ] The Territory picker is bugged out:
-    - [ ] When I select and unselect a territory, it becomes black rather than returning to its original color and transparency (like it correctly does for the GADM picker).
-    - [ ] When I pan or zoom, those blackened territories become white, making them impossible to click again.
+  - [x] The Territory picker is bugged out:
+    - [x] When I select and unselect a territory, it becomes black rather than returning to its original color and transparency (like it correctly does for the GADM picker).
+    - [x] When I pan or zoom, those blackened territories become white, making them impossible to click again.
 
 Basic extensions
 - [x] Allow adding any feature to the map, not just flags and rivers. Every single method listed under #### Methods in the main README should have an appropriate interface for adding it:
