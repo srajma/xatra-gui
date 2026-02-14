@@ -206,6 +206,8 @@ Minor changes
 - [ ] Flag Territories: Better UI for "Add Operation" 
   - [ ] Instead of a single "Add Operation" link, there should be three separate links "(+) add / (-) subtract / (&) intersect".
   - [ ] Upon clicking one of those buttons (or pressing +, - or & when that particular Flag item or anything therein is focused), it should turn into a prompt asking what sort of territory you want to add, e.g. if we select subtract then it expands to "(-) subtract: _**g**adm_ / **p**olygon / **t**erritory / gr**o**up / [Esc]". It immediately focuses on gadm (so it is underlined), and we can cycle to focus a different option with arrow or tab keys. Preessing Enter or clicking one of those options selects it. Pressing the respective bolded key (g, p, t or o) also selects that option. Navigating to Esc, clicking it or pressing the escape key on the keyboard escapes this selection and returns the state of the links to "(+) add / (-) subtract / (&) intersect". So e.g. if we press "o" here it would create an entry with operation "-" and territory type "group".
+  - [ ] Upon creating this entry, its field should immediately be focused (if GADM, Polygon or Territory) or the "Define Territory" button should be focused (if Group).
+  - [ ] Likewise, when clicking "Define Territory" it should lead to the "Base: _**g**adm_ / **p**olygon / **t**erritory / gr**o**up / [Esc]" state.
 
 Design improvements
 - [x] introduce a dark mode

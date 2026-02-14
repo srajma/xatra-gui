@@ -480,6 +480,7 @@ const TerritoryBuilder = ({
   };
 
   const handleDragStart = (e, rowPath) => {
+    e.stopPropagation();
     setDraggedPath(rowPath);
     e.dataTransfer.effectAllowed = 'move';
     const serialized = JSON.stringify(rowPath);
@@ -547,10 +548,23 @@ const TerritoryBuilder = ({
 
     if (e.key === 'ArrowUp') {
       e.preventDefault();
-      movedPath = movePartByPath(rowPath, parentPath, Math.max(0, idx - 1));
+      const prev = idx > 0 ? parts[idx - 1] : null;
+      if (prev?.type === 'group') {
+        const groupPath = [...parentPath, idx - 1];
+        const groupLength = Array.isArray(prev.value) ? prev.value.length : 0;
+        movedPath = movePartByPath(rowPath, groupPath, groupLength);
+      } else {
+        movedPath = movePartByPath(rowPath, parentPath, Math.max(0, idx - 1));
+      }
     } else if (e.key === 'ArrowDown') {
       e.preventDefault();
-      movedPath = movePartByPath(rowPath, parentPath, Math.min(parts.length, idx + 2));
+      const next = idx < parts.length - 1 ? parts[idx + 1] : null;
+      if (next?.type === 'group') {
+        const groupPath = [...parentPath, idx + 1];
+        movedPath = movePartByPath(rowPath, groupPath, 0);
+      } else {
+        movedPath = movePartByPath(rowPath, parentPath, Math.min(parts.length, idx + 2));
+      }
     } else if (e.key === 'ArrowLeft') {
       if (rowPath.length < 2) return;
       e.preventDefault();
@@ -626,22 +640,25 @@ const TerritoryBuilder = ({
             <React.Fragment key={rowPathKey}>
               <div className={`${rowIndent} h-1 rounded ${isDropBefore ? 'bg-blue-500' : 'bg-transparent'}`} />
               <div
-                draggable
                 tabIndex={0}
                 data-territory-path={rowPathKey}
                 onFocusCapture={() => setSelectedPath(rowPath)}
                 onMouseDownCapture={() => setSelectedPath(rowPath)}
-                onDragStart={(e) => handleDragStart(e, rowPath)}
                 onDragOver={(e) => handleDragOverRow(e, idx)}
                 onDrop={(e) => handleDropOnRow(e, idx)}
-                onDragEnd={handleDragEnd}
                 onKeyDown={(e) => handleRowKeyDown(e, rowPath)}
                 className={`${rowIndent} bg-gray-50 p-2 rounded border transition-colors outline-none ${pathsEqual(draggedPath, rowPath) ? 'opacity-50' : ''} ${
                   dragOverGroupInsideIndex === idx ? 'border-blue-500 ring-1 ring-blue-200' : (isRowSelected ? 'border-blue-300 ring-1 ring-blue-100' : 'border-gray-200')
                 }`}
               >
                 <div className="flex gap-2 items-center">
-                  <div className="flex items-center cursor-grab active:cursor-grabbing text-gray-400 hover:text-gray-600 flex-shrink-0" title="Drag to reorder">
+                  <div
+                    draggable
+                    onDragStart={(e) => handleDragStart(e, rowPath)}
+                    onDragEnd={handleDragEnd}
+                    className="flex items-center cursor-grab active:cursor-grabbing text-gray-400 hover:text-gray-600 flex-shrink-0"
+                    title="Drag to reorder"
+                  >
                     <GripVertical size={14}/>
                   </div>
                   {idx > 0 ? (
@@ -722,21 +739,24 @@ const TerritoryBuilder = ({
           <React.Fragment key={rowPathKey}>
             <div className={`${rowIndent} h-1 rounded ${isDropBefore ? 'bg-blue-500' : 'bg-transparent'}`} />
             <div
-              draggable
               tabIndex={0}
               data-territory-path={rowPathKey}
               onFocusCapture={() => setSelectedPath(rowPath)}
               onMouseDownCapture={() => setSelectedPath(rowPath)}
-              onDragStart={(e) => handleDragStart(e, rowPath)}
               onDragOver={(e) => handleDragOverRow(e, idx)}
               onDrop={(e) => handleDropOnRow(e, idx)}
-              onDragEnd={handleDragEnd}
               onKeyDown={(e) => handleRowKeyDown(e, rowPath)}
               className={`${rowIndent} flex gap-2 items-start bg-gray-50 p-2 rounded border transition-colors outline-none ${pathsEqual(draggedPath, rowPath) ? 'opacity-50' : ''} ${
                 isRowSelected ? 'border-blue-300 ring-1 ring-blue-100' : 'border-gray-200'
               }`}
             >
-              <div className="flex items-center cursor-grab active:cursor-grabbing text-gray-400 hover:text-gray-600 flex-shrink-0" title="Drag to reorder">
+              <div
+                draggable
+                onDragStart={(e) => handleDragStart(e, rowPath)}
+                onDragEnd={handleDragEnd}
+                className="flex items-center cursor-grab active:cursor-grabbing text-gray-400 hover:text-gray-600 flex-shrink-0"
+                title="Drag to reorder"
+              >
                 <GripVertical size={14}/>
               </div>
               {idx > 0 ? (
