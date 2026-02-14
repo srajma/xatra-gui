@@ -250,7 +250,7 @@ const LayerItem = ({
                   <button 
                     onClick={togglePicking}
                     className={`p-1.5 border rounded flex-shrink-0 transition-colors ${isPicking ? 'bg-blue-100 text-blue-700 border-blue-300 ring-2 ring-blue-200' : 'bg-gray-50 text-gray-600 hover:bg-gray-100 border-gray-200'}`}
-                    title={isPicking ? "Click on map to pick location (Esc to finish)" : "Pick from map"}
+                    title={isPicking ? "Click on map to pick location (Esc to cancel)" : "Pick from map"}
                   >
                     <MousePointer2 size={16}/>
                   </button>

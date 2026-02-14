@@ -80,7 +80,6 @@ xatra.TitleBox("<b>My Map</b>")
   const [isMouseDown, setIsMouseDown] = useState(false);
   const [pickedGadmSelection, setPickedGadmSelection] = useState([]);
   const [pickedTerritorySelection, setPickedTerritorySelection] = useState([]);
-  const [selectionBatches, setSelectionBatches] = useState([]);
   const [referencePickTarget, setReferencePickTarget] = useState(null); // { kind: 'gadm'|'river'|'territory', flagIndex?, layerIndex?, partIndex? }
   const [countryLevelOptions, setCountryLevelOptions] = useState({});
   const [showShortcutHelp, setShowShortcutHelp] = useState(false);
@@ -319,6 +318,18 @@ xatra.TitleBox("<b>My Map</b>")
               return newPoints;
             });
           } else if (key === 'Escape') {
+            if (activePicker.context === 'reference-gadm' && referencePickTarget?.kind === 'gadm') {
+              setPickedGadmSelection([]);
+              setPickerTargetValues(referencePickTarget, []);
+              hoverPickRef.current = '';
+              return;
+            }
+            if (activePicker.context === 'territory-library' && referencePickTarget?.kind === 'territory') {
+              setPickedTerritorySelection([]);
+              setPickerTargetValues(referencePickTarget, []);
+              hoverPickRef.current = '';
+              return;
+            }
             setActivePicker(null);
             setDraftPoints([]);
             setFreehandModifierPressed(false);
@@ -345,17 +356,22 @@ xatra.TitleBox("<b>My Map</b>")
                 hoverPickRef.current = sig;
                 setPickedGadmSelection((prev) => {
                   const exists = prev.some((x) => x.gid === gid);
+                  let next;
                   if (data.hoverMode === 'add') {
-                    return exists ? prev : [...prev, { gid, name: data.name || '' }];
+                    next = exists ? prev : [...prev, { gid, name: data.name || '' }];
+                  } else {
+                    next = exists ? prev.filter((x) => x.gid !== gid) : prev;
                   }
-                  return exists ? prev.filter((x) => x.gid !== gid) : prev;
+                  setPickerTargetValues(referencePickTarget, next.map((x) => x.gid));
+                  return next;
                 });
               } else {
                 hoverPickRef.current = '';
                 setPickedGadmSelection((prev) => {
                   const exists = prev.some((x) => x.gid === gid);
-                  if (exists) return prev.filter((x) => x.gid !== gid);
-                  return [...prev, { gid, name: data.name || '' }];
+                  const next = exists ? prev.filter((x) => x.gid !== gid) : [...prev, { gid, name: data.name || '' }];
+                  setPickerTargetValues(referencePickTarget, next.map((x) => x.gid));
+                  return next;
                 });
               }
           } else if (data.featureType === 'river' && data.id && activePicker?.context === 'reference-river' && referencePickTarget?.kind === 'river') {
@@ -384,17 +400,22 @@ xatra.TitleBox("<b>My Map</b>")
                 hoverPickRef.current = sig;
                 setPickedTerritorySelection((prev) => {
                   const exists = prev.includes(name);
+                  let next;
                   if (data.hoverMode === 'add') {
-                    return exists ? prev : [...prev, name];
+                    next = exists ? prev : [...prev, name];
+                  } else {
+                    next = exists ? prev.filter((x) => x !== name) : prev;
                   }
-                  return exists ? prev.filter((x) => x !== name) : prev;
+                  setPickerTargetValues(referencePickTarget, next);
+                  return next;
                 });
               } else {
                 hoverPickRef.current = '';
                 setPickedTerritorySelection((prev) => {
                   const exists = prev.includes(name);
-                  if (exists) return prev.filter((x) => x !== name);
-                  return [...prev, name];
+                  const next = exists ? prev.filter((x) => x !== name) : [...prev, name];
+                  setPickerTargetValues(referencePickTarget, next);
+                  return next;
                 });
               }
           }
@@ -439,21 +460,19 @@ xatra.TitleBox("<b>My Map</b>")
     const ref = pickerIframeRef.current;
     if (!ref || !ref.contentWindow) return;
     const groups = [
-      ...selectionBatches,
       ...(pickedGadmSelection.length ? [{ op: 'pending', gids: pickedGadmSelection.map((x) => x.gid) }] : []),
     ];
     ref.contentWindow.postMessage({ type: 'setSelectionOverlay', groups }, '*');
-  }, [selectionBatches, pickedGadmSelection, pickerHtml]);
+  }, [pickedGadmSelection, pickerHtml]);
 
   useEffect(() => {
     const ref = territoryLibraryIframeRef.current;
     if (!ref || !ref.contentWindow) return;
     const groups = [
-      ...selectionBatches,
       ...(pickedTerritorySelection.length ? [{ op: 'pending', names: pickedTerritorySelection }] : []),
     ];
     ref.contentWindow.postMessage({ type: 'setLabelSelectionOverlayFixed', groups }, '*');
-  }, [selectionBatches, pickedTerritorySelection, territoryLibraryHtml]);
+  }, [pickedTerritorySelection, territoryLibraryHtml]);
 
   const getFlagOccurrenceInfo = (flagIndex) => {
     const target = builderElements[flagIndex];
@@ -474,7 +493,6 @@ xatra.TitleBox("<b>My Map</b>")
     setReferencePickTarget(target);
     setPickedGadmSelection([]);
     setPickedTerritorySelection([]);
-    setSelectionBatches([]);
     hoverPickRef.current = '';
     setDraftPoints([]);
     const isTerritoryPick = target.kind === 'territory';
@@ -488,130 +506,102 @@ xatra.TitleBox("<b>My Map</b>")
     if (isTerritoryPick && !territoryLibraryHtml) {
       renderTerritoryLibrary(territoryLibrarySource);
     }
+    if (target.kind === 'gadm') {
+      const initial = getCurrentPickerValues(target);
+      setPickedGadmSelection(initial.map((gid) => ({ gid, name: '' })));
+    } else if (target.kind === 'territory') {
+      setPickedTerritorySelection(getCurrentPickerValues(target));
+    }
   };
 
-  const normalizeFlagPartsForApply = (rawValue) => {
+  const normalizePickerValues = (values) => (
+    Array.from(new Set((values || []).map((v) => String(v || '').trim()).filter(Boolean)))
+  );
+
+  const normalizeFlagPartsForPicker = (rawValue) => {
     if (Array.isArray(rawValue)) return [...rawValue];
     if (!rawValue) return [];
     return [{ op: 'union', type: 'gadm', value: rawValue }];
   };
 
-  const isBlankTerritoryPart = (part, type) => (
-    !!part &&
-    part.type === type &&
-    (
-      part.value == null ||
-      (Array.isArray(part.value) ? part.value.filter(Boolean).length === 0 : String(part.value).trim() === '')
-    )
-  );
-
-  const asSingleOrList = (items) => (
-    items.length === 1 ? items[0] : items
-  );
-
-  const applyPickedGadmsToTarget = (op) => {
-    if (!pickedGadmSelection.length || referencePickTarget?.kind !== 'gadm') return;
-    const targetFlagIndex = referencePickTarget.flagIndex;
-    if (targetFlagIndex == null) return;
-    const picked = pickedGadmSelection.filter((x) => x?.gid);
-    if (!picked.length) return;
-    setBuilderElements((prev) => {
-      const next = [...prev];
-      const target = next[targetFlagIndex];
-      if (!target || target.type !== 'flag') return prev;
-      const currentParts = normalizeFlagPartsForApply(target.value).filter((part) => !isBlankTerritoryPart(part, 'gadm'));
-      const partPath = Array.isArray(referencePickTarget.partPath) ? referencePickTarget.partPath : null;
-      const targetPartIndex = Number.isInteger(referencePickTarget.partIndex) ? referencePickTarget.partIndex : -1;
-      const nextOp = (currentParts.length === 0 || targetPartIndex === 0 || (Array.isArray(partPath) && partPath.length === 1 && partPath[0] === 0)) ? 'union' : op;
-      const nextPart = { op: nextOp, type: 'gadm', value: asSingleOrList(picked.map((x) => x.gid)) };
-      const setPartAtPath = (parts, path, part, depth = 0) => {
-        if (!Array.isArray(path) || path.length === 0) return null;
-        const idx = path[depth];
-        if (!Array.isArray(parts) || idx < 0 || idx >= parts.length) return null;
-        const nextParts = [...parts];
-        const current = nextParts[idx];
-        if (!current || typeof current !== 'object') return null;
-        if (depth === path.length - 1) {
-          if (current.type !== 'gadm') return null;
-          nextParts[idx] = part;
-          return nextParts;
-        }
-        if (current.type !== 'group' || !Array.isArray(current.value)) return null;
-        const nested = setPartAtPath(current.value, path, part, depth + 1);
-        if (!nested) return null;
-        nextParts[idx] = { ...current, value: nested };
-        return nextParts;
-      };
-      const patched = setPartAtPath(currentParts, partPath, nextPart);
-      if (patched) {
-        next[targetFlagIndex] = { ...target, value: patched };
-      } else if (targetPartIndex >= 0 && targetPartIndex < currentParts.length && currentParts[targetPartIndex]?.type === 'gadm') {
-        currentParts[targetPartIndex] = nextPart;
-        next[targetFlagIndex] = { ...target, value: currentParts };
-      } else {
-        currentParts.push(nextPart);
-        next[targetFlagIndex] = { ...target, value: currentParts };
-      }
-      return next;
-    });
-    setSelectionBatches((prev) => [...prev, { op, gids: picked.map((x) => x.gid) }]);
-    setPickedGadmSelection([]);
-    hoverPickRef.current = '';
+  const readPartAtPath = (parts, path, depth = 0) => {
+    if (!Array.isArray(parts) || !Array.isArray(path) || path.length === 0) return null;
+    const idx = path[depth];
+    if (!Number.isInteger(idx) || idx < 0 || idx >= parts.length) return null;
+    const part = parts[idx];
+    if (!part || typeof part !== 'object') return null;
+    if (depth === path.length - 1) return part;
+    if (part.type !== 'group' || !Array.isArray(part.value)) return null;
+    return readPartAtPath(part.value, path, depth + 1);
   };
 
-  const applyPickedTerritoriesToTarget = (op) => {
-    if (!pickedTerritorySelection.length || referencePickTarget?.kind !== 'territory') return;
-    const targetFlagIndex = referencePickTarget.flagIndex;
-    if (targetFlagIndex == null) return;
-    const picked = pickedTerritorySelection.filter(Boolean);
-    if (!picked.length) return;
+  const setPartAtPath = (parts, path, updatePart, depth = 0) => {
+    if (!Array.isArray(parts) || !Array.isArray(path) || path.length === 0) return null;
+    const idx = path[depth];
+    if (!Number.isInteger(idx) || idx < 0 || idx >= parts.length) return null;
+    const nextParts = [...parts];
+    const part = nextParts[idx];
+    if (!part || typeof part !== 'object') return null;
+    if (depth === path.length - 1) {
+      const updated = updatePart(part);
+      if (!updated) return null;
+      nextParts[idx] = updated;
+      return nextParts;
+    }
+    if (part.type !== 'group' || !Array.isArray(part.value)) return null;
+    const nested = setPartAtPath(part.value, path, updatePart, depth + 1);
+    if (!nested) return null;
+    nextParts[idx] = { ...part, value: nested };
+    return nextParts;
+  };
+
+  const getCurrentPickerValues = (target) => {
+    if (!target || (target.kind !== 'gadm' && target.kind !== 'territory')) return [];
+    const flagIndex = target.flagIndex;
+    if (!Number.isInteger(flagIndex)) return [];
+    const flag = builderElements[flagIndex];
+    if (!flag || flag.type !== 'flag') return [];
+    const parts = normalizeFlagPartsForPicker(flag.value);
+    const path = Array.isArray(target.partPath)
+      ? target.partPath
+      : (Number.isInteger(target.partIndex) ? [target.partIndex] : []);
+    const part = readPartAtPath(parts, path);
+    if (!part) return [];
+    const expectedType = target.kind === 'gadm' ? 'gadm' : 'predefined';
+    if (part.type !== expectedType) return [];
+    return normalizePickerValues(Array.isArray(part.value) ? part.value : [part.value]);
+  };
+
+  const setPickerTargetValues = (target, rawValues) => {
+    if (!target || (target.kind !== 'gadm' && target.kind !== 'territory')) return;
+    const targetType = target.kind === 'gadm' ? 'gadm' : 'predefined';
+    const values = normalizePickerValues(rawValues);
     setBuilderElements((prev) => {
       const next = [...prev];
-      const target = next[targetFlagIndex];
-      if (!target || target.type !== 'flag') return prev;
-      const currentParts = normalizeFlagPartsForApply(target.value).filter((part) => !isBlankTerritoryPart(part, 'predefined'));
-      const partPath = Array.isArray(referencePickTarget.partPath) ? referencePickTarget.partPath : null;
-      const targetPartIndex = Number.isInteger(referencePickTarget.partIndex) ? referencePickTarget.partIndex : -1;
-      const nextOp = (currentParts.length === 0 || targetPartIndex === 0 || (Array.isArray(partPath) && partPath.length === 1 && partPath[0] === 0)) ? 'union' : op;
-      const nextPart = { op: nextOp, type: 'predefined', value: asSingleOrList(picked) };
-      const setPartAtPath = (parts, path, part, depth = 0) => {
-        if (!Array.isArray(path) || path.length === 0) return null;
-        const idx = path[depth];
-        if (!Array.isArray(parts) || idx < 0 || idx >= parts.length) return null;
-        const nextParts = [...parts];
-        const current = nextParts[idx];
-        if (!current || typeof current !== 'object') return null;
-        if (depth === path.length - 1) {
-          if (current.type !== 'predefined') return null;
-          nextParts[idx] = part;
-          return nextParts;
-        }
-        if (current.type !== 'group' || !Array.isArray(current.value)) return null;
-        const nested = setPartAtPath(current.value, path, part, depth + 1);
-        if (!nested) return null;
-        nextParts[idx] = { ...current, value: nested };
-        return nextParts;
-      };
-      const patched = setPartAtPath(currentParts, partPath, nextPart);
+      const flagIndex = target.flagIndex;
+      if (!Number.isInteger(flagIndex)) return prev;
+      const flag = next[flagIndex];
+      if (!flag || flag.type !== 'flag') return prev;
+      const parts = normalizeFlagPartsForPicker(flag.value);
+      const path = Array.isArray(target.partPath)
+        ? target.partPath
+        : (Number.isInteger(target.partIndex) ? [target.partIndex] : []);
+      const nextValue = values.length <= 1 ? (values[0] || '') : values;
+      const patched = setPartAtPath(parts, path, (part) => {
+        if (part.type !== targetType) return null;
+        return { ...part, value: nextValue };
+      });
       if (patched) {
-        next[targetFlagIndex] = { ...target, value: patched };
-      } else if (targetPartIndex >= 0 && targetPartIndex < currentParts.length && currentParts[targetPartIndex]?.type === 'predefined') {
-        currentParts[targetPartIndex] = nextPart;
-        next[targetFlagIndex] = { ...target, value: currentParts };
-      } else {
-        currentParts.push(nextPart);
-        next[targetFlagIndex] = { ...target, value: currentParts };
+        next[flagIndex] = { ...flag, value: patched };
+        return next;
       }
-      return next;
+      return prev;
     });
-    setSelectionBatches((prev) => [...prev, { op, names: picked }]);
-    setPickedTerritorySelection([]);
   };
 
   const clearReferenceSelection = () => {
     setPickedGadmSelection([]);
     setPickedTerritorySelection([]);
-    setSelectionBatches([]);
     hoverPickRef.current = '';
   };
 
@@ -647,7 +637,17 @@ xatra.TitleBox("<b>My Map</b>")
       const isMeta = e.ctrlKey || e.metaKey;
       const allowPickerMapShortcutInInput = activeTab === 'builder' && isMeta && e.code === 'Space';
       if (editableTarget && !allowPickerMapShortcutInInput) return;
-      if (e.key === '?') {
+      if (e.key === 'Escape' && activePicker?.context === 'reference-gadm' && referencePickTarget?.kind === 'gadm') {
+        e.preventDefault();
+        setPickedGadmSelection([]);
+        setPickerTargetValues(referencePickTarget, []);
+        hoverPickRef.current = '';
+      } else if (e.key === 'Escape' && activePicker?.context === 'territory-library' && referencePickTarget?.kind === 'territory') {
+        e.preventDefault();
+        setPickedTerritorySelection([]);
+        setPickerTargetValues(referencePickTarget, []);
+        hoverPickRef.current = '';
+      } else if (e.key === '?') {
         e.preventDefault();
         setShowShortcutHelp((prev) => !prev);
       } else if (isMeta && e.key === '1') {
@@ -698,7 +698,7 @@ xatra.TitleBox("<b>My Map</b>")
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [activeTab, code, predefinedCode, builderElements, builderOptions, activePreviewTab, territoryLibrarySource]);
+  }, [activeTab, code, predefinedCode, builderElements, builderOptions, activePreviewTab, territoryLibrarySource, activePicker, referencePickTarget]);
 
   const handleGetCurrentView = () => {
     const ref = activePreviewTab === 'picker' ? pickerIframeRef : activePreviewTab === 'library' ? territoryLibraryIframeRef : iframeRef;
@@ -1444,36 +1444,7 @@ xatra.TitleBox("<b>My Map</b>")
                             ))}
                           </div>
                         )}
-                        <div className="flex gap-1.5">
-                          <button
-                            onClick={() => applyPickedGadmsToTarget('union')}
-                            disabled={!pickedGadmSelection.length || referencePickTarget?.kind !== 'gadm'}
-                            className="flex-1 py-1 px-2 text-[11px] bg-green-600 hover:bg-green-700 text-white rounded disabled:opacity-50"
-                          >
-                            + Add
-                          </button>
-                          <button
-                            onClick={() => applyPickedGadmsToTarget('difference')}
-                            disabled={!pickedGadmSelection.length || referencePickTarget?.kind !== 'gadm'}
-                            className="flex-1 py-1 px-2 text-[11px] bg-rose-600 hover:bg-rose-700 text-white rounded disabled:opacity-50"
-                          >
-                            - Subtract
-                          </button>
-                          <button
-                            onClick={() => applyPickedGadmsToTarget('intersection')}
-                            disabled={!pickedGadmSelection.length || referencePickTarget?.kind !== 'gadm'}
-                            className="flex-1 py-1 px-2 text-[11px] bg-indigo-600 hover:bg-indigo-700 text-white rounded disabled:opacity-50"
-                          >
-                            & Intersect
-                          </button>
-                          <button
-                            onClick={clearReferenceSelection}
-                            disabled={!pickedGadmSelection.length && selectionBatches.length === 0}
-                            className="py-1 px-2 text-[11px] border rounded bg-white hover:bg-gray-50 disabled:opacity-50"
-                          >
-                            Clear
-                          </button>
-                        </div>
+                        <div className="text-[10px] text-gray-500 italic">Selections update the target field immediately. Press `Esc` to clear.</div>
                     </div>
                 </div>
             </div>
@@ -1567,36 +1538,7 @@ xatra.TitleBox("<b>My Map</b>")
                         ))}
                       </div>
                     )}
-                    <div className="flex gap-1.5">
-                      <button
-                        onClick={() => applyPickedTerritoriesToTarget('union')}
-                        disabled={!pickedTerritorySelection.length || referencePickTarget?.kind !== 'territory'}
-                        className="flex-1 py-1 px-2 text-[11px] bg-green-600 hover:bg-green-700 text-white rounded disabled:opacity-50"
-                      >
-                        + Add
-                      </button>
-                      <button
-                        onClick={() => applyPickedTerritoriesToTarget('difference')}
-                        disabled={!pickedTerritorySelection.length || referencePickTarget?.kind !== 'territory'}
-                        className="flex-1 py-1 px-2 text-[11px] bg-rose-600 hover:bg-rose-700 text-white rounded disabled:opacity-50"
-                      >
-                        - Subtract
-                      </button>
-                      <button
-                        onClick={() => applyPickedTerritoriesToTarget('intersection')}
-                        disabled={!pickedTerritorySelection.length || referencePickTarget?.kind !== 'territory'}
-                        className="flex-1 py-1 px-2 text-[11px] bg-indigo-600 hover:bg-indigo-700 text-white rounded disabled:opacity-50"
-                      >
-                        & Intersect
-                      </button>
-                      <button
-                        onClick={clearReferenceSelection}
-                        disabled={!pickedTerritorySelection.length && selectionBatches.length === 0}
-                        className="py-1 px-2 text-[11px] border rounded bg-white hover:bg-gray-50 disabled:opacity-50"
-                      >
-                        Clear
-                      </button>
-                    </div>
+                    <div className="text-[10px] text-gray-500 italic">Selections update the target field immediately. Press `Esc` to clear.</div>
                 </div>
                 <button 
                     onClick={() => renderTerritoryLibrary(territoryLibrarySource)}
@@ -1648,7 +1590,7 @@ xatra.TitleBox("<b>My Map</b>")
                             {' · '}
                             <kbd className="bg-amber-600 px-1.5 py-0.5 rounded">Ctrl/Cmd</kbd> hold + drag for freehand
                             {' · '}
-                            <kbd className="bg-amber-600 px-1.5 py-0.5 rounded">Esc</kbd> cancel
+                            <kbd className="bg-amber-600 px-1.5 py-0.5 rounded">Esc</kbd> finish
                         </div>
                     </div>
                 </div>
@@ -1657,7 +1599,7 @@ xatra.TitleBox("<b>My Map</b>")
                 <div className="absolute inset-0 z-30 pointer-events-none flex items-start justify-center pt-8">
                     <div className="bg-amber-500 text-white px-6 py-4 rounded-lg shadow-2xl border-2 border-amber-600 font-semibold text-center max-w-2xl animate-pulse">
                         <div className="text-sm">
-                          Click regions to toggle selection. Hold <kbd className="bg-amber-600 px-1.5 py-0.5 rounded">Ctrl/Cmd</kbd> and move to paint-select, hold <kbd className="bg-amber-600 px-1.5 py-0.5 rounded">Alt</kbd> and move to paint-unselect.
+                          Click regions to toggle selection. Hold <kbd className="bg-amber-600 px-1.5 py-0.5 rounded">Ctrl/Cmd</kbd> and move to paint-select, hold <kbd className="bg-amber-600 px-1.5 py-0.5 rounded">Alt</kbd> and move to paint-unselect, press <kbd className="bg-amber-600 px-1.5 py-0.5 rounded">Esc</kbd> to clear.
                         </div>
                     </div>
                 </div>

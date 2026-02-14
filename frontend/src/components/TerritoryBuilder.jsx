@@ -420,6 +420,78 @@ const TerritoryBuilder = ({
       {parts.map((part, idx) => {
         const rowPath = pathForIndex(idx);
         const isLibraryPickingThisPart = !!(isLibraryPicking && Array.isArray(activePicker?.target?.partPath) && activePicker.target.partPath.join('.') === rowPath.join('.'));
+        const rowIndent = pathPrefix.length > 0 ? 'ml-3' : '';
+
+        if (part.type === 'group') {
+          return (
+            <div
+              key={idx}
+              draggable
+              tabIndex={0}
+              onDragStart={(e) => handleDragStart(e, idx)}
+              onDragOver={(e) => handleDragOver(e, idx)}
+              onDragLeave={handleDragLeave}
+              onDrop={(e) => handleDrop(e, idx)}
+              onDragEnd={handleDragEnd}
+              onKeyDown={(e) => handleRowKeyDown(e, idx)}
+              className={`${rowIndent} bg-gray-50 p-2 rounded border transition-colors ${draggedIndex === idx ? 'opacity-50' : ''} ${dragOverIndex === idx ? 'border-blue-400 ring-1 ring-blue-200' : 'border-gray-200'}`}
+            >
+              <div className="flex gap-2 items-center">
+                <div className="flex items-center cursor-grab active:cursor-grabbing text-gray-400 hover:text-gray-600 flex-shrink-0" title="Drag to reorder">
+                  <GripVertical size={14}/>
+                </div>
+                {idx > 0 ? (
+                  <select
+                    value={part.op}
+                    onChange={(e) => updatePart(idx, { op: e.target.value })}
+                    className="text-xs p-1 border rounded bg-white w-16 flex-shrink-0"
+                  >
+                    <option value="union">∪ (+)</option>
+                    <option value="difference">∖ (-)</option>
+                    <option value="intersection">∩ (&)</option>
+                  </select>
+                ) : (
+                  <div className="w-16 text-xs p-1 text-center font-bold text-gray-500 bg-gray-100 rounded flex-shrink-0 border border-gray-200">Base</div>
+                )}
+                <select
+                  value={part.type}
+                  onChange={(e) => {
+                    const nextType = e.target.value;
+                    if (nextType === 'group') updatePart(idx, { type: 'group', value: [] });
+                    else if (nextType === 'polygon') updatePart(idx, { type: 'polygon', value: '' });
+                    else updatePart(idx, { type: nextType, value: '' });
+                  }}
+                  className="text-xs p-1 border rounded bg-white w-24 flex-shrink-0"
+                >
+                  <option value="gadm">GADM</option>
+                  <option value="polygon">Polygon</option>
+                  <option value="predefined">Territory</option>
+                  <option value="group">Group...</option>
+                </select>
+                <div className="text-xs text-gray-500 font-medium">Nested Group</div>
+                <button onClick={() => removePart(idx)} className="text-red-400 hover:text-red-600 p-1 ml-auto flex-shrink-0">
+                  <Trash2 size={12}/>
+                </button>
+              </div>
+              <div className="mt-2 pl-3 border-l-2 border-gray-300">
+                <TerritoryBuilder
+                  value={Array.isArray(part.value) ? part.value : []}
+                  onChange={(next) => updatePart(idx, { value: next })}
+                  lastMapClick={lastMapClick}
+                  activePicker={activePicker}
+                  setActivePicker={setActivePicker}
+                  draftPoints={draftPoints}
+                  setDraftPoints={setDraftPoints}
+                  parentId={parentId}
+                  predefinedCode={predefinedCode}
+                  onStartReferencePick={onStartReferencePick}
+                  onStartTerritoryLibraryPick={onStartTerritoryLibraryPick}
+                  pathPrefix={rowPath}
+                />
+              </div>
+            </div>
+          );
+        }
 
         return (
           <div
@@ -432,7 +504,7 @@ const TerritoryBuilder = ({
             onDrop={(e) => handleDrop(e, idx)}
             onDragEnd={handleDragEnd}
             onKeyDown={(e) => handleRowKeyDown(e, idx)}
-            className={`flex gap-2 items-start bg-gray-50 p-2 rounded border transition-colors ${draggedIndex === idx ? 'opacity-50' : ''} ${dragOverIndex === idx ? 'border-blue-400 ring-1 ring-blue-200' : 'border-gray-200'}`}
+            className={`${rowIndent} flex gap-2 items-start bg-gray-50 p-2 rounded border transition-colors ${draggedIndex === idx ? 'opacity-50' : ''} ${dragOverIndex === idx ? 'border-blue-400 ring-1 ring-blue-200' : 'border-gray-200'}`}
           >
             <div className="flex items-center cursor-grab active:cursor-grabbing text-gray-400 hover:text-gray-600 flex-shrink-0" title="Drag to reorder">
               <GripVertical size={14}/>
@@ -523,23 +595,6 @@ const TerritoryBuilder = ({
                   >
                     <MousePointer2 size={12}/>
                   </button>
-                </div>
-              ) : part.type === 'group' ? (
-                <div className="border border-gray-200 rounded bg-white p-2">
-                  <TerritoryBuilder
-                    value={Array.isArray(part.value) ? part.value : []}
-                    onChange={(next) => updatePart(idx, { value: next })}
-                    lastMapClick={lastMapClick}
-                    activePicker={activePicker}
-                    setActivePicker={setActivePicker}
-                    draftPoints={draftPoints}
-                    setDraftPoints={setDraftPoints}
-                    parentId={parentId}
-                    predefinedCode={predefinedCode}
-                    onStartReferencePick={onStartReferencePick}
-                    onStartTerritoryLibraryPick={onStartTerritoryLibraryPick}
-                    pathPrefix={rowPath}
-                  />
                 </div>
               ) : (
                 <div className="flex gap-1 items-start">
