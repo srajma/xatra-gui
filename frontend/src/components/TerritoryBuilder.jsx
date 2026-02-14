@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Plus, Trash2, MousePointer2, GripVertical, X } from 'lucide-react';
 
+const DRAG_PATH_MIME = 'application/x-xatra-territory-path';
+
 const toList = (raw) => {
   if (Array.isArray(raw)) return raw.map((x) => String(x || '').trim()).filter(Boolean);
   if (raw == null) return [];
@@ -46,6 +48,79 @@ const normalizeParts = (value) => {
     return [{ op: 'union', type: 'gadm', value }];
   }
   return [];
+};
+
+const pathsEqual = (a, b) => (
+  Array.isArray(a) &&
+  Array.isArray(b) &&
+  a.length === b.length &&
+  a.every((v, i) => v === b[i])
+);
+
+const isPrefixPath = (prefix, full) => (
+  Array.isArray(prefix) &&
+  Array.isArray(full) &&
+  prefix.length <= full.length &&
+  prefix.every((v, i) => v === full[i])
+);
+
+const removeAtPath = (parts, path) => {
+  if (!Array.isArray(parts) || !Array.isArray(path) || path.length === 0) return null;
+  const next = [...parts];
+  const [head, ...rest] = path;
+  if (!Number.isInteger(head) || head < 0 || head >= next.length) return null;
+  if (rest.length === 0) {
+    const [removed] = next.splice(head, 1);
+    return { parts: next, removed };
+  }
+  const target = next[head];
+  if (!target || target.type !== 'group') return null;
+  const nested = removeAtPath(Array.isArray(target.value) ? target.value : [], rest);
+  if (!nested) return null;
+  next[head] = { ...target, value: nested.parts };
+  return { parts: next, removed: nested.removed };
+};
+
+const insertAtPath = (parts, parentPath, index, item) => {
+  if (!Array.isArray(parts) || !Array.isArray(parentPath)) return null;
+  if (parentPath.length === 0) {
+    const next = [...parts];
+    const safeIndex = Math.max(0, Math.min(Number.isInteger(index) ? index : next.length, next.length));
+    next.splice(safeIndex, 0, item);
+    return next;
+  }
+  const next = [...parts];
+  const [head, ...rest] = parentPath;
+  if (!Number.isInteger(head) || head < 0 || head >= next.length) return null;
+  const target = next[head];
+  if (!target || target.type !== 'group') return null;
+  const nested = insertAtPath(Array.isArray(target.value) ? target.value : [], rest, index, item);
+  if (!nested) return null;
+  next[head] = { ...target, value: nested };
+  return next;
+};
+
+const adjustPathForRemoval = (path, removedParentPath, removedIndex) => {
+  if (!Array.isArray(path) || !Array.isArray(removedParentPath)) return path;
+  const depth = removedParentPath.length;
+  if (!isPrefixPath(removedParentPath, path)) return path;
+  if (path.length <= depth) return path;
+  if (path[depth] <= removedIndex) return path;
+  const next = [...path];
+  next[depth] -= 1;
+  return next;
+};
+
+const parseDraggedPath = (e) => {
+  const raw = e.dataTransfer.getData(DRAG_PATH_MIME) || e.dataTransfer.getData('text/plain');
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed) || parsed.some((v) => !Number.isInteger(v))) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
 };
 
 const TokenInput = ({
@@ -248,7 +323,7 @@ const TokenInput = ({
 };
 
 const TerritoryBuilder = ({
-  value, onChange, lastMapClick, activePicker, setActivePicker, draftPoints, setDraftPoints, parentId, predefinedCode, onStartReferencePick, onStartTerritoryLibraryPick, pathPrefix = []
+  value, onChange, lastMapClick, activePicker, setActivePicker, draftPoints, setDraftPoints, parentId, predefinedCode, onStartReferencePick, onStartTerritoryLibraryPick, pathPrefix = [], onMovePartByPath = null
 }) => {
   const parts = normalizeParts(value);
 
@@ -333,8 +408,10 @@ const TerritoryBuilder = ({
     onChange(newParts);
   };
 
-  const [draggedIndex, setDraggedIndex] = useState(null);
+  const [draggedPath, setDraggedPath] = useState(null);
   const [dragOverIndex, setDragOverIndex] = useState(null);
+  const [dragOverGroupInsideIndex, setDragOverGroupInsideIndex] = useState(null);
+  const [isDragOverTail, setIsDragOverTail] = useState(false);
 
   const movePart = (fromIndex, toIndex) => {
     if (fromIndex === toIndex) return;
@@ -345,10 +422,36 @@ const TerritoryBuilder = ({
     setActivePicker(null);
   };
 
-  const handleDragStart = (e, index) => {
-    setDraggedIndex(index);
+  const movePartByPathLocal = (fromPath, toParentPath, toIndex) => {
+    if (!Array.isArray(fromPath) || fromPath.length === 0 || !Array.isArray(toParentPath)) return;
+    if (isPrefixPath(fromPath, toParentPath)) return;
+    const fromParentPath = fromPath.slice(0, -1);
+    const fromIndex = fromPath[fromPath.length - 1];
+    if (!Number.isInteger(fromIndex)) return;
+
+    let insertParentPath = toParentPath;
+    let insertIndex = Number.isInteger(toIndex) ? toIndex : 0;
+    if (pathsEqual(fromParentPath, toParentPath) && fromIndex < insertIndex) {
+      insertIndex -= 1;
+    }
+    insertParentPath = adjustPathForRemoval(insertParentPath, fromParentPath, fromIndex);
+
+    const removed = removeAtPath(parts, fromPath);
+    if (!removed || !removed.removed) return;
+    const inserted = insertAtPath(removed.parts, insertParentPath, insertIndex, removed.removed);
+    if (!inserted) return;
+    onChange(inserted);
+    setActivePicker(null);
+  };
+
+  const movePartByPath = onMovePartByPath || movePartByPathLocal;
+
+  const handleDragStart = (e, rowPath) => {
+    setDraggedPath(rowPath);
     e.dataTransfer.effectAllowed = 'move';
-    e.dataTransfer.setData('text/plain', String(index));
+    const serialized = JSON.stringify(rowPath);
+    e.dataTransfer.setData(DRAG_PATH_MIME, serialized);
+    e.dataTransfer.setData('text/plain', serialized);
   };
   const handleDragOver = (e, index) => {
     e.preventDefault();
@@ -358,15 +461,51 @@ const TerritoryBuilder = ({
   const handleDragLeave = () => setDragOverIndex(null);
   const handleDrop = (e, toIndex) => {
     e.preventDefault();
+    e.stopPropagation();
     setDragOverIndex(null);
-    setDraggedIndex(null);
-    const fromIndex = parseInt(e.dataTransfer.getData('text/plain'), 10);
-    if (Number.isNaN(fromIndex)) return;
-    movePart(fromIndex, toIndex);
+    setDragOverGroupInsideIndex(null);
+    setIsDragOverTail(false);
+    setDraggedPath(null);
+    const fromPath = parseDraggedPath(e);
+    if (!fromPath) return;
+    if (fromPath.length === pathPrefix.length + 1 && fromPath.slice(0, -1).every((v, i) => v === pathPrefix[i])) {
+      const fromIndex = fromPath[fromPath.length - 1];
+      if (Number.isInteger(fromIndex)) {
+        movePart(fromIndex, toIndex);
+        return;
+      }
+    }
+    movePartByPath(fromPath, pathPrefix, toIndex);
+  };
+
+  const handleDropInsideGroup = (e, groupPath, groupLength) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOverIndex(null);
+    setDragOverGroupInsideIndex(null);
+    setIsDragOverTail(false);
+    setDraggedPath(null);
+    const fromPath = parseDraggedPath(e);
+    if (!fromPath) return;
+    movePartByPath(fromPath, groupPath, groupLength);
+  };
+
+  const handleDropAtEnd = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOverIndex(null);
+    setDragOverGroupInsideIndex(null);
+    setIsDragOverTail(false);
+    setDraggedPath(null);
+    const fromPath = parseDraggedPath(e);
+    if (!fromPath) return;
+    movePartByPath(fromPath, pathPrefix, parts.length);
   };
   const handleDragEnd = () => {
-    setDraggedIndex(null);
+    setDraggedPath(null);
     setDragOverIndex(null);
+    setDragOverGroupInsideIndex(null);
+    setIsDragOverTail(false);
   };
 
   const handleRowKeyDown = (e, index) => {
@@ -433,13 +572,13 @@ const TerritoryBuilder = ({
               key={idx}
               draggable
               tabIndex={0}
-              onDragStart={(e) => handleDragStart(e, idx)}
+              onDragStart={(e) => handleDragStart(e, rowPath)}
               onDragOver={(e) => handleDragOver(e, idx)}
               onDragLeave={handleDragLeave}
               onDrop={(e) => handleDrop(e, idx)}
               onDragEnd={handleDragEnd}
               onKeyDown={(e) => handleRowKeyDown(e, idx)}
-              className={`${rowIndent} bg-gray-50 p-2 rounded border transition-colors ${draggedIndex === idx ? 'opacity-50' : ''} ${dragOverIndex === idx ? 'border-blue-400 ring-1 ring-blue-200' : 'border-gray-200'}`}
+              className={`${rowIndent} bg-gray-50 p-2 rounded border transition-colors ${pathsEqual(draggedPath, rowPath) ? 'opacity-50' : ''} ${dragOverIndex === idx ? 'border-blue-400 ring-1 ring-blue-200' : 'border-gray-200'}`}
             >
               <div className="flex gap-2 items-center">
                 <div className="flex items-center cursor-grab active:cursor-grabbing text-gray-400 hover:text-gray-600 flex-shrink-0" title="Drag to reorder">
@@ -478,6 +617,21 @@ const TerritoryBuilder = ({
                   <Trash2 size={12}/>
                 </button>
               </div>
+              <div
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  e.dataTransfer.dropEffect = 'move';
+                  setDragOverGroupInsideIndex(idx);
+                }}
+                onDragLeave={() => setDragOverGroupInsideIndex((prev) => (prev === idx ? null : prev))}
+                onDrop={(e) => handleDropInsideGroup(e, rowPath, Array.isArray(part.value) ? part.value.length : 0)}
+                className={`mt-2 text-[10px] px-2 py-1 rounded border border-dashed transition-colors ${
+                  dragOverGroupInsideIndex === idx ? 'border-blue-400 bg-blue-50 text-blue-700' : 'border-gray-300 text-gray-500 bg-white'
+                }`}
+              >
+                Drop here to move inside this group
+              </div>
               <div className="mt-2 pl-3 border-l-2 border-gray-300">
                 <TerritoryBuilder
                   value={Array.isArray(part.value) ? part.value : []}
@@ -492,6 +646,7 @@ const TerritoryBuilder = ({
                   onStartReferencePick={onStartReferencePick}
                   onStartTerritoryLibraryPick={onStartTerritoryLibraryPick}
                   pathPrefix={rowPath}
+                  onMovePartByPath={movePartByPath}
                 />
               </div>
             </div>
@@ -503,13 +658,13 @@ const TerritoryBuilder = ({
             key={idx}
             draggable
             tabIndex={0}
-            onDragStart={(e) => handleDragStart(e, idx)}
+            onDragStart={(e) => handleDragStart(e, rowPath)}
             onDragOver={(e) => handleDragOver(e, idx)}
             onDragLeave={handleDragLeave}
             onDrop={(e) => handleDrop(e, idx)}
             onDragEnd={handleDragEnd}
             onKeyDown={(e) => handleRowKeyDown(e, idx)}
-            className={`${rowIndent} flex gap-2 items-start bg-gray-50 p-2 rounded border transition-colors ${draggedIndex === idx ? 'opacity-50' : ''} ${dragOverIndex === idx ? 'border-blue-400 ring-1 ring-blue-200' : 'border-gray-200'}`}
+            className={`${rowIndent} flex gap-2 items-start bg-gray-50 p-2 rounded border transition-colors ${pathsEqual(draggedPath, rowPath) ? 'opacity-50' : ''} ${dragOverIndex === idx ? 'border-blue-400 ring-1 ring-blue-200' : 'border-gray-200'}`}
           >
             <div className="flex items-center cursor-grab active:cursor-grabbing text-gray-400 hover:text-gray-600 flex-shrink-0" title="Drag to reorder">
               <GripVertical size={14}/>
@@ -626,6 +781,22 @@ const TerritoryBuilder = ({
           </div>
         );
       })}
+
+      <div
+        onDragOver={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          e.dataTransfer.dropEffect = 'move';
+          setIsDragOverTail(true);
+        }}
+        onDragLeave={() => setIsDragOverTail(false)}
+        onDrop={handleDropAtEnd}
+        className={`h-7 rounded border border-dashed transition-colors flex items-center px-2 text-[10px] ${
+          isDragOverTail ? 'border-blue-400 bg-blue-50 text-blue-700' : 'border-gray-300 text-gray-500 bg-gray-50'
+        }`}
+      >
+        Drop here to move to end of this level
+      </div>
 
       <button onClick={addPart} className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1 font-medium mt-1">
         <Plus size={12}/> Add Operation
