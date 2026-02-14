@@ -2,6 +2,8 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Plus, Trash2, MousePointer2, GripVertical, X } from 'lucide-react';
 
 const DRAG_PATH_MIME = 'application/x-xatra-territory-path';
+const TERRITORY_TYPES = ['gadm', 'polygon', 'predefined', 'group'];
+const TYPE_SHORTCUTS = { g: 'gadm', p: 'polygon', t: 'predefined', o: 'group' };
 
 const toList = (raw) => {
   if (Array.isArray(raw)) return raw.map((x) => String(x || '').trim()).filter(Boolean);
@@ -123,6 +125,15 @@ const parseDraggedPath = (e) => {
   }
 };
 
+const isEditableTarget = (target) => {
+  if (!target || !(target instanceof Element)) return false;
+  if (target instanceof HTMLInputElement) return true;
+  if (target instanceof HTMLTextAreaElement) return true;
+  if (target instanceof HTMLSelectElement) return true;
+  if (target.isContentEditable) return true;
+  return !!target.closest('input, textarea, select, [contenteditable="true"]');
+};
+
 const TokenInput = ({
   tokens,
   onChange,
@@ -130,6 +141,7 @@ const TokenInput = ({
   mode,
   endpoint,
   localOptions,
+  inputPath,
 }) => {
   const [text, setText] = useState('');
   const [suggestions, setSuggestions] = useState([]);
@@ -255,6 +267,7 @@ const TokenInput = ({
           </span>
         ))}
         <input
+          data-territory-input-path={inputPath}
           type="text"
           value={text}
           onChange={(e) => handleInputChange(e.target.value)}
@@ -338,6 +351,7 @@ const TerritoryBuilder = ({
 }) => {
   const parts = normalizeParts(value);
   const [localSelectedPath, setLocalSelectedPath] = useState(null);
+  const [operationPrompt, setOperationPrompt] = useState(null);
   const selectedPath = selectedPathProp || localSelectedPath;
   const setSelectedPath = setSelectedPathProp || setLocalSelectedPath;
 
@@ -412,8 +426,39 @@ const TerritoryBuilder = ({
     onChange(newParts);
   };
 
-  const addPart = () => {
-    onChange([...parts, { op: 'union', type: 'gadm', value: '' }]);
+  const createPart = (type, op = 'union') => {
+    if (type === 'group') return { op, type: 'group', value: [] };
+    if (type === 'polygon') return { op, type: 'polygon', value: '' };
+    if (type === 'predefined') return { op, type: 'predefined', value: '' };
+    return { op, type: 'gadm', value: '' };
+  };
+
+  const focusInputSoon = (path) => {
+    if (!Array.isArray(path) || path.length === 0) return;
+    window.requestAnimationFrame(() => {
+      const rowPath = path.join('.');
+      const target = document.querySelector(`[data-territory-input-path="${rowPath}"]`);
+      if (target && typeof target.focus === 'function') target.focus();
+    });
+  };
+
+  const focusDefineSoon = (path) => {
+    if (!Array.isArray(path) || path.length === 0) return;
+    window.requestAnimationFrame(() => {
+      const rowPath = path.join('.');
+      const target = document.querySelector(`[data-territory-define-path="${rowPath}"]`);
+      if (target && typeof target.focus === 'function') target.focus();
+    });
+  };
+
+  const addPart = (op = 'union', type = 'gadm') => {
+    const next = [...parts, createPart(type, op)];
+    const newPath = [...pathPrefix, parts.length];
+    onChange(next);
+    setSelectedPath(newPath);
+    focusPathSoon(newPath);
+    if (type === 'group') focusDefineSoon(newPath);
+    else focusInputSoon(newPath);
   };
 
   const removePart = (index) => {
@@ -582,6 +627,102 @@ const TerritoryBuilder = ({
     }
   };
 
+  const startOperationPrompt = (mode, op = 'union') => {
+    setOperationPrompt({ mode, op, focusedType: 'gadm' });
+  };
+
+  const closeOperationPrompt = () => setOperationPrompt(null);
+
+  const cycleOperationPromptType = (direction) => {
+    setOperationPrompt((prev) => {
+      if (!prev) return prev;
+      const current = TERRITORY_TYPES.indexOf(prev.focusedType);
+      const base = current >= 0 ? current : 0;
+      const nextIndex = (base + direction + TERRITORY_TYPES.length) % TERRITORY_TYPES.length;
+      return { ...prev, focusedType: TERRITORY_TYPES[nextIndex] };
+    });
+  };
+
+  const commitOperationPrompt = (explicitType = null) => {
+    const targetType = explicitType || operationPrompt?.focusedType || 'gadm';
+    if (!operationPrompt) return;
+    if (operationPrompt.mode === 'base') {
+      const newPart = createPart(targetType, 'union');
+      const newPath = [...pathPrefix, 0];
+      onChange([newPart]);
+      setSelectedPath(newPath);
+      closeOperationPrompt();
+      focusPathSoon(newPath);
+      if (targetType === 'group') focusDefineSoon(newPath);
+      else focusInputSoon(newPath);
+      return;
+    }
+    addPart(operationPrompt.op || 'union', targetType);
+    closeOperationPrompt();
+  };
+
+  const handleBuilderKeyDownCapture = (e) => {
+    if (operationPrompt) {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        closeOperationPrompt();
+        return;
+      }
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        e.stopPropagation();
+        commitOperationPrompt();
+        return;
+      }
+      if (e.key === 'ArrowRight' || e.key === 'ArrowDown' || e.key === 'Tab') {
+        e.preventDefault();
+        e.stopPropagation();
+        cycleOperationPromptType(1);
+        return;
+      }
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        e.stopPropagation();
+        cycleOperationPromptType(-1);
+        return;
+      }
+      const shortcutType = TYPE_SHORTCUTS[String(e.key || '').toLowerCase()];
+      if (shortcutType) {
+        e.preventDefault();
+        e.stopPropagation();
+        commitOperationPrompt(shortcutType);
+      }
+      return;
+    }
+    if (isEditableTarget(e.target)) return;
+    if (parts.length === 0) {
+      if (String(e.key).toLowerCase() === 'd') {
+        e.preventDefault();
+        e.stopPropagation();
+        startOperationPrompt('base');
+      }
+      return;
+    }
+    if (e.key === '+' || e.key === '=' || e.key === 'Add') {
+      e.preventDefault();
+      e.stopPropagation();
+      startOperationPrompt('op', 'union');
+      return;
+    }
+    if (e.key === '-' || e.key === 'Subtract') {
+      e.preventDefault();
+      e.stopPropagation();
+      startOperationPrompt('op', 'difference');
+      return;
+    }
+    if (e.key === '&') {
+      e.preventDefault();
+      e.stopPropagation();
+      startOperationPrompt('op', 'intersection');
+    }
+  };
+
   const [territoryLibraryNames, setTerritoryLibraryNames] = useState([]);
   useEffect(() => {
     fetch('http://localhost:8088/territory_library/names')
@@ -608,17 +749,51 @@ const TerritoryBuilder = ({
   }, [predefinedVariables, territoryLibraryNames]);
 
   if (parts.length === 0) {
+    const focusedType = operationPrompt?.focusedType || 'gadm';
     return (
-      <div className="border border-dashed border-gray-300 rounded p-2 text-center bg-gray-50">
-        <button onClick={addPart} className="text-xs text-blue-600 flex items-center justify-center gap-1 w-full font-medium">
-          <Plus size={12}/> Define Territory
-        </button>
+      <div onKeyDownCapture={handleBuilderKeyDownCapture} className="border border-dashed border-gray-300 rounded p-2 text-center bg-gray-50">
+        {!operationPrompt ? (
+          <button
+            type="button"
+            data-territory-define-path={pathPrefix.join('.')}
+            onClick={() => startOperationPrompt('base')}
+            className="text-xs text-blue-600 flex items-center justify-center gap-1 w-full font-medium"
+            title="Define base territory (shortcut: d)"
+          >
+            <Plus size={12}/> Define Territory
+          </button>
+        ) : (
+          <div className="text-xs text-gray-700 text-left">
+            <div className="mb-1">
+              Base:
+            </div>
+            <div className="flex flex-wrap gap-1">
+              {TERRITORY_TYPES.map((type) => (
+                <button
+                  type="button"
+                  key={type}
+                  onClick={() => commitOperationPrompt(type)}
+                  className={`px-1.5 py-0.5 border rounded ${focusedType === type ? 'border-blue-500 text-blue-700 bg-blue-50' : 'border-gray-300 bg-white hover:bg-gray-100'}`}
+                >
+                  {type === 'gadm' ? 'gadm [g]' : type === 'polygon' ? 'polygon [p]' : type === 'predefined' ? 'territory [t]' : 'group [o]'}
+                </button>
+              ))}
+              <button
+                type="button"
+                onClick={closeOperationPrompt}
+                className="px-1.5 py-0.5 border rounded border-gray-300 bg-white hover:bg-gray-100"
+              >
+                Esc
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-2" onKeyDownCapture={handleBuilderKeyDownCapture}>
       {parts.map((part, idx) => {
         const rowPath = pathForIndex(idx);
         const rowPathKey = rowPath.join('.');
@@ -725,7 +900,7 @@ const TerritoryBuilder = ({
               </div>
               {isRowSelected && (
                 <div className={`${rowIndent} text-[10px] text-blue-700 mt-1 px-2`}>
-                  Shift+Up/Down move • Shift+Left out above group • Shift+Right out below group
+                  Shift+Up/Down move • Shift+Left out above group • Shift+Right out below group • + / - / & add operation
                 </div>
               )}
             </React.Fragment>
@@ -800,6 +975,7 @@ const TerritoryBuilder = ({
                         placeholder="Search GADM..."
                         mode="remote"
                         endpoint="http://localhost:8088/search/gadm"
+                        inputPath={rowPathKey}
                       />
                     </div>
                     <button
@@ -826,6 +1002,7 @@ const TerritoryBuilder = ({
                         placeholder="e.g. maurya, NORTH_INDIA"
                         mode="local"
                         localOptions={allPredefinedOptions}
+                        inputPath={rowPathKey}
                       />
                     </div>
                     <button
@@ -846,6 +1023,7 @@ const TerritoryBuilder = ({
                 ) : (
                   <div className="flex gap-1 items-start">
                     <textarea
+                      data-territory-input-path={rowPathKey}
                       value={part.value || ''}
                       onChange={(e) => updatePart(idx, { value: e.target.value })}
                       className="w-full text-xs p-1 border rounded font-mono h-8 resize-none bg-white"
@@ -868,7 +1046,7 @@ const TerritoryBuilder = ({
             </div>
             {isRowSelected && (
               <div className={`${rowIndent} text-[10px] text-blue-700 mt-1 px-2`}>
-                Shift+Up/Down move • Shift+Left out above group • Shift+Right out below group
+                Shift+Up/Down move • Shift+Left out above group • Shift+Right out below group • + / - / & add operation
               </div>
             )}
           </React.Fragment>
@@ -888,9 +1066,46 @@ const TerritoryBuilder = ({
         className={`h-1 rounded ${dragInsertionIndex === parts.length ? 'bg-blue-500' : 'bg-transparent'}`}
       />
 
-      <button onClick={addPart} className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1 font-medium mt-1">
-        <Plus size={12}/> Add Operation
-      </button>
+      {!operationPrompt ? (
+        <div className="text-xs font-medium mt-1 flex items-center gap-1 flex-wrap">
+          <button type="button" className="text-blue-600 hover:text-blue-800" onClick={() => startOperationPrompt('op', 'union')}>
+            (+) add
+          </button>
+          <span className="text-gray-400">/</span>
+          <button type="button" className="text-blue-600 hover:text-blue-800" onClick={() => startOperationPrompt('op', 'difference')}>
+            (-) subtract
+          </button>
+          <span className="text-gray-400">/</span>
+          <button type="button" className="text-blue-600 hover:text-blue-800" onClick={() => startOperationPrompt('op', 'intersection')}>
+            (&) intersect
+          </button>
+        </div>
+      ) : (
+        <div className="text-xs text-gray-700 mt-1">
+          <div className="mb-1">
+            {operationPrompt.op === 'difference' ? '(-) subtract:' : operationPrompt.op === 'intersection' ? '(&) intersect:' : '(+) add:'}
+          </div>
+          <div className="flex flex-wrap gap-1">
+            {TERRITORY_TYPES.map((type) => (
+              <button
+                type="button"
+                key={type}
+                onClick={() => commitOperationPrompt(type)}
+                className={`px-1.5 py-0.5 border rounded ${operationPrompt.focusedType === type ? 'border-blue-500 text-blue-700 bg-blue-50' : 'border-gray-300 bg-white hover:bg-gray-100'}`}
+              >
+                {type === 'gadm' ? 'gadm [g]' : type === 'polygon' ? 'polygon [p]' : type === 'predefined' ? 'territory [t]' : 'group [o]'}
+              </button>
+            ))}
+            <button
+              type="button"
+              onClick={closeOperationPrompt}
+              className="px-1.5 py-0.5 border rounded border-gray-300 bg-white hover:bg-gray-100"
+            >
+              Esc
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
