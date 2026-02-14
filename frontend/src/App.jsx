@@ -462,20 +462,6 @@ xatra.TitleBox("<b>My Map</b>")
     ref.contentWindow.postMessage({ type: 'setLabelSelectionOverlayFixed', groups }, '*');
   }, [pickedTerritorySelection, territoryLibraryHtml]);
 
-  const getFlagOccurrenceInfo = (flagIndex) => {
-    const target = builderElements[flagIndex];
-    if (!target || target.type !== 'flag') return null;
-    const label = target.label || '(unnamed)';
-    let occurrence = 0;
-    let count = 0;
-    builderElements.forEach((el, idx) => {
-      if (el.type !== 'flag' || (el.label || '(unnamed)') !== label) return;
-      count += 1;
-      if (idx <= flagIndex) occurrence = count;
-    });
-    return { label, occurrence, count };
-  };
-
   const handleStartReferencePick = (target) => {
     if (!target || !target.kind) return;
     setReferencePickTarget(target);
@@ -1397,39 +1383,6 @@ xatra.TitleBox("<b>My Map</b>")
                     >
                         Update Reference Map
                     </button>
-                    <div className="space-y-2 border-t border-gray-100 pt-2 text-[11px]">
-                        <div className="font-semibold text-gray-600">Reference Picker Target</div>
-                        {referencePickTarget?.kind === 'gadm' && referencePickTarget.flagIndex != null ? (
-                          <div className="text-[11px] text-gray-500">
-                            {(() => {
-                              const info = getFlagOccurrenceInfo(referencePickTarget.flagIndex);
-                              if (!info) return 'No flag selected.';
-                              return `Flag "${info.label}" #${info.occurrence}${info.count > 1 ? ` of ${info.count}` : ''}`;
-                            })()}
-                          </div>
-                        ) : referencePickTarget?.kind === 'river' ? (
-                          <div className="text-[11px] text-gray-500">
-                            Picking river for layer #{(referencePickTarget.layerIndex ?? 0) + 1}
-                          </div>
-                        ) : (
-                          <div className="text-gray-400 italic">Activate a pick button in Builder to target a layer.</div>
-                        )}
-                    </div>
-                    <div className="space-y-2 border-t border-gray-100 pt-2 text-[11px]">
-                        <div className="font-semibold text-gray-600">Selected GADM</div>
-                        {pickedGadmSelection.length === 0 ? (
-                          <div className="text-gray-400 italic">No selections yet.</div>
-                        ) : (
-                          <div className="flex flex-wrap gap-1">
-                            {pickedGadmSelection.map((picked) => (
-                              <span key={picked.gid} className="px-1.5 py-0.5 rounded bg-blue-50 border border-blue-200 text-blue-700 font-mono">
-                                {picked.gid}
-                              </span>
-                            ))}
-                          </div>
-                        )}
-                        <div className="text-[10px] text-gray-500 italic">Selections update the target field immediately. Press `Esc` to stop picker mode.</div>
-                    </div>
                 </div>
             </div>
         )}
@@ -1496,33 +1449,6 @@ xatra.TitleBox("<b>My Map</b>")
                           ))
                         )}
                     </div>
-                </div>
-                <div className="space-y-2 border-t border-gray-100 pt-2 text-[11px]">
-                    <div className="font-semibold text-gray-600">Picker Target</div>
-                    {referencePickTarget?.kind === 'territory' && referencePickTarget.flagIndex != null ? (
-                      <div className="text-gray-500">
-                        {(() => {
-                          const info = getFlagOccurrenceInfo(referencePickTarget.flagIndex);
-                          if (!info) return 'No flag selected.';
-                          return `Flag "${info.label}" #${info.occurrence}${info.count > 1 ? ` of ${info.count}` : ''}`;
-                        })()}
-                      </div>
-                    ) : (
-                      <div className="text-gray-400 italic">Activate a Territory Library pick button in Builder.</div>
-                    )}
-                    <div className="font-semibold text-gray-600">Picked Territories</div>
-                    {pickedTerritorySelection.length === 0 ? (
-                      <div className="text-gray-400 italic">No selections yet.</div>
-                    ) : (
-                      <div className="flex flex-wrap gap-1">
-                        {pickedTerritorySelection.map((name) => (
-                          <span key={name} className="px-1.5 py-0.5 rounded bg-blue-50 border border-blue-200 text-blue-700 font-mono">
-                            {name}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                    <div className="text-[10px] text-gray-500 italic">Selections update the target field immediately. Press `Esc` to stop picker mode.</div>
                 </div>
                 <button 
                     onClick={() => renderTerritoryLibrary(territoryLibrarySource)}

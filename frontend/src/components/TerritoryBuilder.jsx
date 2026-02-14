@@ -419,6 +419,11 @@ const TerritoryBuilder = ({
     <div className="space-y-2">
       {parts.map((part, idx) => {
         const rowPath = pathForIndex(idx);
+        const isReferencePickingThisPart = !!(
+          isReferencePickingThisFlag &&
+          Array.isArray(activePicker?.target?.partPath) &&
+          activePicker.target.partPath.join('.') === rowPath.join('.')
+        );
         const isLibraryPickingThisPart = !!(isLibraryPicking && Array.isArray(activePicker?.target?.partPath) && activePicker.target.partPath.join('.') === rowPath.join('.'));
         const rowIndent = pathPrefix.length > 0 ? 'ml-3' : '';
 
@@ -558,14 +563,14 @@ const TerritoryBuilder = ({
                   <button
                     type="button"
                     onClick={() => {
-                      if (isReferencePickingThisFlag) {
+                      if (isReferencePickingThisPart) {
                         setActivePicker(null);
                         return;
                       }
                       onStartReferencePick({ kind: 'gadm', flagIndex: parentId, partIndex: idx, partPath: rowPath });
                     }}
-                    className={`p-1 border rounded flex-shrink-0 transition-colors ${isReferencePickingThisFlag ? 'bg-blue-100 text-blue-700 border-blue-300 ring-2 ring-blue-200' : 'bg-gray-50 text-gray-600 hover:bg-gray-100 border-gray-200'}`}
-                    title={isReferencePickingThisFlag ? 'Cancel GADM picking' : 'Pick GADM from Reference Map'}
+                    className={`p-1 border rounded flex-shrink-0 transition-colors ${isReferencePickingThisPart ? 'bg-blue-100 text-blue-700 border-blue-300 ring-2 ring-blue-200' : 'bg-gray-50 text-gray-600 hover:bg-gray-100 border-gray-200'}`}
+                    title={isReferencePickingThisPart ? 'Cancel GADM picking' : 'Pick GADM from Reference Map'}
                   >
                     <MousePointer2 size={12}/>
                   </button>
