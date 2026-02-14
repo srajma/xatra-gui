@@ -96,7 +96,7 @@ xatra.TitleBox("<b>My Map</b>")
     if (!html || typeof html !== 'string') return html;
     const marker = '__xatraLabelOverlayPatchV1';
     if (html.includes(marker)) return html;
-    const patchScript = `
+  const patchScript = `
 <script>
 (function() {
   if (window.__xatraLabelOverlayPatchV1) return;
@@ -108,6 +108,7 @@ xatra.TitleBox("<b>My Map</b>")
     pending: { color: '#0ea5e9', fillColor: '#0ea5e9', fillOpacity: 0.2, weight: 3, opacity: 1.0 },
   };
   const highlighted = new Map();
+  let sweepHandlersBound = false;
 
   function reset() {
     highlighted.forEach(function(original, layer) {
@@ -160,13 +161,45 @@ xatra.TitleBox("<b>My Map</b>")
     });
   }
 
+  function bindSweepHandlers() {
+    if (sweepHandlersBound) return;
+    if (typeof layers === 'undefined' || !layers || !Array.isArray(layers.flags)) return;
+    sweepHandlersBound = true;
+    layers.flags.forEach(function(groupLayer) {
+      const label = groupLayer && groupLayer._flagData ? String(groupLayer._flagData.label || '') : '';
+      if (!label || !groupLayer || !groupLayer.eachLayer) return;
+      groupLayer.eachLayer(function(subLayer) {
+        if (!subLayer || !subLayer.on || subLayer.__xatraTerritorySweepBound) return;
+        subLayer.__xatraTerritorySweepBound = true;
+        subLayer.on('mousemove', function(e) {
+          if (!window.parent) return;
+          const originalEvent = (e && e.originalEvent) ? e.originalEvent : {};
+          const isAddSweep = !!(originalEvent.ctrlKey || originalEvent.metaKey);
+          const isRemoveSweep = !!originalEvent.altKey;
+          if (!isAddSweep && !isRemoveSweep) return;
+          window.parent.postMessage({
+            type: 'mapFeaturePick',
+            featureType: 'territory',
+            name: label,
+            hoverMode: isRemoveSweep ? 'remove' : 'add'
+          }, '*');
+        });
+      });
+    });
+  }
+
   window.addEventListener('message', function(event) {
     if (event.data && event.data.type === 'setLabelSelectionOverlayFixed') {
+      bindSweepHandlers();
       apply(event.data.groups || []);
     } else if (event.data && event.data.type === 'clearLabelSelectionOverlayFixed') {
       reset();
     }
   });
+
+  window.setTimeout(bindSweepHandlers, 0);
+  window.setTimeout(bindSweepHandlers, 400);
+  window.setTimeout(bindSweepHandlers, 1200);
 })();
 </script>
 `;
