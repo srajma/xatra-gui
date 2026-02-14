@@ -3,6 +3,7 @@ import { Plus, Trash2, MousePointer2, GripVertical, X } from 'lucide-react';
 
 const DRAG_PATH_MIME = 'application/x-xatra-territory-path';
 const TERRITORY_TYPES = ['gadm', 'polygon', 'predefined', 'group'];
+const PROMPT_OPTIONS = ['gadm', 'polygon', 'predefined', 'group', 'esc'];
 const TYPE_SHORTCUTS = { g: 'gadm', p: 'polygon', t: 'predefined', o: 'group' };
 
 const toList = (raw) => {
@@ -127,11 +128,18 @@ const parseDraggedPath = (e) => {
 
 const isEditableTarget = (target) => {
   if (!target || !(target instanceof Element)) return false;
-  if (target instanceof HTMLInputElement) return true;
+  if (target instanceof HTMLInputElement) {
+    const t = String(target.type || '').toLowerCase();
+    return !['checkbox', 'radio', 'button', 'submit', 'reset', 'color', 'range', 'file'].includes(t);
+  }
   if (target instanceof HTMLTextAreaElement) return true;
-  if (target instanceof HTMLSelectElement) return true;
   if (target.isContentEditable) return true;
-  return !!target.closest('input, textarea, select, [contenteditable="true"]');
+  const input = target.closest('input');
+  if (input instanceof HTMLInputElement) {
+    const t = String(input.type || '').toLowerCase();
+    return !['checkbox', 'radio', 'button', 'submit', 'reset', 'color', 'range', 'file'].includes(t);
+  }
+  return !!target.closest('textarea, [contenteditable="true"]');
 };
 
 const TokenInput = ({
@@ -349,11 +357,21 @@ const findScrollableParent = (el) => {
 const TerritoryBuilder = ({
   value, onChange, lastMapClick, activePicker, setActivePicker, draftPoints, setDraftPoints, parentId, predefinedCode, onStartReferencePick, onStartTerritoryLibraryPick, pathPrefix = [], onMovePartByPath = null, selectedPath: selectedPathProp = null, setSelectedPath: setSelectedPathProp = null
 }) => {
+  const builderRootRef = useRef(null);
   const parts = normalizeParts(value);
   const [localSelectedPath, setLocalSelectedPath] = useState(null);
   const [operationPrompt, setOperationPrompt] = useState(null);
   const selectedPath = selectedPathProp || localSelectedPath;
   const setSelectedPath = setSelectedPathProp || setLocalSelectedPath;
+  const promptScopeId = `${parentId}:${pathPrefix.join('.') || 'root'}`;
+
+  const getLayerScope = () => {
+    const root = builderRootRef.current;
+    if (!root) return document;
+    return root.closest('[data-layer-index]') || root;
+  };
+
+  const toPathId = (path) => `${parentId}:${Array.isArray(path) ? path.join('.') : ''}`;
 
   const matchingPickerPath = useMemo(() => {
     if (!activePicker || activePicker.context !== `territory-${parentId}`) return null;
@@ -436,8 +454,8 @@ const TerritoryBuilder = ({
   const focusInputSoon = (path) => {
     if (!Array.isArray(path) || path.length === 0) return;
     window.requestAnimationFrame(() => {
-      const rowPath = path.join('.');
-      const target = document.querySelector(`[data-territory-input-path="${rowPath}"]`);
+      const scope = getLayerScope();
+      const target = scope.querySelector(`[data-territory-input-path="${toPathId(path)}"]`);
       if (target && typeof target.focus === 'function') target.focus();
     });
   };
@@ -445,8 +463,8 @@ const TerritoryBuilder = ({
   const focusDefineSoon = (path) => {
     if (!Array.isArray(path) || path.length === 0) return;
     window.requestAnimationFrame(() => {
-      const rowPath = path.join('.');
-      const target = document.querySelector(`[data-territory-define-path="${rowPath}"]`);
+      const scope = getLayerScope();
+      const target = scope.querySelector(`[data-territory-define-path="${toPathId(path)}"]`);
       if (target && typeof target.focus === 'function') target.focus();
     });
   };
@@ -499,7 +517,8 @@ const TerritoryBuilder = ({
   const focusPathSoon = (path) => {
     if (!Array.isArray(path) || path.length === 0) return;
     window.requestAnimationFrame(() => {
-      const row = document.querySelector(`[data-territory-path="${path.join('.')}"]`);
+      const scope = getLayerScope();
+      const row = scope.querySelector(`[data-territory-path="${toPathId(path)}"]`);
       if (row && typeof row.focus === 'function') row.focus();
     });
   };
@@ -636,16 +655,20 @@ const TerritoryBuilder = ({
   const cycleOperationPromptType = (direction) => {
     setOperationPrompt((prev) => {
       if (!prev) return prev;
-      const current = TERRITORY_TYPES.indexOf(prev.focusedType);
+      const current = PROMPT_OPTIONS.indexOf(prev.focusedType);
       const base = current >= 0 ? current : 0;
-      const nextIndex = (base + direction + TERRITORY_TYPES.length) % TERRITORY_TYPES.length;
-      return { ...prev, focusedType: TERRITORY_TYPES[nextIndex] };
+      const nextIndex = (base + direction + PROMPT_OPTIONS.length) % PROMPT_OPTIONS.length;
+      return { ...prev, focusedType: PROMPT_OPTIONS[nextIndex] };
     });
   };
 
   const commitOperationPrompt = (explicitType = null) => {
     const targetType = explicitType || operationPrompt?.focusedType || 'gadm';
     if (!operationPrompt) return;
+    if (targetType === 'esc') {
+      closeOperationPrompt();
+      return;
+    }
     if (operationPrompt.mode === 'base') {
       const newPart = createPart(targetType, 'union');
       const newPath = [...pathPrefix, 0];
@@ -662,6 +685,11 @@ const TerritoryBuilder = ({
   };
 
   const handleBuilderKeyDownCapture = (e) => {
+    const targetScope = e.target instanceof Element ? e.target.closest('[data-territory-builder-scope]') : null;
+    const targetScopeId = targetScope?.getAttribute('data-territory-builder-scope') || null;
+    if (targetScopeId && targetScopeId !== promptScopeId) return;
+    if (!targetScopeId && pathPrefix.length !== 0) return;
+
     if (operationPrompt) {
       if (e.key === 'Escape') {
         e.preventDefault();
@@ -723,6 +751,29 @@ const TerritoryBuilder = ({
     }
   };
 
+  useEffect(() => {
+    if (!operationPrompt) return;
+    window.requestAnimationFrame(() => {
+      const scope = getLayerScope();
+      const selector = `[data-territory-prompt-option="${promptScopeId}:${operationPrompt.focusedType || 'gadm'}"]`;
+      const target = scope.querySelector(selector);
+      if (target && typeof target.focus === 'function') target.focus();
+    });
+  }, [operationPrompt?.focusedType, operationPrompt?.mode, operationPrompt?.op, promptScopeId]);
+
+  useEffect(() => {
+    if (pathPrefix.length !== 0) return undefined;
+    const onLayerKeyDown = (e) => {
+      const scope = getLayerScope();
+      const active = document.activeElement;
+      if (!(active instanceof Element)) return;
+      if (!scope.contains(active)) return;
+      handleBuilderKeyDownCapture(e);
+    };
+    document.addEventListener('keydown', onLayerKeyDown, true);
+    return () => document.removeEventListener('keydown', onLayerKeyDown, true);
+  }, [pathPrefix.length, operationPrompt, parts.length]);
+
   const [territoryLibraryNames, setTerritoryLibraryNames] = useState([]);
   useEffect(() => {
     fetch('http://localhost:8088/territory_library/names')
@@ -751,11 +802,16 @@ const TerritoryBuilder = ({
   if (parts.length === 0) {
     const focusedType = operationPrompt?.focusedType || 'gadm';
     return (
-      <div onKeyDownCapture={handleBuilderKeyDownCapture} className="border border-dashed border-gray-300 rounded p-2 text-center bg-gray-50">
+      <div
+        ref={builderRootRef}
+        data-territory-builder-scope={promptScopeId}
+        onKeyDownCapture={handleBuilderKeyDownCapture}
+        className="border border-dashed border-gray-300 rounded p-2 text-center bg-gray-50"
+      >
         {!operationPrompt ? (
           <button
             type="button"
-            data-territory-define-path={pathPrefix.join('.')}
+            data-territory-define-path={toPathId(pathPrefix)}
             onClick={() => startOperationPrompt('base')}
             className="text-xs text-blue-600 flex items-center justify-center gap-1 w-full font-medium"
             title="Define base territory (shortcut: d)"
@@ -768,23 +824,17 @@ const TerritoryBuilder = ({
               Base:
             </div>
             <div className="flex flex-wrap gap-1">
-              {TERRITORY_TYPES.map((type) => (
+              {PROMPT_OPTIONS.map((type) => (
                 <button
                   type="button"
                   key={type}
                   onClick={() => commitOperationPrompt(type)}
+                  data-territory-prompt-option={`${promptScopeId}:${type}`}
                   className={`px-1.5 py-0.5 border rounded ${focusedType === type ? 'border-blue-500 text-blue-700 bg-blue-50' : 'border-gray-300 bg-white hover:bg-gray-100'}`}
                 >
-                  {type === 'gadm' ? 'gadm [g]' : type === 'polygon' ? 'polygon [p]' : type === 'predefined' ? 'territory [t]' : 'group [o]'}
+                  {type === 'gadm' ? 'gadm [g]' : type === 'polygon' ? 'polygon [p]' : type === 'predefined' ? 'territory [t]' : type === 'group' ? 'group [o]' : 'Esc'}
                 </button>
               ))}
-              <button
-                type="button"
-                onClick={closeOperationPrompt}
-                className="px-1.5 py-0.5 border rounded border-gray-300 bg-white hover:bg-gray-100"
-              >
-                Esc
-              </button>
             </div>
           </div>
         )}
@@ -793,10 +843,16 @@ const TerritoryBuilder = ({
   }
 
   return (
-    <div className="space-y-2" onKeyDownCapture={handleBuilderKeyDownCapture}>
+    <div
+      ref={builderRootRef}
+      data-territory-builder-scope={promptScopeId}
+      className="space-y-2"
+      onKeyDownCapture={handleBuilderKeyDownCapture}
+    >
       {parts.map((part, idx) => {
         const rowPath = pathForIndex(idx);
         const rowPathKey = rowPath.join('.');
+        const rowPathId = toPathId(rowPath);
         const isReferencePickingThisPart = !!(
           isReferencePickingThisFlag &&
           Array.isArray(activePicker?.target?.partPath) &&
@@ -813,7 +869,7 @@ const TerritoryBuilder = ({
               <div className={`${rowIndent} h-1 rounded ${isDropBefore ? 'bg-blue-500' : 'bg-transparent'}`} />
               <div
                 tabIndex={0}
-                data-territory-path={rowPathKey}
+                data-territory-path={rowPathId}
                 onFocusCapture={() => setSelectedPath(rowPath)}
                 onMouseDownCapture={() => setSelectedPath(rowPath)}
                 onDragOver={(e) => handleDragOverRow(e, idx)}
@@ -912,7 +968,7 @@ const TerritoryBuilder = ({
             <div className={`${rowIndent} h-1 rounded ${isDropBefore ? 'bg-blue-500' : 'bg-transparent'}`} />
             <div
               tabIndex={0}
-              data-territory-path={rowPathKey}
+              data-territory-path={rowPathId}
               onFocusCapture={() => setSelectedPath(rowPath)}
               onMouseDownCapture={() => setSelectedPath(rowPath)}
               onDragOver={(e) => handleDragOverRow(e, idx)}
@@ -975,7 +1031,7 @@ const TerritoryBuilder = ({
                         placeholder="Search GADM..."
                         mode="remote"
                         endpoint="http://localhost:8088/search/gadm"
-                        inputPath={rowPathKey}
+                        inputPath={rowPathId}
                       />
                     </div>
                     <button
@@ -1002,7 +1058,7 @@ const TerritoryBuilder = ({
                         placeholder="e.g. maurya, NORTH_INDIA"
                         mode="local"
                         localOptions={allPredefinedOptions}
-                        inputPath={rowPathKey}
+                        inputPath={rowPathId}
                       />
                     </div>
                     <button
@@ -1023,7 +1079,7 @@ const TerritoryBuilder = ({
                 ) : (
                   <div className="flex gap-1 items-start">
                     <textarea
-                      data-territory-input-path={rowPathKey}
+                      data-territory-input-path={rowPathId}
                       value={part.value || ''}
                       onChange={(e) => updatePart(idx, { value: e.target.value })}
                       className="w-full text-xs p-1 border rounded font-mono h-8 resize-none bg-white"
@@ -1086,23 +1142,17 @@ const TerritoryBuilder = ({
             {operationPrompt.op === 'difference' ? '(-) subtract:' : operationPrompt.op === 'intersection' ? '(&) intersect:' : '(+) add:'}
           </div>
           <div className="flex flex-wrap gap-1">
-            {TERRITORY_TYPES.map((type) => (
+            {PROMPT_OPTIONS.map((type) => (
               <button
                 type="button"
                 key={type}
                 onClick={() => commitOperationPrompt(type)}
+                data-territory-prompt-option={`${promptScopeId}:${type}`}
                 className={`px-1.5 py-0.5 border rounded ${operationPrompt.focusedType === type ? 'border-blue-500 text-blue-700 bg-blue-50' : 'border-gray-300 bg-white hover:bg-gray-100'}`}
               >
-                {type === 'gadm' ? 'gadm [g]' : type === 'polygon' ? 'polygon [p]' : type === 'predefined' ? 'territory [t]' : 'group [o]'}
+                {type === 'gadm' ? 'gadm [g]' : type === 'polygon' ? 'polygon [p]' : type === 'predefined' ? 'territory [t]' : type === 'group' ? 'group [o]' : 'Esc'}
               </button>
             ))}
-            <button
-              type="button"
-              onClick={closeOperationPrompt}
-              className="px-1.5 py-0.5 border rounded border-gray-300 bg-white hover:bg-gray-100"
-            >
-              Esc
-            </button>
           </div>
         </div>
       )}

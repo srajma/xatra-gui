@@ -538,7 +538,7 @@ const LayerItem = ({
   };
 
   return (
-    <div className="xatra-layer-card bg-white p-3 rounded-lg border border-gray-200 shadow-sm relative group hover:border-blue-300 transition-colors">
+    <div data-layer-index={index} className="xatra-layer-card bg-white p-3 rounded-lg border border-gray-200 shadow-sm relative group hover:border-blue-300 transition-colors">
       <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
         <button 
           onClick={() => removeElement(index)}

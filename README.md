@@ -43,6 +43,12 @@ Bugs
     - [x] When I select and unselect a territory, it becomes black rather than returning to its original color and transparency (like it correctly does for the GADM picker).
     - [x] When I pan or zoom, those blackened territories become white, making them impossible to click again.
   - [x] Flag Territories: Dragging an item *out* of a group doesn't seem to be working (moving something into a group works). Instead, moves the whole group to wherever we tried to move the item.
+  - [ ] Bug fixes with new Add Operation UI
+    - [x] when focusing the input field (upon creating a GADM/Polygon/Territory) it sometimes goes and focuses on some other Flag's territory's input field for some reason? This needs to be fixed.
+    - [x] The + - & keys only work when one of the items in the Flag Territory list or the buttons themselves are focused (and that too not child elements of those items) -- instead, it should work when *anything* in that Flag Layer element (any children recursively thereof) is focused. (3) Sometimes (e.g. after going through "Define Territory"
+    - [x] clicking the add/subtract/intersection buttons with my mouse rather than keyboard) "gadm" is not immediately focused. Like it shows in blue highlight, but pressing enter doesn't select it, pressing arrow keys doesn't cycle through the options etc. (4) "Esc" should also be cycled through in all cases.
+    - [X] keyboard shortcuts (both the + - & shortcuts and the g p t o arrow-keys-cycle tab keyboard shortcuts) conflict in nested groups. All keyboard shortcuts should operate only on the lowest-level element we're focused in, and similarly focus should not shift to somewhere outside that current focused group.
+
 
 Basic extensions
 - [x] Allow adding any feature to the map, not just flags and rivers. Every single method listed under #### Methods in the main README should have an appropriate interface for adding it:
