@@ -539,15 +539,17 @@ const TerritoryBuilder = ({
 
   const handleRowKeyDown = (e, rowPath) => {
     if (!e.shiftKey) return;
+    if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) return;
     const targetTag = String(e.target?.tagName || '').toUpperCase();
     if (targetTag === 'INPUT' || targetTag === 'TEXTAREA' || targetTag === 'SELECT' || e.target?.isContentEditable) return;
+    e.preventDefault();
+    e.stopPropagation();
     const idx = rowPath[rowPath.length - 1];
     if (!Number.isInteger(idx)) return;
     const parentPath = rowPath.slice(0, -1);
     let movedPath = null;
 
     if (e.key === 'ArrowUp') {
-      e.preventDefault();
       const prev = idx > 0 ? parts[idx - 1] : null;
       if (prev?.type === 'group') {
         const groupPath = [...parentPath, idx - 1];
@@ -557,7 +559,6 @@ const TerritoryBuilder = ({
         movedPath = movePartByPath(rowPath, parentPath, Math.max(0, idx - 1));
       }
     } else if (e.key === 'ArrowDown') {
-      e.preventDefault();
       const next = idx < parts.length - 1 ? parts[idx + 1] : null;
       if (next?.type === 'group') {
         const groupPath = [...parentPath, idx + 1];
@@ -567,13 +568,11 @@ const TerritoryBuilder = ({
       }
     } else if (e.key === 'ArrowLeft') {
       if (rowPath.length < 2) return;
-      e.preventDefault();
       const grandParentPath = rowPath.slice(0, -2);
       const parentIndex = rowPath[rowPath.length - 2];
       movedPath = movePartByPath(rowPath, grandParentPath, parentIndex);
     } else if (e.key === 'ArrowRight') {
       if (rowPath.length < 2) return;
-      e.preventDefault();
       const grandParentPath = rowPath.slice(0, -2);
       const parentIndex = rowPath[rowPath.length - 2];
       movedPath = movePartByPath(rowPath, grandParentPath, parentIndex + 1);
