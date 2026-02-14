@@ -318,18 +318,6 @@ xatra.TitleBox("<b>My Map</b>")
               return newPoints;
             });
           } else if (key === 'Escape') {
-            if (activePicker.context === 'reference-gadm' && referencePickTarget?.kind === 'gadm') {
-              setPickedGadmSelection([]);
-              setPickerTargetValues(referencePickTarget, []);
-              hoverPickRef.current = '';
-              return;
-            }
-            if (activePicker.context === 'territory-library' && referencePickTarget?.kind === 'territory') {
-              setPickedTerritorySelection([]);
-              setPickerTargetValues(referencePickTarget, []);
-              hoverPickRef.current = '';
-              return;
-            }
             setActivePicker(null);
             setDraftPoints([]);
             setFreehandModifierPressed(false);
@@ -639,14 +627,10 @@ xatra.TitleBox("<b>My Map</b>")
       if (editableTarget && !allowPickerMapShortcutInInput) return;
       if (e.key === 'Escape' && activePicker?.context === 'reference-gadm' && referencePickTarget?.kind === 'gadm') {
         e.preventDefault();
-        setPickedGadmSelection([]);
-        setPickerTargetValues(referencePickTarget, []);
-        hoverPickRef.current = '';
+        setActivePicker(null);
       } else if (e.key === 'Escape' && activePicker?.context === 'territory-library' && referencePickTarget?.kind === 'territory') {
         e.preventDefault();
-        setPickedTerritorySelection([]);
-        setPickerTargetValues(referencePickTarget, []);
-        hoverPickRef.current = '';
+        setActivePicker(null);
       } else if (e.key === '?') {
         e.preventDefault();
         setShowShortcutHelp((prev) => !prev);
@@ -1444,7 +1428,7 @@ xatra.TitleBox("<b>My Map</b>")
                             ))}
                           </div>
                         )}
-                        <div className="text-[10px] text-gray-500 italic">Selections update the target field immediately. Press `Esc` to clear.</div>
+                        <div className="text-[10px] text-gray-500 italic">Selections update the target field immediately. Press `Esc` to stop picker mode.</div>
                     </div>
                 </div>
             </div>
@@ -1538,7 +1522,7 @@ xatra.TitleBox("<b>My Map</b>")
                         ))}
                       </div>
                     )}
-                    <div className="text-[10px] text-gray-500 italic">Selections update the target field immediately. Press `Esc` to clear.</div>
+                    <div className="text-[10px] text-gray-500 italic">Selections update the target field immediately. Press `Esc` to stop picker mode.</div>
                 </div>
                 <button 
                     onClick={() => renderTerritoryLibrary(territoryLibrarySource)}
@@ -1599,7 +1583,7 @@ xatra.TitleBox("<b>My Map</b>")
                 <div className="absolute inset-0 z-30 pointer-events-none flex items-start justify-center pt-8">
                     <div className="bg-amber-500 text-white px-6 py-4 rounded-lg shadow-2xl border-2 border-amber-600 font-semibold text-center max-w-2xl animate-pulse">
                         <div className="text-sm">
-                          Click regions to toggle selection. Hold <kbd className="bg-amber-600 px-1.5 py-0.5 rounded">Ctrl/Cmd</kbd> and move to paint-select, hold <kbd className="bg-amber-600 px-1.5 py-0.5 rounded">Alt</kbd> and move to paint-unselect, press <kbd className="bg-amber-600 px-1.5 py-0.5 rounded">Esc</kbd> to clear.
+                          Click regions to toggle selection. Hold <kbd className="bg-amber-600 px-1.5 py-0.5 rounded">Ctrl/Cmd</kbd> and move to paint-select, hold <kbd className="bg-amber-600 px-1.5 py-0.5 rounded">Alt</kbd> and move to paint-unselect, press <kbd className="bg-amber-600 px-1.5 py-0.5 rounded">Esc</kbd> to stop picker mode.
                         </div>
                     </div>
                 </div>
