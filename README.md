@@ -203,6 +203,9 @@ Minor changes
   - [ ] Instead, the blue highlight on borders should be shown when moving an item into a group: the group's border should get highlighted blue.
   - [ ] Now we can hide the little "Drop here to move inside this group" "Drop here to move to end of this level" hint boxes.
 - [ ] It should be possible to drag items around with the keyboard: Shift+Up to go up, Shift+Down to go down, Shift+Left to exit group upwards (i.e. go to the position right above the group the element is in), Shift+Right to exit group downwards. A small hint should appear below a territory when it is selected, displaying these keyboard shortcuts.
+- [ ] Flag Territories: Better UI for "Add Operation" 
+  - [ ] Instead of a single "Add Operation" link, there should be three separate links "(+) add / (-) subtract / (&) intersect".
+  - [ ] Upon clicking one of those buttons (or pressing +, - or & when that particular Flag item or anything therein is focused), it should turn into a prompt asking what sort of territory you want to add, e.g. if we select subtract then it expands to "(-) subtract: _**g**adm_ / **p**olygon / **t**erritory / gr**o**up / [Esc]". It immediately focuses on gadm (so it is underlined), and we can cycle to focus a different option with arrow or tab keys. Preessing Enter or clicking one of those options selects it. Pressing the respective bolded key (g, p, t or o) also selects that option. Navigating to Esc, clicking it or pressing the escape key on the keyboard escapes this selection and returns the state of the links to "(+) add / (-) subtract / (&) intersect". So e.g. if we press "o" here it would create an entry with operation "-" and territory type "group".
 
 Design improvements
 - [x] introduce a dark mode

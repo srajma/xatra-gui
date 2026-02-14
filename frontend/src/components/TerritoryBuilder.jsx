@@ -322,10 +322,24 @@ const TokenInput = ({
   );
 };
 
+const findScrollableParent = (el) => {
+  let cur = el;
+  while (cur && cur !== document.body) {
+    const style = window.getComputedStyle(cur);
+    const overflowY = style?.overflowY || '';
+    if ((overflowY === 'auto' || overflowY === 'scroll') && cur.scrollHeight > cur.clientHeight) return cur;
+    cur = cur.parentElement;
+  }
+  return null;
+};
+
 const TerritoryBuilder = ({
-  value, onChange, lastMapClick, activePicker, setActivePicker, draftPoints, setDraftPoints, parentId, predefinedCode, onStartReferencePick, onStartTerritoryLibraryPick, pathPrefix = [], onMovePartByPath = null
+  value, onChange, lastMapClick, activePicker, setActivePicker, draftPoints, setDraftPoints, parentId, predefinedCode, onStartReferencePick, onStartTerritoryLibraryPick, pathPrefix = [], onMovePartByPath = null, selectedPath: selectedPathProp = null, setSelectedPath: setSelectedPathProp = null
 }) => {
   const parts = normalizeParts(value);
+  const [localSelectedPath, setLocalSelectedPath] = useState(null);
+  const selectedPath = selectedPathProp || localSelectedPath;
+  const setSelectedPath = setSelectedPathProp || setLocalSelectedPath;
 
   const matchingPickerPath = useMemo(() => {
     if (!activePicker || activePicker.context !== `territory-${parentId}`) return null;
@@ -409,25 +423,15 @@ const TerritoryBuilder = ({
   };
 
   const [draggedPath, setDraggedPath] = useState(null);
-  const [dragOverIndex, setDragOverIndex] = useState(null);
+  const [dragInsertionIndex, setDragInsertionIndex] = useState(null);
   const [dragOverGroupInsideIndex, setDragOverGroupInsideIndex] = useState(null);
-  const [isDragOverTail, setIsDragOverTail] = useState(false);
-
-  const movePart = (fromIndex, toIndex) => {
-    if (fromIndex === toIndex) return;
-    const newParts = [...parts];
-    const [removed] = newParts.splice(fromIndex, 1);
-    newParts.splice(toIndex, 0, removed);
-    onChange(newParts);
-    setActivePicker(null);
-  };
 
   const movePartByPathLocal = (fromPath, toParentPath, toIndex) => {
-    if (!Array.isArray(fromPath) || fromPath.length === 0 || !Array.isArray(toParentPath)) return;
-    if (isPrefixPath(fromPath, toParentPath)) return;
+    if (!Array.isArray(fromPath) || fromPath.length === 0 || !Array.isArray(toParentPath)) return null;
+    if (isPrefixPath(fromPath, toParentPath)) return null;
     const fromParentPath = fromPath.slice(0, -1);
     const fromIndex = fromPath[fromPath.length - 1];
-    if (!Number.isInteger(fromIndex)) return;
+    if (!Number.isInteger(fromIndex)) return null;
 
     let insertParentPath = toParentPath;
     let insertIndex = Number.isInteger(toIndex) ? toIndex : 0;
@@ -437,14 +441,43 @@ const TerritoryBuilder = ({
     insertParentPath = adjustPathForRemoval(insertParentPath, fromParentPath, fromIndex);
 
     const removed = removeAtPath(parts, fromPath);
-    if (!removed || !removed.removed) return;
+    if (!removed || !removed.removed) return null;
     const inserted = insertAtPath(removed.parts, insertParentPath, insertIndex, removed.removed);
-    if (!inserted) return;
+    if (!inserted) return null;
     onChange(inserted);
     setActivePicker(null);
+    return [...insertParentPath, insertIndex];
   };
 
   const movePartByPath = onMovePartByPath || movePartByPathLocal;
+
+  const focusPathSoon = (path) => {
+    if (!Array.isArray(path) || path.length === 0) return;
+    window.requestAnimationFrame(() => {
+      const row = document.querySelector(`[data-territory-path="${path.join('.')}"]`);
+      if (row && typeof row.focus === 'function') row.focus();
+    });
+  };
+
+  const autoScrollForDrag = (e) => {
+    const scroller = findScrollableParent(e.currentTarget);
+    if (!scroller) return;
+    const rect = scroller.getBoundingClientRect();
+    const edge = 56;
+    const y = e.clientY;
+    if (y < rect.top + edge) {
+      const delta = Math.max(6, ((rect.top + edge) - y) * 0.35);
+      scroller.scrollTop -= delta;
+    } else if (y > rect.bottom - edge) {
+      const delta = Math.max(6, (y - (rect.bottom - edge)) * 0.35);
+      scroller.scrollTop += delta;
+    }
+  };
+
+  const clearDragTargets = () => {
+    setDragInsertionIndex(null);
+    setDragOverGroupInsideIndex(null);
+  };
 
   const handleDragStart = (e, rowPath) => {
     setDraggedPath(rowPath);
@@ -453,37 +486,35 @@ const TerritoryBuilder = ({
     e.dataTransfer.setData(DRAG_PATH_MIME, serialized);
     e.dataTransfer.setData('text/plain', serialized);
   };
-  const handleDragOver = (e, index) => {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
-    setDragOverIndex(index);
-  };
-  const handleDragLeave = () => setDragOverIndex(null);
-  const handleDrop = (e, toIndex) => {
+
+  const handleDragOverRow = (e, index) => {
     e.preventDefault();
     e.stopPropagation();
-    setDragOverIndex(null);
+    e.dataTransfer.dropEffect = 'move';
+    autoScrollForDrag(e);
+    const rect = e.currentTarget.getBoundingClientRect();
+    const shouldInsertBefore = e.clientY < rect.top + rect.height / 2;
+    setDragInsertionIndex(shouldInsertBefore ? index : index + 1);
     setDragOverGroupInsideIndex(null);
-    setIsDragOverTail(false);
+  };
+
+  const handleDropOnRow = (e, index) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const rect = e.currentTarget.getBoundingClientRect();
+    const shouldInsertBefore = e.clientY < rect.top + rect.height / 2;
+    const toIndex = shouldInsertBefore ? index : index + 1;
+    clearDragTargets();
     setDraggedPath(null);
     const fromPath = parseDraggedPath(e);
     if (!fromPath) return;
-    if (fromPath.length === pathPrefix.length + 1 && fromPath.slice(0, -1).every((v, i) => v === pathPrefix[i])) {
-      const fromIndex = fromPath[fromPath.length - 1];
-      if (Number.isInteger(fromIndex)) {
-        movePart(fromIndex, toIndex);
-        return;
-      }
-    }
     movePartByPath(fromPath, pathPrefix, toIndex);
   };
 
   const handleDropInsideGroup = (e, groupPath, groupLength) => {
     e.preventDefault();
     e.stopPropagation();
-    setDragOverIndex(null);
-    setDragOverGroupInsideIndex(null);
-    setIsDragOverTail(false);
+    clearDragTargets();
     setDraggedPath(null);
     const fromPath = parseDraggedPath(e);
     if (!fromPath) return;
@@ -493,29 +524,50 @@ const TerritoryBuilder = ({
   const handleDropAtEnd = (e) => {
     e.preventDefault();
     e.stopPropagation();
-    setDragOverIndex(null);
-    setDragOverGroupInsideIndex(null);
-    setIsDragOverTail(false);
+    clearDragTargets();
     setDraggedPath(null);
     const fromPath = parseDraggedPath(e);
     if (!fromPath) return;
     movePartByPath(fromPath, pathPrefix, parts.length);
   };
+
   const handleDragEnd = () => {
     setDraggedPath(null);
-    setDragOverIndex(null);
-    setDragOverGroupInsideIndex(null);
-    setIsDragOverTail(false);
+    clearDragTargets();
   };
 
-  const handleRowKeyDown = (e, index) => {
-    if (!e.altKey) return;
+  const handleRowKeyDown = (e, rowPath) => {
+    if (!e.shiftKey) return;
+    const targetTag = String(e.target?.tagName || '').toUpperCase();
+    if (targetTag === 'INPUT' || targetTag === 'TEXTAREA' || targetTag === 'SELECT' || e.target?.isContentEditable) return;
+    const idx = rowPath[rowPath.length - 1];
+    if (!Number.isInteger(idx)) return;
+    const parentPath = rowPath.slice(0, -1);
+    let movedPath = null;
+
     if (e.key === 'ArrowUp') {
       e.preventDefault();
-      movePart(index, Math.max(0, index - 1));
+      movedPath = movePartByPath(rowPath, parentPath, Math.max(0, idx - 1));
     } else if (e.key === 'ArrowDown') {
       e.preventDefault();
-      movePart(index, Math.min(parts.length - 1, index + 1));
+      movedPath = movePartByPath(rowPath, parentPath, Math.min(parts.length, idx + 2));
+    } else if (e.key === 'ArrowLeft') {
+      if (rowPath.length < 2) return;
+      e.preventDefault();
+      const grandParentPath = rowPath.slice(0, -2);
+      const parentIndex = rowPath[rowPath.length - 2];
+      movedPath = movePartByPath(rowPath, grandParentPath, parentIndex);
+    } else if (e.key === 'ArrowRight') {
+      if (rowPath.length < 2) return;
+      e.preventDefault();
+      const grandParentPath = rowPath.slice(0, -2);
+      const parentIndex = rowPath[rowPath.length - 2];
+      movedPath = movePartByPath(rowPath, grandParentPath, parentIndex + 1);
+    }
+
+    if (Array.isArray(movedPath)) {
+      setSelectedPath(movedPath);
+      focusPathSoon(movedPath);
     }
   };
 
@@ -558,227 +610,251 @@ const TerritoryBuilder = ({
     <div className="space-y-2">
       {parts.map((part, idx) => {
         const rowPath = pathForIndex(idx);
+        const rowPathKey = rowPath.join('.');
         const isReferencePickingThisPart = !!(
           isReferencePickingThisFlag &&
           Array.isArray(activePicker?.target?.partPath) &&
-          activePicker.target.partPath.join('.') === rowPath.join('.')
+          activePicker.target.partPath.join('.') === rowPathKey
         );
-        const isLibraryPickingThisPart = !!(isLibraryPicking && Array.isArray(activePicker?.target?.partPath) && activePicker.target.partPath.join('.') === rowPath.join('.'));
+        const isLibraryPickingThisPart = !!(isLibraryPicking && Array.isArray(activePicker?.target?.partPath) && activePicker.target.partPath.join('.') === rowPathKey);
         const rowIndent = pathPrefix.length > 0 ? 'ml-3' : '';
+        const isRowSelected = pathsEqual(selectedPath, rowPath);
+        const isDropBefore = dragInsertionIndex === idx;
 
         if (part.type === 'group') {
           return (
-            <div
-              key={idx}
-              draggable
-              tabIndex={0}
-              onDragStart={(e) => handleDragStart(e, rowPath)}
-              onDragOver={(e) => handleDragOver(e, idx)}
-              onDragLeave={handleDragLeave}
-              onDrop={(e) => handleDrop(e, idx)}
-              onDragEnd={handleDragEnd}
-              onKeyDown={(e) => handleRowKeyDown(e, idx)}
-              className={`${rowIndent} bg-gray-50 p-2 rounded border transition-colors ${pathsEqual(draggedPath, rowPath) ? 'opacity-50' : ''} ${dragOverIndex === idx ? 'border-blue-400 ring-1 ring-blue-200' : 'border-gray-200'}`}
-            >
-              <div className="flex gap-2 items-center">
-                <div className="flex items-center cursor-grab active:cursor-grabbing text-gray-400 hover:text-gray-600 flex-shrink-0" title="Drag to reorder">
-                  <GripVertical size={14}/>
-                </div>
-                {idx > 0 ? (
-                  <select
-                    value={part.op}
-                    onChange={(e) => updatePart(idx, { op: e.target.value })}
-                    className="text-xs p-1 border rounded bg-white w-16 flex-shrink-0"
-                  >
-                    <option value="union">∪ (+)</option>
-                    <option value="difference">∖ (-)</option>
-                    <option value="intersection">∩ (&)</option>
-                  </select>
-                ) : (
-                  <div className="w-16 text-xs p-1 text-center font-bold text-gray-500 bg-gray-100 rounded flex-shrink-0 border border-gray-200">Base</div>
-                )}
-                <select
-                  value={part.type}
-                  onChange={(e) => {
-                    const nextType = e.target.value;
-                    if (nextType === 'group') updatePart(idx, { type: 'group', value: [] });
-                    else if (nextType === 'polygon') updatePart(idx, { type: 'polygon', value: '' });
-                    else updatePart(idx, { type: nextType, value: '' });
-                  }}
-                  className="text-xs p-1 border rounded bg-white w-24 flex-shrink-0"
-                >
-                  <option value="gadm">GADM</option>
-                  <option value="polygon">Polygon</option>
-                  <option value="predefined">Territory</option>
-                  <option value="group">Group...</option>
-                </select>
-                <div className="text-xs text-gray-500 font-medium">Nested Group</div>
-                <button onClick={() => removePart(idx)} className="text-red-400 hover:text-red-600 p-1 ml-auto flex-shrink-0">
-                  <Trash2 size={12}/>
-                </button>
-              </div>
+            <React.Fragment key={rowPathKey}>
+              <div className={`${rowIndent} h-1 rounded ${isDropBefore ? 'bg-blue-500' : 'bg-transparent'}`} />
               <div
-                onDragOver={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  e.dataTransfer.dropEffect = 'move';
-                  setDragOverGroupInsideIndex(idx);
-                }}
-                onDragLeave={() => setDragOverGroupInsideIndex((prev) => (prev === idx ? null : prev))}
-                onDrop={(e) => handleDropInsideGroup(e, rowPath, Array.isArray(part.value) ? part.value.length : 0)}
-                className={`mt-2 text-[10px] px-2 py-1 rounded border border-dashed transition-colors ${
-                  dragOverGroupInsideIndex === idx ? 'border-blue-400 bg-blue-50 text-blue-700' : 'border-gray-300 text-gray-500 bg-white'
+                draggable
+                tabIndex={0}
+                data-territory-path={rowPathKey}
+                onFocusCapture={() => setSelectedPath(rowPath)}
+                onMouseDownCapture={() => setSelectedPath(rowPath)}
+                onDragStart={(e) => handleDragStart(e, rowPath)}
+                onDragOver={(e) => handleDragOverRow(e, idx)}
+                onDrop={(e) => handleDropOnRow(e, idx)}
+                onDragEnd={handleDragEnd}
+                onKeyDown={(e) => handleRowKeyDown(e, rowPath)}
+                className={`${rowIndent} bg-gray-50 p-2 rounded border transition-colors outline-none ${pathsEqual(draggedPath, rowPath) ? 'opacity-50' : ''} ${
+                  dragOverGroupInsideIndex === idx ? 'border-blue-500 ring-1 ring-blue-200' : (isRowSelected ? 'border-blue-300 ring-1 ring-blue-100' : 'border-gray-200')
                 }`}
               >
-                Drop here to move inside this group
+                <div className="flex gap-2 items-center">
+                  <div className="flex items-center cursor-grab active:cursor-grabbing text-gray-400 hover:text-gray-600 flex-shrink-0" title="Drag to reorder">
+                    <GripVertical size={14}/>
+                  </div>
+                  {idx > 0 ? (
+                    <select
+                      value={part.op}
+                      onChange={(e) => updatePart(idx, { op: e.target.value })}
+                      className="text-xs p-1 border rounded bg-white w-16 flex-shrink-0"
+                    >
+                      <option value="union">∪ (+)</option>
+                      <option value="difference">∖ (-)</option>
+                      <option value="intersection">∩ (&)</option>
+                    </select>
+                  ) : (
+                    <div className="w-16 text-xs p-1 text-center font-bold text-gray-500 bg-gray-100 rounded flex-shrink-0 border border-gray-200">Base</div>
+                  )}
+                  <select
+                    value={part.type}
+                    onChange={(e) => {
+                      const nextType = e.target.value;
+                      if (nextType === 'group') updatePart(idx, { type: 'group', value: [] });
+                      else if (nextType === 'polygon') updatePart(idx, { type: 'polygon', value: '' });
+                      else updatePart(idx, { type: nextType, value: '' });
+                    }}
+                    className="text-xs p-1 border rounded bg-white w-24 flex-shrink-0"
+                  >
+                    <option value="gadm">GADM</option>
+                    <option value="polygon">Polygon</option>
+                    <option value="predefined">Territory</option>
+                    <option value="group">Group...</option>
+                  </select>
+                  <div className="text-xs text-gray-500 font-medium">Nested Group</div>
+                  <button onClick={() => removePart(idx)} className="text-red-400 hover:text-red-600 p-1 ml-auto flex-shrink-0">
+                    <Trash2 size={12}/>
+                  </button>
+                </div>
+                <div
+                  className="mt-2 pl-3 border-l-2 border-gray-300 rounded-sm"
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    e.dataTransfer.dropEffect = 'move';
+                    autoScrollForDrag(e);
+                    setDragOverGroupInsideIndex(idx);
+                    setDragInsertionIndex(null);
+                  }}
+                  onDragLeave={() => setDragOverGroupInsideIndex((prev) => (prev === idx ? null : prev))}
+                  onDrop={(e) => handleDropInsideGroup(e, rowPath, Array.isArray(part.value) ? part.value.length : 0)}
+                >
+                  <TerritoryBuilder
+                    value={Array.isArray(part.value) ? part.value : []}
+                    onChange={(next) => updatePart(idx, { value: next })}
+                    lastMapClick={lastMapClick}
+                    activePicker={activePicker}
+                    setActivePicker={setActivePicker}
+                    draftPoints={draftPoints}
+                    setDraftPoints={setDraftPoints}
+                    parentId={parentId}
+                    predefinedCode={predefinedCode}
+                    onStartReferencePick={onStartReferencePick}
+                    onStartTerritoryLibraryPick={onStartTerritoryLibraryPick}
+                    pathPrefix={rowPath}
+                    onMovePartByPath={movePartByPath}
+                    selectedPath={selectedPath}
+                    setSelectedPath={setSelectedPath}
+                  />
+                </div>
               </div>
-              <div className="mt-2 pl-3 border-l-2 border-gray-300">
-                <TerritoryBuilder
-                  value={Array.isArray(part.value) ? part.value : []}
-                  onChange={(next) => updatePart(idx, { value: next })}
-                  lastMapClick={lastMapClick}
-                  activePicker={activePicker}
-                  setActivePicker={setActivePicker}
-                  draftPoints={draftPoints}
-                  setDraftPoints={setDraftPoints}
-                  parentId={parentId}
-                  predefinedCode={predefinedCode}
-                  onStartReferencePick={onStartReferencePick}
-                  onStartTerritoryLibraryPick={onStartTerritoryLibraryPick}
-                  pathPrefix={rowPath}
-                  onMovePartByPath={movePartByPath}
-                />
-              </div>
-            </div>
+              {isRowSelected && (
+                <div className={`${rowIndent} text-[10px] text-blue-700 mt-1 px-2`}>
+                  Shift+Up/Down move • Shift+Left out above group • Shift+Right out below group
+                </div>
+              )}
+            </React.Fragment>
           );
         }
 
         return (
-          <div
-            key={idx}
-            draggable
-            tabIndex={0}
-            onDragStart={(e) => handleDragStart(e, rowPath)}
-            onDragOver={(e) => handleDragOver(e, idx)}
-            onDragLeave={handleDragLeave}
-            onDrop={(e) => handleDrop(e, idx)}
-            onDragEnd={handleDragEnd}
-            onKeyDown={(e) => handleRowKeyDown(e, idx)}
-            className={`${rowIndent} flex gap-2 items-start bg-gray-50 p-2 rounded border transition-colors ${pathsEqual(draggedPath, rowPath) ? 'opacity-50' : ''} ${dragOverIndex === idx ? 'border-blue-400 ring-1 ring-blue-200' : 'border-gray-200'}`}
-          >
-            <div className="flex items-center cursor-grab active:cursor-grabbing text-gray-400 hover:text-gray-600 flex-shrink-0" title="Drag to reorder">
-              <GripVertical size={14}/>
-            </div>
-            {idx > 0 ? (
-              <select
-                value={part.op}
-                onChange={(e) => updatePart(idx, { op: e.target.value })}
-                className="text-xs p-1 border rounded bg-white w-16 flex-shrink-0"
-              >
-                <option value="union">∪ (+)</option>
-                <option value="difference">∖ (-)</option>
-                <option value="intersection">∩ (&)</option>
-              </select>
-            ) : (
-              <div className="w-16 text-xs p-1 text-center font-bold text-gray-500 bg-gray-100 rounded flex-shrink-0 border border-gray-200">Base</div>
-            )}
-
-            <select
-              value={part.type}
-              onChange={(e) => {
-                const nextType = e.target.value;
-                if (nextType === 'group') {
-                  updatePart(idx, { type: 'group', value: [] });
-                } else if (nextType === 'polygon') {
-                  updatePart(idx, { type: 'polygon', value: '' });
-                } else {
-                  updatePart(idx, { type: nextType, value: '' });
-                }
-              }}
-              className="text-xs p-1 border rounded bg-white w-24 flex-shrink-0"
+          <React.Fragment key={rowPathKey}>
+            <div className={`${rowIndent} h-1 rounded ${isDropBefore ? 'bg-blue-500' : 'bg-transparent'}`} />
+            <div
+              draggable
+              tabIndex={0}
+              data-territory-path={rowPathKey}
+              onFocusCapture={() => setSelectedPath(rowPath)}
+              onMouseDownCapture={() => setSelectedPath(rowPath)}
+              onDragStart={(e) => handleDragStart(e, rowPath)}
+              onDragOver={(e) => handleDragOverRow(e, idx)}
+              onDrop={(e) => handleDropOnRow(e, idx)}
+              onDragEnd={handleDragEnd}
+              onKeyDown={(e) => handleRowKeyDown(e, rowPath)}
+              className={`${rowIndent} flex gap-2 items-start bg-gray-50 p-2 rounded border transition-colors outline-none ${pathsEqual(draggedPath, rowPath) ? 'opacity-50' : ''} ${
+                isRowSelected ? 'border-blue-300 ring-1 ring-blue-100' : 'border-gray-200'
+              }`}
             >
-              <option value="gadm">GADM</option>
-              <option value="polygon">Polygon</option>
-              <option value="predefined">Territory</option>
-              <option value="group">Group...</option>
-            </select>
-
-            <div className="flex-1 min-w-0">
-              {part.type === 'gadm' ? (
-                <div className="flex gap-1 items-start">
-                  <div className="flex-1 min-w-0">
-                    <TokenInput
-                      tokens={toList(part.value)}
-                      onChange={(vals) => updatePart(idx, { value: toStored(vals) })}
-                      placeholder="Search GADM..."
-                      mode="remote"
-                      endpoint="http://localhost:8088/search/gadm"
-                    />
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (isReferencePickingThisPart) {
-                        setActivePicker(null);
-                        return;
-                      }
-                      onStartReferencePick({ kind: 'gadm', flagIndex: parentId, partIndex: idx, partPath: rowPath });
-                    }}
-                    className={`p-1 border rounded flex-shrink-0 transition-colors ${isReferencePickingThisPart ? 'bg-blue-100 text-blue-700 border-blue-300 ring-2 ring-blue-200' : 'bg-gray-50 text-gray-600 hover:bg-gray-100 border-gray-200'}`}
-                    title={isReferencePickingThisPart ? 'Cancel GADM picking' : 'Pick GADM from Reference Map'}
-                  >
-                    <MousePointer2 size={12}/>
-                  </button>
-                </div>
-              ) : part.type === 'predefined' ? (
-                <div className="flex gap-1 items-start">
-                  <div className="flex-1 min-w-0">
-                    <TokenInput
-                      tokens={toList(part.value)}
-                      onChange={(vals) => updatePart(idx, { value: toStored(vals) })}
-                      placeholder="e.g. maurya, NORTH_INDIA"
-                      mode="local"
-                      localOptions={allPredefinedOptions}
-                    />
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (isLibraryPickingThisPart) {
-                        setActivePicker(null);
-                        return;
-                      }
-                      onStartTerritoryLibraryPick({ kind: 'territory', flagIndex: parentId, partIndex: idx, partPath: rowPath });
-                    }}
-                    className={`p-1 border rounded flex-shrink-0 transition-colors ${isLibraryPickingThisPart ? 'bg-blue-100 text-blue-700 border-blue-300 ring-2 ring-blue-200' : 'bg-gray-50 text-gray-600 hover:bg-gray-100 border-gray-200'}`}
-                    title={isLibraryPickingThisPart ? 'Cancel territory library picking' : 'Pick from Territory Library map'}
-                  >
-                    <MousePointer2 size={12}/>
-                  </button>
-                </div>
+              <div className="flex items-center cursor-grab active:cursor-grabbing text-gray-400 hover:text-gray-600 flex-shrink-0" title="Drag to reorder">
+                <GripVertical size={14}/>
+              </div>
+              {idx > 0 ? (
+                <select
+                  value={part.op}
+                  onChange={(e) => updatePart(idx, { op: e.target.value })}
+                  className="text-xs p-1 border rounded bg-white w-16 flex-shrink-0"
+                >
+                  <option value="union">∪ (+)</option>
+                  <option value="difference">∖ (-)</option>
+                  <option value="intersection">∩ (&)</option>
+                </select>
               ) : (
-                <div className="flex gap-1 items-start">
-                  <textarea
-                    value={part.value || ''}
-                    onChange={(e) => updatePart(idx, { value: e.target.value })}
-                    className="w-full text-xs p-1 border rounded font-mono h-8 resize-none bg-white"
-                    placeholder="[[lat,lon],...]"
-                  />
-                  <button
-                    onClick={() => togglePolygonPicking(idx)}
-                    className={`p-1 border rounded flex-shrink-0 transition-colors ${pickingIndex === idx ? 'bg-blue-100 text-blue-700 border-blue-300 ring-2 ring-blue-200' : 'bg-white text-gray-600 hover:bg-gray-100 border-gray-300'}`}
-                    title={pickingIndex === idx ? 'Click on map to append points (Backspace to undo, Esc to stop)' : 'Draw polygon on map'}
-                  >
-                    <MousePointer2 size={12}/>
-                  </button>
-                </div>
+                <div className="w-16 text-xs p-1 text-center font-bold text-gray-500 bg-gray-100 rounded flex-shrink-0 border border-gray-200">Base</div>
               )}
-            </div>
 
-            <button onClick={() => removePart(idx)} className="text-red-400 hover:text-red-600 p-1 flex-shrink-0">
-              <Trash2 size={12}/>
-            </button>
-          </div>
+              <select
+                value={part.type}
+                onChange={(e) => {
+                  const nextType = e.target.value;
+                  if (nextType === 'group') {
+                    updatePart(idx, { type: 'group', value: [] });
+                  } else if (nextType === 'polygon') {
+                    updatePart(idx, { type: 'polygon', value: '' });
+                  } else {
+                    updatePart(idx, { type: nextType, value: '' });
+                  }
+                }}
+                className="text-xs p-1 border rounded bg-white w-24 flex-shrink-0"
+              >
+                <option value="gadm">GADM</option>
+                <option value="polygon">Polygon</option>
+                <option value="predefined">Territory</option>
+                <option value="group">Group...</option>
+              </select>
+
+              <div className="flex-1 min-w-0">
+                {part.type === 'gadm' ? (
+                  <div className="flex gap-1 items-start">
+                    <div className="flex-1 min-w-0">
+                      <TokenInput
+                        tokens={toList(part.value)}
+                        onChange={(vals) => updatePart(idx, { value: toStored(vals) })}
+                        placeholder="Search GADM..."
+                        mode="remote"
+                        endpoint="http://localhost:8088/search/gadm"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (isReferencePickingThisPart) {
+                          setActivePicker(null);
+                          return;
+                        }
+                        onStartReferencePick({ kind: 'gadm', flagIndex: parentId, partIndex: idx, partPath: rowPath });
+                      }}
+                      className={`p-1 border rounded flex-shrink-0 transition-colors ${isReferencePickingThisPart ? 'bg-blue-100 text-blue-700 border-blue-300 ring-2 ring-blue-200' : 'bg-gray-50 text-gray-600 hover:bg-gray-100 border-gray-200'}`}
+                      title={isReferencePickingThisPart ? 'Cancel GADM picking' : 'Pick GADM from Reference Map'}
+                    >
+                      <MousePointer2 size={12}/>
+                    </button>
+                  </div>
+                ) : part.type === 'predefined' ? (
+                  <div className="flex gap-1 items-start">
+                    <div className="flex-1 min-w-0">
+                      <TokenInput
+                        tokens={toList(part.value)}
+                        onChange={(vals) => updatePart(idx, { value: toStored(vals) })}
+                        placeholder="e.g. maurya, NORTH_INDIA"
+                        mode="local"
+                        localOptions={allPredefinedOptions}
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (isLibraryPickingThisPart) {
+                          setActivePicker(null);
+                          return;
+                        }
+                        onStartTerritoryLibraryPick({ kind: 'territory', flagIndex: parentId, partIndex: idx, partPath: rowPath });
+                      }}
+                      className={`p-1 border rounded flex-shrink-0 transition-colors ${isLibraryPickingThisPart ? 'bg-blue-100 text-blue-700 border-blue-300 ring-2 ring-blue-200' : 'bg-gray-50 text-gray-600 hover:bg-gray-100 border-gray-200'}`}
+                      title={isLibraryPickingThisPart ? 'Cancel territory library picking' : 'Pick from Territory Library map'}
+                    >
+                      <MousePointer2 size={12}/>
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex gap-1 items-start">
+                    <textarea
+                      value={part.value || ''}
+                      onChange={(e) => updatePart(idx, { value: e.target.value })}
+                      className="w-full text-xs p-1 border rounded font-mono h-8 resize-none bg-white"
+                      placeholder="[[lat,lon],...]"
+                    />
+                    <button
+                      onClick={() => togglePolygonPicking(idx)}
+                      className={`p-1 border rounded flex-shrink-0 transition-colors ${pickingIndex === idx ? 'bg-blue-100 text-blue-700 border-blue-300 ring-2 ring-blue-200' : 'bg-white text-gray-600 hover:bg-gray-100 border-gray-300'}`}
+                      title={pickingIndex === idx ? 'Click on map to append points (Backspace to undo, Esc to stop)' : 'Draw polygon on map'}
+                    >
+                      <MousePointer2 size={12}/>
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              <button onClick={() => removePart(idx)} className="text-red-400 hover:text-red-600 p-1 flex-shrink-0">
+                <Trash2 size={12}/>
+              </button>
+            </div>
+            {isRowSelected && (
+              <div className={`${rowIndent} text-[10px] text-blue-700 mt-1 px-2`}>
+                Shift+Up/Down move • Shift+Left out above group • Shift+Right out below group
+              </div>
+            )}
+          </React.Fragment>
         );
       })}
 
@@ -787,16 +863,13 @@ const TerritoryBuilder = ({
           e.preventDefault();
           e.stopPropagation();
           e.dataTransfer.dropEffect = 'move';
-          setIsDragOverTail(true);
+          autoScrollForDrag(e);
+          setDragInsertionIndex(parts.length);
+          setDragOverGroupInsideIndex(null);
         }}
-        onDragLeave={() => setIsDragOverTail(false)}
         onDrop={handleDropAtEnd}
-        className={`h-7 rounded border border-dashed transition-colors flex items-center px-2 text-[10px] ${
-          isDragOverTail ? 'border-blue-400 bg-blue-50 text-blue-700' : 'border-gray-300 text-gray-500 bg-gray-50'
-        }`}
-      >
-        Drop here to move to end of this level
-      </div>
+        className={`h-1 rounded ${dragInsertionIndex === parts.length ? 'bg-blue-500' : 'bg-transparent'}`}
+      />
 
       <button onClick={addPart} className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1 font-medium mt-1">
         <Plus size={12}/> Add Operation
