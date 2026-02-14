@@ -42,6 +42,7 @@ Bugs
   - [x] The Territory picker is bugged out:
     - [x] When I select and unselect a territory, it becomes black rather than returning to its original color and transparency (like it correctly does for the GADM picker).
     - [x] When I pan or zoom, those blackened territories become white, making them impossible to click again.
+  - [ ] Flag Territories: Dragging an item *out* of a group doesn't seem to be working (moving something into a group works). Instead, moves the whole group to wherever we tried to move the item.
 
 Basic extensions
 - [x] Allow adding any feature to the map, not just flags and rivers. Every single method listed under #### Methods in the main README should have an appropriate interface for adding it:
@@ -196,6 +197,12 @@ Minor changes
 - [x] Remove this hint: `Ctrl/Cmd+5` opens this tab. `Custom Library` uses the code from the Code tab's Territory library editor.
 - [x] TitleBox should actually not be a global element, but a layer---xatra supports adding as many "TitleBox" elements as you want, e.g. with different periods. As with the other layers, the "period" field should be present.
 - [x] Remove the "Hold Ctrl/Cmd + drag for freehand ⌫ Backspace to undo" tip that appears in the sidebar when you click the Picker for Paths---since it already appears on the map in a blaring orange message, which is enough. Similarly upon making the Picker changes, the right sidebar of GADM will no longer need "Tip: Click regions to toggle selection. Hold Ctrl/Cmd and move to paint-select, hold Alt and move to paint-unselect.".
+- [ ] Flag Territories: UI improvements for dragging items---
+  - [ ] Scroll sidebar when dragging beyond current view
+  - [ ] Right now if I'm trying to move Item 5 above Item 4 (counting from the top), Item 4's border gets highlighted blue to show it's getting "jumped" over---and when moving Item 5 below Item 6, Item 6 gets highlighted. This is confusing. Instead, a small horizontal line above Item 4 should get highlighted blue (taking care to ensure those lines between the items already exist, so it doesn't cause stuff to move up or down a pixel when it highlights blue); likewise when moving Item 5 below Item 6, a small horizontal line below Item 6 should get highlighted.
+  - [ ] Instead, the blue highlight on borders should be shown when moving an item into a group: the group's border should get highlighted blue.
+  - [ ] Now we can hide the little "Drop here to move inside this group" "Drop here to move to end of this level" hint boxes.
+- [ ] It should be possible to drag items around with the keyboard: Shift+Up to go up, Shift+Down to go down, Shift+Left to exit group upwards (i.e. go to the position right above the group the element is in), Shift+Right to exit group downwards. A small hint should appear below a territory when it is selected, displaying these keyboard shortcuts.
 
 Design improvements
 - [x] introduce a dark mode
