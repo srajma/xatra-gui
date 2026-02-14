@@ -369,12 +369,6 @@ const LayerItem = ({
                     <MousePointer2 size={16}/>
                   </button>
               </div>
-              {isPicking && (
-                  <div className="text-[10px] text-gray-500 mt-1 italic flex gap-2">
-                      <span>Hold Ctrl/Cmd + drag for freehand</span>
-                      <span>⌫ Backspace to undo</span>
-                  </div>
-              )}
             </div>
           </div>
         );

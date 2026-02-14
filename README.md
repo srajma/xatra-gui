@@ -83,7 +83,7 @@ Basic extensions
     - [x] It has the same bug of not allowing 0 as a year
   Wherever something is a bit complicated for the user to know how to set---e.g. color sequences and color maps, or icons for Point; there should be a little info tooltip with helpful documentation.
 - [x] Exporting map JSON and HTML
-- [ ] Paint unselection with Alt doesn't seem to have been implemented (or doesn't work) with the Territory library, only works with GADM.
+- [x] Paint unselection with Alt doesn't seem to have been implemented (or doesn't work) with the Territory library, only works with GADM.
 
 
 Features
@@ -159,13 +159,13 @@ Features
     - [x] The "Copy index" button should be an icon instead of text, and when it is clicked it should temporarily show a visual cue that it has been copied to clipboard.
     - [x] When it is rendering one of the maps (Map Preview, Reference Map, Territory library), why do all the other maps also need to get blurred out and blocked from interaction?
     - [x] with regard to how the Reference Map and Territory Library render in the background when we first load the page, it is a bit misleading because it just shows "No map rendered yet" with no sign of rendering going on. Instead it should show the usual blur Generating screen over those maps. Also in the Territory Library box the checklist and everything should be fully displayed before waiting for the map to load.
-- [ ] Flag Territories: Recursive territory construction. Right now Flag Territories can only be created as simple sequences of operations (add, subtract, intersect) of base territories, i.e. without any "brackets".
-  - [ ] Implement the ability to construct arbitrarly nested territories, i.e. in addition to "GADM", "Polygon" and "Territory library" the user should be able to pick "Group..." which should create an indented list similar to the root one, starting with a Base and the user can add further operations to it, etc.
-  - [ ] Make sure it flows properly with the code conversion (both to-and-fro)
-- [ ] Flag Territories: Implement the ability to enter multiple comma-separated GADMs or Territory library items in a GADM or Territory library field. These should be displayed nicely as little boxes in the text field with cross buttons to remove them, the search autocomplete should work properly (i.e. ignore existing entries in the list) and all normal editing in the field (backspace etc) should be smooth. Under the hood, the GADMs and Territories will be in a little bracket of their own, being unioned.
-  - [ ] This will allow a better way to use the GADM picker and the Territory picker. Instead of selecting some number of territories and choosing whether to add/subtract/intersect them in sequence from the territory---it should simply insert whatever is selected with the respective Territory picker as a comma-separated list into that field.
-  - [ ] Again, make sure it flows properly with the code conversion (both to-and-fro)
-  - [ ] Upon entering the GADM or Territory library picker, a blaring message (same design as the one for Paths/Points/Texts) should appear saying "Click regions to toggle selection. Hold `Ctrl/Cmd` and move to paint-select, hold `Alt` and move to paint-unselect."
+- [x] Flag Territories: Recursive territory construction. Right now Flag Territories can only be created as simple sequences of operations (add, subtract, intersect) of base territories, i.e. without any "brackets".
+  - [x] Implement the ability to construct arbitrarly nested territories, i.e. in addition to "GADM", "Polygon" and "Territory library" the user should be able to pick "Group..." which should create an indented list similar to the root one, starting with a Base and the user can add further operations to it, etc.
+  - [x] Make sure it flows properly with the code conversion (both to-and-fro)
+- [x] Flag Territories: Implement the ability to enter multiple comma-separated GADMs or Territory library items in a GADM or Territory library field. These should be displayed nicely as little boxes in the text field with cross buttons to remove them, the search autocomplete should work properly (i.e. ignore existing entries in the list) and all normal editing in the field (backspace etc) should be smooth. Under the hood, the GADMs and Territories will be in a little bracket of their own, being unioned.
+  - [x] This will allow a better way to use the GADM picker and the Territory picker. Instead of selecting some number of territories and choosing whether to add/subtract/intersect them in sequence from the territory---it should simply insert whatever is selected with the respective Territory picker as a comma-separated list into that field.
+  - [x] Again, make sure it flows properly with the code conversion (both to-and-fro)
+  - [x] Upon entering the GADM or Territory library picker, a blaring message (same design as the one for Paths/Points/Texts) should appear saying "Click regions to toggle selection. Hold `Ctrl/Cmd` and move to paint-select, hold `Alt` and move to paint-unselect."
 
 
 Minor changes
@@ -195,7 +195,7 @@ Minor changes
 - [x] When "Generating Map" is going on (for whatever generation---either the Map Preview, the Reference Map or the Territory Library), it blurs out everything in the map frame, including the Reference Map options box and the Territory library box. It should leave these boxes available for the user to interact with while the map renders.
 - [x] Remove this hint: `Ctrl/Cmd+5` opens this tab. `Custom Library` uses the code from the Code tab's Territory library editor.
 - [x] TitleBox should actually not be a global element, but a layer---xatra supports adding as many "TitleBox" elements as you want, e.g. with different periods. As with the other layers, the "period" field should be present.
-- [ ] Remove the "Hold Ctrl/Cmd + drag for freehand ⌫ Backspace to undo" tip that appears in the sidebar when you click the Picker for Paths---since it already appears on the map in a blaring orange message, which is enough. Similarly upon making the Picker changes, the right sidebar of GADM will no longer need "Tip: Click regions to toggle selection. Hold Ctrl/Cmd and move to paint-select, hold Alt and move to paint-unselect.".
+- [x] Remove the "Hold Ctrl/Cmd + drag for freehand ⌫ Backspace to undo" tip that appears in the sidebar when you click the Picker for Paths---since it already appears on the map in a blaring orange message, which is enough. Similarly upon making the Picker changes, the right sidebar of GADM will no longer need "Tip: Click regions to toggle selection. Hold Ctrl/Cmd and move to paint-select, hold Alt and move to paint-unselect.".
 
 Design improvements
 - [x] introduce a dark mode

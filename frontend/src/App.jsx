@@ -247,16 +247,28 @@ xatra.TitleBox("<b>My Map</b>")
           if (Number.isNaN(parentId)) return;
           const el = builderElements[parentId];
           if (!el || el.type !== 'flag' || !Array.isArray(el.value)) return;
-          const partIndex = activePicker.id;
-          const parts = [...el.value];
-          if (partIndex < 0 || partIndex >= parts.length) return;
-          const part = parts[partIndex];
-          if (part && part.type === 'polygon') {
-              parts[partIndex] = { ...part, value: JSON.stringify(points) };
-              const newElements = [...builderElements];
-              newElements[parentId] = { ...el, value: parts };
-              setBuilderElements(newElements);
-          }
+          const path = Array.isArray(activePicker.target?.partPath)
+            ? activePicker.target.partPath
+            : (Number.isInteger(activePicker.id) ? [activePicker.id] : []);
+          if (!path.length) return;
+          const setPartAtPath = (parts, partPath, depth = 0) => {
+            const idx = partPath[depth];
+            if (!Array.isArray(parts) || idx == null || idx < 0 || idx >= parts.length) return parts;
+            const next = [...parts];
+            const part = next[idx];
+            if (!part || typeof part !== 'object') return parts;
+            if (depth === partPath.length - 1) {
+              if (part.type !== 'polygon') return parts;
+              next[idx] = { ...part, value: JSON.stringify(points) };
+              return next;
+            }
+            if (part.type !== 'group' || !Array.isArray(part.value)) return parts;
+            next[idx] = { ...part, value: setPartAtPath(part.value, partPath, depth + 1) };
+            return next;
+          };
+          const newElements = [...builderElements];
+          newElements[parentId] = { ...el, value: setPartAtPath(el.value, path) };
+          setBuilderElements(newElements);
       }
   };
 
@@ -366,11 +378,25 @@ xatra.TitleBox("<b>My Map</b>")
               setActivePreviewTab('main');
           } else if (data.featureType === 'territory' && data.name && activePicker?.context === 'territory-library' && referencePickTarget?.kind === 'territory') {
               const name = String(data.name);
-              setPickedTerritorySelection((prev) => {
-                const exists = prev.includes(name);
-                if (exists) return prev.filter((x) => x !== name);
-                return [...prev, name];
-              });
+              if (data.hoverMode === 'add' || data.hoverMode === 'remove') {
+                const sig = `${data.hoverMode}:territory:${name}`;
+                if (hoverPickRef.current === sig) return;
+                hoverPickRef.current = sig;
+                setPickedTerritorySelection((prev) => {
+                  const exists = prev.includes(name);
+                  if (data.hoverMode === 'add') {
+                    return exists ? prev : [...prev, name];
+                  }
+                  return exists ? prev.filter((x) => x !== name) : prev;
+                });
+              } else {
+                hoverPickRef.current = '';
+                setPickedTerritorySelection((prev) => {
+                  const exists = prev.includes(name);
+                  if (exists) return prev.filter((x) => x !== name);
+                  return [...prev, name];
+                });
+              }
           }
       }
     };
@@ -473,7 +499,14 @@ xatra.TitleBox("<b>My Map</b>")
   const isBlankTerritoryPart = (part, type) => (
     !!part &&
     part.type === type &&
-    (part.value == null || String(part.value).trim() === '')
+    (
+      part.value == null ||
+      (Array.isArray(part.value) ? part.value.filter(Boolean).length === 0 : String(part.value).trim() === '')
+    )
+  );
+
+  const asSingleOrList = (items) => (
+    items.length === 1 ? items[0] : items
   );
 
   const applyPickedGadmsToTarget = (op) => {
@@ -487,11 +520,38 @@ xatra.TitleBox("<b>My Map</b>")
       const target = next[targetFlagIndex];
       if (!target || target.type !== 'flag') return prev;
       const currentParts = normalizeFlagPartsForApply(target.value).filter((part) => !isBlankTerritoryPart(part, 'gadm'));
-      picked.forEach((item) => {
-        const nextOp = currentParts.length === 0 ? 'union' : op;
-        currentParts.push({ op: nextOp, type: 'gadm', value: item.gid });
-      });
-      next[targetFlagIndex] = { ...target, value: currentParts };
+      const partPath = Array.isArray(referencePickTarget.partPath) ? referencePickTarget.partPath : null;
+      const targetPartIndex = Number.isInteger(referencePickTarget.partIndex) ? referencePickTarget.partIndex : -1;
+      const nextOp = (currentParts.length === 0 || targetPartIndex === 0 || (Array.isArray(partPath) && partPath.length === 1 && partPath[0] === 0)) ? 'union' : op;
+      const nextPart = { op: nextOp, type: 'gadm', value: asSingleOrList(picked.map((x) => x.gid)) };
+      const setPartAtPath = (parts, path, part, depth = 0) => {
+        if (!Array.isArray(path) || path.length === 0) return null;
+        const idx = path[depth];
+        if (!Array.isArray(parts) || idx < 0 || idx >= parts.length) return null;
+        const nextParts = [...parts];
+        const current = nextParts[idx];
+        if (!current || typeof current !== 'object') return null;
+        if (depth === path.length - 1) {
+          if (current.type !== 'gadm') return null;
+          nextParts[idx] = part;
+          return nextParts;
+        }
+        if (current.type !== 'group' || !Array.isArray(current.value)) return null;
+        const nested = setPartAtPath(current.value, path, part, depth + 1);
+        if (!nested) return null;
+        nextParts[idx] = { ...current, value: nested };
+        return nextParts;
+      };
+      const patched = setPartAtPath(currentParts, partPath, nextPart);
+      if (patched) {
+        next[targetFlagIndex] = { ...target, value: patched };
+      } else if (targetPartIndex >= 0 && targetPartIndex < currentParts.length && currentParts[targetPartIndex]?.type === 'gadm') {
+        currentParts[targetPartIndex] = nextPart;
+        next[targetFlagIndex] = { ...target, value: currentParts };
+      } else {
+        currentParts.push(nextPart);
+        next[targetFlagIndex] = { ...target, value: currentParts };
+      }
       return next;
     });
     setSelectionBatches((prev) => [...prev, { op, gids: picked.map((x) => x.gid) }]);
@@ -510,11 +570,38 @@ xatra.TitleBox("<b>My Map</b>")
       const target = next[targetFlagIndex];
       if (!target || target.type !== 'flag') return prev;
       const currentParts = normalizeFlagPartsForApply(target.value).filter((part) => !isBlankTerritoryPart(part, 'predefined'));
-      picked.forEach((name) => {
-        const nextOp = currentParts.length === 0 ? 'union' : op;
-        currentParts.push({ op: nextOp, type: 'predefined', value: name });
-      });
-      next[targetFlagIndex] = { ...target, value: currentParts };
+      const partPath = Array.isArray(referencePickTarget.partPath) ? referencePickTarget.partPath : null;
+      const targetPartIndex = Number.isInteger(referencePickTarget.partIndex) ? referencePickTarget.partIndex : -1;
+      const nextOp = (currentParts.length === 0 || targetPartIndex === 0 || (Array.isArray(partPath) && partPath.length === 1 && partPath[0] === 0)) ? 'union' : op;
+      const nextPart = { op: nextOp, type: 'predefined', value: asSingleOrList(picked) };
+      const setPartAtPath = (parts, path, part, depth = 0) => {
+        if (!Array.isArray(path) || path.length === 0) return null;
+        const idx = path[depth];
+        if (!Array.isArray(parts) || idx < 0 || idx >= parts.length) return null;
+        const nextParts = [...parts];
+        const current = nextParts[idx];
+        if (!current || typeof current !== 'object') return null;
+        if (depth === path.length - 1) {
+          if (current.type !== 'predefined') return null;
+          nextParts[idx] = part;
+          return nextParts;
+        }
+        if (current.type !== 'group' || !Array.isArray(current.value)) return null;
+        const nested = setPartAtPath(current.value, path, part, depth + 1);
+        if (!nested) return null;
+        nextParts[idx] = { ...current, value: nested };
+        return nextParts;
+      };
+      const patched = setPartAtPath(currentParts, partPath, nextPart);
+      if (patched) {
+        next[targetFlagIndex] = { ...target, value: patched };
+      } else if (targetPartIndex >= 0 && targetPartIndex < currentParts.length && currentParts[targetPartIndex]?.type === 'predefined') {
+        currentParts[targetPartIndex] = nextPart;
+        next[targetFlagIndex] = { ...target, value: currentParts };
+      } else {
+        currentParts.push(nextPart);
+        next[targetFlagIndex] = { ...target, value: currentParts };
+      }
       return next;
     });
     setSelectionBatches((prev) => [...prev, { op, names: picked }]);
@@ -620,7 +707,7 @@ xatra.TitleBox("<b>My Map</b>")
     }
   };
 
-  const renderPickerMap = async ({ background = false, showLoading = true } = {}) => {
+  const renderPickerMap = async ({ showLoading = true } = {}) => {
       if (showLoading) setLoadingByView((prev) => ({ ...prev, picker: true }));
       try {
           const payload = {
@@ -671,7 +758,7 @@ xatra.TitleBox("<b>My Map</b>")
 
   const renderTerritoryLibrary = async (
     source = territoryLibrarySource,
-    { background = false, useDefaultSelection = false, showLoading = true } = {}
+    { useDefaultSelection = false, showLoading = true } = {}
   ) => {
       if (showLoading) setLoadingByView((prev) => ({ ...prev, library: true }));
       try {
@@ -781,21 +868,51 @@ xatra.TitleBox("<b>My Map</b>")
   };
 
   const formatTerritory = (value) => {
+      const ops = { union: '|', difference: '-', intersection: '&' };
+      const normalizeValues = (raw) => {
+        if (Array.isArray(raw)) return raw.map((x) => String(x || '').trim()).filter(Boolean);
+        if (raw == null) return [];
+        const s = String(raw).trim();
+        return s ? [s] : [];
+      };
+      const formatLeaf = (part) => {
+        if (!part || !part.type) return '';
+        if (part.type === 'group') {
+          const inner = formatParts(Array.isArray(part.value) ? part.value : []);
+          return inner ? `(${inner})` : '';
+        }
+        if (part.type === 'polygon') {
+          if (part.value == null || String(part.value).trim() === '') return '';
+          return `polygon(${part.value})`;
+        }
+        if (part.type === 'gadm') {
+          const values = normalizeValues(part.value);
+          if (!values.length) return '';
+          const exprs = values.map((gid) => `gadm("${gid}")`);
+          return exprs.length === 1 ? exprs[0] : `(${exprs.join(' | ')})`;
+        }
+        if (part.type === 'predefined') {
+          const values = normalizeValues(part.value);
+          if (!values.length) return '';
+          return values.length === 1 ? values[0] : `(${values.join(' | ')})`;
+        }
+        return '';
+      };
+      const formatParts = (parts) => {
+        const emitted = [];
+        (parts || []).forEach((part) => {
+          const pStr = formatLeaf(part);
+          if (!pStr) return;
+          if (emitted.length === 0) emitted.push(pStr);
+          else emitted.push(` ${ops[part.op] || '|'} ${pStr}`);
+        });
+        return emitted.join('');
+      };
       if (value == null || (Array.isArray(value) && value.length === 0)) return 'None';
       if (Array.isArray(value)) {
-          const ops = { union: '|', difference: '-', intersection: '&' };
-          const emitted = [];
-          value.forEach((part) => {
-              let pStr = '';
-              if (part.type === 'gadm' && part.value != null && part.value !== '') pStr = `gadm("${part.value}")`;
-              else if (part.type === 'polygon' && part.value != null && part.value !== '') pStr = `polygon(${part.value})`;
-              else if (part.type === 'predefined' && part.value) pStr = part.value;
-              else return;
-              if (emitted.length === 0) emitted.push(pStr);
-              else emitted.push(` ${ops[part.op] || '|'} ${pStr}`);
-          });
-          if (emitted.length === 0) return 'None';
-          return emitted.join('');
+          const rendered = formatParts(value);
+          if (!rendered) return 'None';
+          return rendered;
       }
       if (value === '') return 'None';
       return `gadm("${value}")`;
@@ -1359,9 +1476,6 @@ xatra.TitleBox("<b>My Map</b>")
                         </div>
                     </div>
                 </div>
-                <div className="text-[10px] text-gray-400 bg-gray-50 p-2 rounded italic">
-                    Tip: Click regions to toggle selection. Hold Ctrl/Cmd and move to paint-select, hold Alt and move to paint-unselect.
-                </div>
             </div>
         )}
         {activePreviewTab === 'library' && (
@@ -1535,6 +1649,15 @@ xatra.TitleBox("<b>My Map</b>")
                             <kbd className="bg-amber-600 px-1.5 py-0.5 rounded">Ctrl/Cmd</kbd> hold + drag for freehand
                             {' · '}
                             <kbd className="bg-amber-600 px-1.5 py-0.5 rounded">Esc</kbd> cancel
+                        </div>
+                    </div>
+                </div>
+            )}
+            {activePicker && (activePicker.context === 'reference-gadm' || activePicker.context === 'territory-library') && (
+                <div className="absolute inset-0 z-30 pointer-events-none flex items-start justify-center pt-8">
+                    <div className="bg-amber-500 text-white px-6 py-4 rounded-lg shadow-2xl border-2 border-amber-600 font-semibold text-center max-w-2xl animate-pulse">
+                        <div className="text-sm">
+                          Click regions to toggle selection. Hold <kbd className="bg-amber-600 px-1.5 py-0.5 rounded">Ctrl/Cmd</kbd> and move to paint-select, hold <kbd className="bg-amber-600 px-1.5 py-0.5 rounded">Alt</kbd> and move to paint-unselect.
                         </div>
                     </div>
                 </div>

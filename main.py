@@ -395,34 +395,70 @@ def _parse_css_rules(css_text: str) -> List[Dict[str, str]]:
             rules.append({"selector": selector, "style": style})
     return rules
 
-def _parse_territory_node(node: ast.AST, parts: List[Dict[str, Any]], op: str = "union"):
-    if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.BitOr, ast.Sub, ast.BitAnd)):
-        _parse_territory_node(node.left, parts, op)
-        right_op = "union"
-        if isinstance(node.op, ast.Sub):
-            right_op = "difference"
-        elif isinstance(node.op, ast.BitAnd):
-            right_op = "intersection"
-        _parse_territory_node(node.right, parts, right_op)
-        return
+def _territory_op_from_binop(op_node: ast.AST) -> str:
+    if isinstance(op_node, ast.Sub):
+        return "difference"
+    if isinstance(op_node, ast.BitAnd):
+        return "intersection"
+    return "union"
 
-    part = None
+def _compress_multi_value_parts(parts: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if not isinstance(parts, list) or len(parts) < 2:
+        return None
+    base_type = parts[0].get("type")
+    if base_type not in ("gadm", "predefined"):
+        return None
+    values = []
+    for idx, part in enumerate(parts):
+        if not isinstance(part, dict):
+            return None
+        if part.get("type") != base_type:
+            return None
+        op = part.get("op", "union")
+        if idx > 0 and op != "union":
+            return None
+        val = part.get("value")
+        if not isinstance(val, str) or not val.strip():
+            return None
+        values.append(val.strip())
+    if len(values) < 2:
+        return None
+    return {"type": base_type, "value": values}
+
+def _parse_territory_operand(node: ast.AST) -> Optional[Dict[str, Any]]:
     if isinstance(node, ast.Call):
         cname = _call_name(node.func)
         if cname == "gadm" and node.args:
             val = _python_value(node.args[0])
             if isinstance(val, str):
-                part = {"type": "gadm", "value": val}
+                return {"type": "gadm", "value": val}
         elif cname == "polygon" and node.args:
             coords = _python_value(node.args[0])
             if coords is not None:
-                part = {"type": "polygon", "value": json.dumps(coords)}
+                return {"type": "polygon", "value": json.dumps(coords)}
     elif isinstance(node, ast.Name):
-        part = {"type": "predefined", "value": node.id}
+        return {"type": "predefined", "value": node.id}
+    elif isinstance(node, ast.BinOp) and isinstance(node.op, (ast.BitOr, ast.Sub, ast.BitAnd)):
+        group_parts = _parse_territory_expr(node)
+        compressed = _compress_multi_value_parts(group_parts)
+        if compressed:
+            return compressed
+        return {"type": "group", "value": group_parts}
+    return None
 
+def _parse_territory_expr(node: ast.AST) -> List[Dict[str, Any]]:
+    if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.BitOr, ast.Sub, ast.BitAnd)):
+        parts = _parse_territory_expr(node.left)
+        right_part = _parse_territory_operand(node.right)
+        if right_part:
+            right_part["op"] = "union" if len(parts) == 0 else _territory_op_from_binop(node.op)
+            parts.append(right_part)
+        return parts
+    part = _parse_territory_operand(node)
     if part:
-        part["op"] = "union" if len(parts) == 0 else op
-        parts.append(part)
+        part["op"] = "union"
+        return [part]
+    return []
 
 @app.post("/sync/code_to_builder")
 def sync_code_to_builder(request: CodeSyncRequest):
@@ -559,7 +595,7 @@ def sync_code_to_builder(request: CodeSyncRequest):
         if method == "Flag":
             territory_parts: List[Dict[str, Any]] = []
             if "value" in kwargs:
-                _parse_territory_node(kwargs["value"], territory_parts)
+                territory_parts = _parse_territory_expr(kwargs["value"])
             label = args_dict.pop("label", None)
             args_dict.pop("parent", None)
             elements.append({
@@ -994,35 +1030,67 @@ def run_rendering_task(task_type, data, result_queue):
                     
                 if el.type == "flag":
                     args.pop("parent", None)
+                    def _eval_part(part):
+                        if not isinstance(part, dict):
+                            return None
+                        ptype = part.get("type", "gadm")
+                        val = part.get("value")
+                        if ptype == "group":
+                            if not isinstance(val, list):
+                                return None
+                            return _eval_parts(val)
+                        if ptype == "gadm":
+                            vals = val if isinstance(val, list) else [val]
+                            out = None
+                            for item in vals:
+                                if not item:
+                                    continue
+                                t = xatra.loaders.gadm(item)
+                                out = t if out is None else (out | t)
+                            return out
+                        if ptype == "polygon":
+                            try:
+                                coords = json.loads(val) if isinstance(val, str) else val
+                                return xatra.loaders.polygon(coords)
+                            except Exception:
+                                return None
+                        if ptype == "predefined":
+                            vals = val if isinstance(val, list) else [val]
+                            out = None
+                            for item in vals:
+                                if not item or not predefined_namespace:
+                                    continue
+                                t = predefined_namespace.get(item)
+                                if t is not None:
+                                    out = t if out is None else (out | t)
+                            return out
+                        return None
+
+                    def _eval_parts(parts):
+                        territory_obj = None
+                        if not isinstance(parts, list):
+                            return None
+                        for part in parts:
+                            op = (part.get("op", "union") if isinstance(part, dict) else "union")
+                            part_terr = _eval_part(part)
+                            if part_terr is None:
+                                continue
+                            if territory_obj is None:
+                                territory_obj = part_terr
+                            else:
+                                if op == "difference":
+                                    territory_obj = territory_obj - part_terr
+                                elif op == "intersection":
+                                    territory_obj = territory_obj & part_terr
+                                else:
+                                    territory_obj = territory_obj | part_terr
+                        return territory_obj
+
                     if isinstance(el.value, str):
                         territory = xatra.loaders.gadm(el.value)
                     elif isinstance(el.value, list):
-                        territory = None
-                        if len(el.value) > 0 and isinstance(el.value[0], dict):
-                             for part in el.value:
-                                 op = part.get("op", "union")
-                                 ptype = part.get("type", "gadm")
-                                 val = part.get("value")
-                                 part_terr = None
-                                 if ptype == "gadm":
-                                     part_terr = xatra.loaders.gadm(val)
-                                 elif ptype == "polygon":
-                                     try:
-                                         coords = json.loads(val) if isinstance(val, str) else val
-                                         part_terr = xatra.loaders.polygon(coords)
-                                     except: pass
-                                 elif ptype == "predefined" and val and predefined_namespace:
-                                     part_terr = predefined_namespace.get(val)
-                                 else:
-                                     part_terr = None
-                                 
-                                 if part_terr:
-                                     if territory is None: territory = part_terr
-                                     else:
-                                         if op == "union": territory = territory | part_terr
-                                         elif op == "difference": territory = territory - part_terr
-                                         elif op == "intersection": territory = territory & part_terr
-                        else:
+                        territory = _eval_parts(el.value) if (len(el.value) > 0 and isinstance(el.value[0], dict)) else None
+                        if territory is None:
                             for code in el.value:
                                 t = xatra.loaders.gadm(code)
                                 territory = t if territory is None else (territory | t)
