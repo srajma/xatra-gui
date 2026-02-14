@@ -42,7 +42,7 @@ Bugs
   - [x] The Territory picker is bugged out:
     - [x] When I select and unselect a territory, it becomes black rather than returning to its original color and transparency (like it correctly does for the GADM picker).
     - [x] When I pan or zoom, those blackened territories become white, making them impossible to click again.
-  - [ ] Flag Territories: Dragging an item *out* of a group doesn't seem to be working (moving something into a group works). Instead, moves the whole group to wherever we tried to move the item.
+  - [x] Flag Territories: Dragging an item *out* of a group doesn't seem to be working (moving something into a group works). Instead, moves the whole group to wherever we tried to move the item.
 
 Basic extensions
 - [x] Allow adding any feature to the map, not just flags and rivers. Every single method listed under #### Methods in the main README should have an appropriate interface for adding it:

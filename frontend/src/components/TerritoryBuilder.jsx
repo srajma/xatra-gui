@@ -540,8 +540,6 @@ const TerritoryBuilder = ({
   const handleRowKeyDown = (e, rowPath) => {
     if (!e.shiftKey) return;
     if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) return;
-    const targetTag = String(e.target?.tagName || '').toUpperCase();
-    if (targetTag === 'INPUT' || targetTag === 'TEXTAREA' || targetTag === 'SELECT' || e.target?.isContentEditable) return;
     e.preventDefault();
     e.stopPropagation();
     const idx = rowPath[rowPath.length - 1];
