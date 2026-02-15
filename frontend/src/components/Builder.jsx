@@ -6,7 +6,7 @@ import GlobalOptions from './GlobalOptions';
 const Builder = ({ 
   elements, setElements, options, setOptions, onGetCurrentView, 
   lastMapClick, activePicker, setActivePicker, draftPoints, setDraftPoints,
-  onSaveTerritory, predefinedCode, onStartReferencePick, addLayerSignal
+  onSaveTerritory, predefinedCode, onStartReferencePick, addLayerSignal, onConsumeAddLayerSignal
 }) => {
   const layersEndRef = useRef(null);
   const prevElementsLengthRef = useRef(elements.length);
@@ -92,6 +92,9 @@ const Builder = ({
   useEffect(() => {
     if (!addLayerSignal || !addLayerSignal.type) return;
     addElement(addLayerSignal.type, { focusFirstField: true });
+    if (typeof onConsumeAddLayerSignal === 'function') {
+      onConsumeAddLayerSignal();
+    }
   }, [addLayerSignal]);
 
   const removeElement = (index) => {

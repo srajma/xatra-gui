@@ -88,7 +88,7 @@ Bugs
     - [ ] To make this useful, it should also be possible to use Python in any text field. Every text input field should have a little icon inside it near the right edge that one can toggle to input Python code for the value of that variable instead (so it wouldn't be interpreted as a string). Code to Builder conversion should use this when needed (i.e. where it would otherwise lead to error)
   - [x] Code doesn't directly turn into project json for download (the "Save Project" one, not the "Export Map JSON" one) without converting to Builder mode first. It should.
   - [x] Can remove the "Sync from Builder" button since it automatically syncs now.
-  - [ ] Fix new weird bug where an Admin layer gets added every time we switch from Code to Builder
+  - [x] Fix new weird bug where an Admin layer gets added every time we switch from Code to Builder
   - [ ] Oh, and Code comments should also get converted to Python layers in the Builder.
 
 

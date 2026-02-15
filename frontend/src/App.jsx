@@ -1311,6 +1311,7 @@ xatra.TitleBox("<b>My Map</b>")
               predefinedCode={predefinedCode}
               onStartReferencePick={handleStartReferencePick}
               addLayerSignal={addLayerSignal}
+              onConsumeAddLayerSignal={() => setAddLayerSignal(null)}
             />
           ) : (
             <CodeEditor 
