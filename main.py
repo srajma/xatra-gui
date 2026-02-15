@@ -555,7 +555,7 @@ def sync_code_to_builder(request: CodeSyncRequest):
         base = line_offsets[min(safe_line - 1, len(line_offsets) - 1)]
         return base + safe_col
 
-    comment_tokens: List[tuple[int, str]] = []
+    comment_tokens: List[Dict[str, Any]] = []
     try:
         for tok in tokenize.generate_tokens(io.StringIO(source_code).readline):
             if tok.type != tokenize.COMMENT:
@@ -564,11 +564,11 @@ def sync_code_to_builder(request: CodeSyncRequest):
             abs_pos = abs_offset(line_no, col_no)
             text = (tok.string or "").strip()
             if text:
-                comment_tokens.append((abs_pos, text))
+                comment_tokens.append({"pos": abs_pos, "line": int(line_no), "text": text})
     except Exception:
         comment_tokens = []
 
-    comment_tokens.sort(key=lambda x: x[0])
+    comment_tokens.sort(key=lambda x: x["pos"])
     comment_idx = 0
 
     def stmt_pos(stmt: ast.stmt) -> int:
@@ -578,9 +578,20 @@ def sync_code_to_builder(request: CodeSyncRequest):
 
     def flush_comments_before(pos: int):
         nonlocal comment_idx
-        while comment_idx < len(comment_tokens) and comment_tokens[comment_idx][0] < pos:
-            append_python_layer(code_line=comment_tokens[comment_idx][1])
-            comment_idx += 1
+        while comment_idx < len(comment_tokens) and comment_tokens[comment_idx]["pos"] < pos:
+            group_start = comment_idx
+            group_end = group_start + 1
+            last_line = int(comment_tokens[group_start]["line"])
+            while (
+                group_end < len(comment_tokens)
+                and comment_tokens[group_end]["pos"] < pos
+                and int(comment_tokens[group_end]["line"]) == last_line + 1
+            ):
+                last_line = int(comment_tokens[group_end]["line"])
+                group_end += 1
+            block = "\n".join(str(comment_tokens[i]["text"]) for i in range(group_start, group_end))
+            append_python_layer(code_line=block)
+            comment_idx = group_end
 
     for stmt in tree.body:
         flush_comments_before(stmt_pos(stmt))
@@ -857,8 +868,18 @@ def sync_code_to_builder(request: CodeSyncRequest):
         append_python_layer(stmt=stmt)
 
     while comment_idx < len(comment_tokens):
-        append_python_layer(code_line=comment_tokens[comment_idx][1])
-        comment_idx += 1
+        group_start = comment_idx
+        group_end = group_start + 1
+        last_line = int(comment_tokens[group_start]["line"])
+        while (
+            group_end < len(comment_tokens)
+            and int(comment_tokens[group_end]["line"]) == last_line + 1
+        ):
+            last_line = int(comment_tokens[group_end]["line"])
+            group_end += 1
+        block = "\n".join(str(comment_tokens[i]["text"]) for i in range(group_start, group_end))
+        append_python_layer(code_line=block)
+        comment_idx = group_end
 
     if flag_color_rows:
         options["flag_color_sequences"] = flag_color_rows
