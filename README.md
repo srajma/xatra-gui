@@ -85,11 +85,11 @@ Bugs
     - [x] "Note" fields in the Builder should be text areas. They should start at single-line height, but the user should be able to enter more lines by pressing Enter and that should automatically increase the height of that particular text area as well. Converting from code to builder should use this for multiline strings.
   - [x] CSS conversion when converting from Code to Builder---messes up when there are multiple xatra.CSS() lines. It should just merge them into a single string when converting to Builder.
   - [x] Allow "Python" layers. Any line of code that doesn't match the existing matches should be made a "Python" block in the Builder. Allow the user to add and edit Python layers through the Builder (so it will be one more layer type after Flag, River, ... complete with its own keyboard shortcut Ctrl/Cmd+Shift+Y).
-    - [ ] To make this useful, it should also be possible to use Python in any text field. Every text input field should have a little icon inside it near the right edge that one can toggle to input Python code for the value of that variable instead (so it wouldn't be interpreted as a string). Code to Builder conversion should use this when needed (i.e. where it would otherwise lead to error)
+    - [x] To make this useful, it should also be possible to use Python in any text field. Every text input field should have a little icon inside it near the right edge that one can toggle to input Python code for the value of that variable instead (so it wouldn't be interpreted as a string). Code to Builder conversion should use this when needed (i.e. where it would otherwise lead to error)
   - [x] Code doesn't directly turn into project json for download (the "Save Project" one, not the "Export Map JSON" one) without converting to Builder mode first. It should.
   - [x] Can remove the "Sync from Builder" button since it automatically syncs now.
   - [x] Fix new weird bug where an Admin layer gets added every time we switch from Code to Builder
-  - [ ] Oh, and Code comments should also get converted to Python layers in the Builder.
+  - [x] Oh, and Code comments should also get converted to Python layers in the Builder.
 
 
 Basic extensions

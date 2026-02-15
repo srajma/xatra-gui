@@ -6,6 +6,7 @@ import Builder from './components/Builder';
 import CodeEditor from './components/CodeEditor';
 import MapPreview from './components/MapPreview';
 import AutocompleteInput from './components/AutocompleteInput';
+import { isPythonValue, getPythonExpr } from './utils/pythonValue';
 
 const isTerritoryPolygonPicker = (ctx) => /^territory-\d+$/.test(String(ctx || ''));
 const isEditableTarget = (target) => (
@@ -964,6 +965,7 @@ xatra.TitleBox("<b>My Map</b>")
         return JSON.stringify(str);
     };
     const pyVal = (v) => {
+        if (isPythonValue(v)) return getPythonExpr(v) || 'None';
         if (v == null || v === '') return 'None';
         if (typeof v === 'boolean') return v ? 'True' : 'False';
         if (typeof v === 'string') return pyString(v);
@@ -1079,7 +1081,7 @@ xatra.TitleBox("<b>My Map</b>")
         return true;
     });
     const argsToStr = (args) => {
-        const parts = argsEntries(args).map(([k, v]) => `${k}=${typeof v === 'string' ? pyVal(v) : pyVal(v)}`);
+        const parts = argsEntries(args).map(([k, v]) => `${k}=${pyVal(v)}`);
         return parts.length ? ', ' + parts.join(', ') : '';
     };
 
@@ -1098,7 +1100,9 @@ xatra.TitleBox("<b>My Map</b>")
             const riverArgs = { ...args };
             delete riverArgs.source_type;
             const riverArgsStrFormatted = argsToStr(riverArgs);
-            const riverVal = (el.value != null && el.value !== '') ? `${func}("${String(el.value).replace(/"/g, '\\"')}")` : 'None';
+            const riverVal = (el.value != null && el.value !== '')
+              ? `${func}(${isPythonValue(el.value) ? (getPythonExpr(el.value) || 'None') : pyVal(el.value)})`
+              : 'None';
             lines.push(`xatra.River(value=${riverVal}${riverArgsStrFormatted})`);
         } else if (el.type === 'point') {
             const pointArgs = { ...args };
@@ -1107,41 +1111,61 @@ xatra.TitleBox("<b>My Map</b>")
             let pointArgsStr = argsToStr(pointArgs);
             let iconPy = '';
             if (iconVal != null && iconVal !== '') {
-                if (typeof iconVal === 'string') {
+                if (isPythonValue(iconVal)) {
+                    iconPy = `icon=${pyVal(iconVal)}`;
+                } else if (typeof iconVal === 'string') {
                     iconPy = `icon=Icon.builtin("${iconVal}")`;
                 } else if (iconVal.shape) {
-                    const c = (iconVal.color || '#3388ff').replace(/'/g, "\\'");
-                    iconPy = `icon=Icon.geometric("${iconVal.shape}", color="${c}", size=${iconVal.size ?? 24})`;
+                    iconPy = `icon=Icon.geometric(${pyVal(iconVal.shape || 'circle')}, color=${pyVal(iconVal.color || '#3388ff')}, size=${pyVal(iconVal.size ?? 24)})`;
                 } else if (iconVal.icon_url || iconVal.iconUrl) {
-                    const url = (iconVal.icon_url || iconVal.iconUrl).replace(/"/g, '\\"');
-                    iconPy = `icon=Icon(icon_url="${url}")`;
+                    iconPy = `icon=Icon(icon_url=${pyVal(iconVal.icon_url || iconVal.iconUrl)})`;
                 }
             }
             if (iconPy) pointArgsStr = pointArgsStr ? `${pointArgsStr}, ${iconPy}` : `, ${iconPy}`;
-            const pos = (el.value != null && el.value !== '') ? (Array.isArray(el.value) ? JSON.stringify(el.value) : el.value) : 'None';
+            const pos = (el.value != null && el.value !== '')
+              ? (isPythonValue(el.value) ? (getPythonExpr(el.value) || 'None') : (Array.isArray(el.value) ? JSON.stringify(el.value) : el.value))
+              : 'None';
             lines.push(`xatra.Point(position=${pos}${pointArgsStr})`);
         } else if (el.type === 'text') {
-            const pos = (el.value != null && el.value !== '') ? (Array.isArray(el.value) ? JSON.stringify(el.value) : el.value) : 'None';
+            const pos = (el.value != null && el.value !== '')
+              ? (isPythonValue(el.value) ? (getPythonExpr(el.value) || 'None') : (Array.isArray(el.value) ? JSON.stringify(el.value) : el.value))
+              : 'None';
             lines.push(`xatra.Text(position=${pos}${argsStr})`);
         } else if (el.type === 'path') {
-            const pathVal = (el.value != null && el.value !== '') ? (typeof el.value === 'string' ? el.value : JSON.stringify(el.value)) : 'None';
+            const pathVal = (el.value != null && el.value !== '')
+              ? (isPythonValue(el.value) ? (getPythonExpr(el.value) || 'None') : (typeof el.value === 'string' ? el.value : JSON.stringify(el.value)))
+              : 'None';
             lines.push(`xatra.Path(value=${pathVal}${argsStr})`);
         } else if (el.type === 'admin') {
-            const gadmVal = (el.value != null && el.value !== '') ? `"${String(el.value).replace(/"/g, '\\"')}"` : 'None';
+            const gadmVal = (el.value != null && el.value !== '') ? pyVal(el.value) : 'None';
             lines.push(`xatra.Admin(gadm=${gadmVal}${argsStr})`);
         } else if (el.type === 'admin_rivers') {
-            const sourcesVal = (el.value != null && el.value !== '') ? el.value : 'None';
-            lines.push(`xatra.AdminRivers(sources=${typeof sourcesVal === 'object' ? JSON.stringify(sourcesVal) : sourcesVal}${argsStr})`);
+            const sourcesVal = (() => {
+              if (el.value == null || el.value === '') return 'None';
+              if (isPythonValue(el.value)) return getPythonExpr(el.value) || 'None';
+              if (typeof el.value === 'string') {
+                const trimmed = el.value.trim();
+                if (trimmed.startsWith('[') || trimmed.startsWith('{') || trimmed.startsWith('(')) {
+                  return trimmed || 'None';
+                }
+              }
+              return pyVal(el.value);
+            })();
+            lines.push(`xatra.AdminRivers(sources=${sourcesVal}${argsStr})`);
         } else if (el.type === 'dataframe') {
             lines.push(`# DataFrame handling requires local CSV file or manual implementation in code mode`);
             lines.push(`import pandas as pd`);
             lines.push(`import io`);
-            const csvContent = (el.value != null && el.value !== '') ? String(el.value).replace(/"""/g, '\\"\\"\\"') : '';
-            lines.push(`df = pd.read_csv(io.StringIO("""${csvContent}"""))`);
+            if (isPythonValue(el.value)) {
+              lines.push(`df = pd.read_csv(${getPythonExpr(el.value) || 'None'})`);
+            } else {
+              const csvContent = (el.value != null && el.value !== '') ? String(el.value).replace(/"""/g, '\\"\\"\\"') : '';
+              lines.push(`df = pd.read_csv(io.StringIO("""${csvContent}"""))`);
+            }
             lines.push(`xatra.Dataframe(df${argsStr})`);
         } else if (el.type === 'titlebox') {
-            const titleHtml = (el.value != null && el.value !== '') ? String(el.value).replace(/"""/g, '\\"\\"\\"') : '';
-            lines.push(`xatra.TitleBox("""${titleHtml}"""${argsStr})`);
+            const titleHtml = (el.value != null && el.value !== '') ? pyVal(el.value) : 'None';
+            lines.push(`xatra.TitleBox(${titleHtml}${argsStr})`);
         } else if (el.type === 'python') {
             const raw = (el.value == null) ? '' : String(el.value);
             if (raw.trim()) lines.push(raw);

@@ -8,6 +8,8 @@ import multiprocessing
 import signal
 import ast
 import re
+import io
+import tokenize
 from collections import OrderedDict
 
 # Set matplotlib backend to Agg before importing anything else
@@ -276,6 +278,34 @@ def _python_value(node: ast.AST):
             return False
     return None
 
+PYTHON_EXPR_KEY = "__xatra_python__"
+
+def _is_python_expr_value(value: Any) -> bool:
+    return isinstance(value, dict) and isinstance(value.get(PYTHON_EXPR_KEY), str)
+
+def _python_expr_from_node(code: str, node: ast.AST) -> Optional[str]:
+    try:
+        expr = ast.get_source_segment(code or "", node)
+    except Exception:
+        expr = None
+    if not isinstance(expr, str) or not expr.strip():
+        try:
+            expr = ast.unparse(node)
+        except Exception:
+            expr = None
+    if not isinstance(expr, str):
+        return None
+    expr = expr.strip()
+    return expr or None
+
+def _builder_value_from_node(code: str, node: ast.AST) -> Any:
+    if _is_simple_python_value(node):
+        return _python_value(node)
+    expr = _python_expr_from_node(code, node)
+    if expr:
+        return {PYTHON_EXPR_KEY: expr}
+    return None
+
 def _is_simple_python_value(node: ast.AST) -> bool:
     if isinstance(node, ast.Constant):
         return True
@@ -490,34 +520,81 @@ def sync_code_to_builder(request: CodeSyncRequest):
     flag_color_rows: List[Dict[str, Any]] = []
     admin_color_rows: List[Dict[str, Any]] = []
 
-    def append_python_layer(stmt: ast.stmt):
-        try:
-            raw = ast.get_source_segment(request.code or "", stmt)
-            code_line = (raw if isinstance(raw, str) and raw.strip() else ast.unparse(stmt)).strip()
-        except Exception:
+    def append_python_layer(stmt: Optional[ast.stmt] = None, code_line: Optional[str] = None):
+        line = ""
+        if isinstance(code_line, str):
+            line = code_line.strip()
+        elif stmt is not None:
             try:
-                code_line = ast.unparse(stmt).strip()
+                raw = ast.get_source_segment(request.code or "", stmt)
+                line = (raw if isinstance(raw, str) and raw.strip() else ast.unparse(stmt)).strip()
             except Exception:
-                code_line = ""
-        if code_line:
+                try:
+                    line = ast.unparse(stmt).strip()
+                except Exception:
+                    line = ""
+        if line:
             elements.append({
                 "type": "python",
                 "label": "Python",
-                "value": code_line,
+                "value": line,
                 "args": {},
             })
 
+    source_code = request.code or ""
+    source_lines = source_code.splitlines(keepends=True)
+    line_offsets = [0]
+    total = 0
+    for ln in source_lines:
+        total += len(ln)
+        line_offsets.append(total)
+
+    def abs_offset(line_no: int, col_no: int) -> int:
+        safe_line = max(1, int(line_no or 1))
+        safe_col = max(0, int(col_no or 0))
+        base = line_offsets[min(safe_line - 1, len(line_offsets) - 1)]
+        return base + safe_col
+
+    comment_tokens: List[tuple[int, str]] = []
+    try:
+        for tok in tokenize.generate_tokens(io.StringIO(source_code).readline):
+            if tok.type != tokenize.COMMENT:
+                continue
+            line_no, col_no = tok.start
+            abs_pos = abs_offset(line_no, col_no)
+            text = (tok.string or "").strip()
+            if text:
+                comment_tokens.append((abs_pos, text))
+    except Exception:
+        comment_tokens = []
+
+    comment_tokens.sort(key=lambda x: x[0])
+    comment_idx = 0
+
+    def stmt_pos(stmt: ast.stmt) -> int:
+        line_no = int(getattr(stmt, "lineno", 1) or 1)
+        col_no = int(getattr(stmt, "col_offset", 0) or 0)
+        return abs_offset(line_no, col_no)
+
+    def flush_comments_before(pos: int):
+        nonlocal comment_idx
+        while comment_idx < len(comment_tokens) and comment_tokens[comment_idx][0] < pos:
+            append_python_layer(code_line=comment_tokens[comment_idx][1])
+            comment_idx += 1
+
     for stmt in tree.body:
+        flush_comments_before(stmt_pos(stmt))
+
         if isinstance(stmt, (ast.Import, ast.ImportFrom)):
             continue
         if not isinstance(stmt, ast.Expr) or not isinstance(stmt.value, ast.Call):
-            append_python_layer(stmt)
+            append_python_layer(stmt=stmt)
             continue
 
         call = stmt.value
         name = _call_name(call.func)
         if not (name and name.startswith("xatra.")):
-            append_python_layer(stmt)
+            append_python_layer(stmt=stmt)
             continue
         method = name.split(".", 1)[1]
         kwargs = {kw.arg: kw.value for kw in call.keywords if kw.arg}
@@ -532,24 +609,22 @@ def sync_code_to_builder(request: CodeSyncRequest):
                         "default": bool(_python_value(kwargs.get("default"))),
                     })
                 else:
-                    append_python_layer(stmt)
+                    append_python_layer(stmt=stmt)
             else:
-                append_python_layer(stmt)
+                append_python_layer(stmt=stmt)
             continue
 
         if method == "TitleBox":
-            title = None
+            title: Any = ""
             if call.args:
-                title = _python_value(call.args[0])
+                title_node = call.args[0]
+                title = _builder_value_from_node(source_code, title_node)
             elif "html" in kwargs:
-                title = _python_value(kwargs.get("html"))
+                title = _builder_value_from_node(source_code, kwargs.get("html"))
             tb_args = {}
             if "period" in kwargs:
-                if not _is_simple_python_value(kwargs.get("period")):
-                    append_python_layer(stmt)
-                    continue
-                tb_args["period"] = _python_value(kwargs.get("period"))
-            if isinstance(title, str):
+                tb_args["period"] = _builder_value_from_node(source_code, kwargs.get("period"))
+            if isinstance(title, (str, dict)):
                 elements.append({
                     "type": "titlebox",
                     "label": "TitleBox",
@@ -557,21 +632,21 @@ def sync_code_to_builder(request: CodeSyncRequest):
                     "args": tb_args,
                 })
             else:
-                append_python_layer(stmt)
+                append_python_layer(stmt=stmt)
             continue
 
         if method == "zoom":
             if call.args:
                 options["zoom"] = _python_value(call.args[0])
             else:
-                append_python_layer(stmt)
+                append_python_layer(stmt=stmt)
             continue
 
         if method == "focus":
             if len(call.args) >= 2:
                 options["focus"] = [_python_value(call.args[0]), _python_value(call.args[1])]
             else:
-                append_python_layer(stmt)
+                append_python_layer(stmt=stmt)
             continue
 
         if method == "slider":
@@ -581,7 +656,7 @@ def sync_code_to_builder(request: CodeSyncRequest):
                     simple_slider = False
                     break
             if not simple_slider:
-                append_python_layer(stmt)
+                append_python_layer(stmt=stmt)
                 continue
             slider = {
                 "start": _python_value(kwargs.get("start")),
@@ -598,9 +673,9 @@ def sync_code_to_builder(request: CodeSyncRequest):
                     current = options.get("css_rules") or []
                     options["css_rules"] = current + _parse_css_rules(css_text)
                 else:
-                    append_python_layer(stmt)
+                    append_python_layer(stmt=stmt)
             else:
-                append_python_layer(stmt)
+                append_python_layer(stmt=stmt)
             continue
 
         if method == "FlagColorSequence":
@@ -621,9 +696,9 @@ def sync_code_to_builder(request: CodeSyncRequest):
                     row["class_name"] = class_name or ""
                     flag_color_rows.append(row)
                 else:
-                    append_python_layer(stmt)
+                    append_python_layer(stmt=stmt)
             else:
-                append_python_layer(stmt)
+                append_python_layer(stmt=stmt)
             continue
 
         if method == "AdminColorSequence":
@@ -642,9 +717,9 @@ def sync_code_to_builder(request: CodeSyncRequest):
                             "step_l": 0.0,
                         }]
                     else:
-                        append_python_layer(stmt)
+                        append_python_layer(stmt=stmt)
             else:
-                append_python_layer(stmt)
+                append_python_layer(stmt=stmt)
             continue
 
         if method == "DataColormap":
@@ -653,13 +728,12 @@ def sync_code_to_builder(request: CodeSyncRequest):
                 if cmap:
                     options["data_colormap"] = cmap
                 else:
-                    append_python_layer(stmt)
+                    append_python_layer(stmt=stmt)
             else:
-                append_python_layer(stmt)
+                append_python_layer(stmt=stmt)
             continue
 
         args_dict = {}
-        complex_kwargs = False
         for key, node in kwargs.items():
             if key == "value" and method in ("Flag", "River", "Path"):
                 continue
@@ -671,29 +745,22 @@ def sync_code_to_builder(request: CodeSyncRequest):
                 continue
             if key == "icon" and method == "Point":
                 continue
-            if not _is_simple_python_value(node):
-                complex_kwargs = True
-                break
-            args_dict[key] = _python_value(node)
-        if complex_kwargs:
-            append_python_layer(stmt)
-            continue
+            args_dict[key] = _builder_value_from_node(source_code, node)
 
         if method == "Flag":
             if "value" not in kwargs:
-                append_python_layer(stmt)
+                append_python_layer(stmt=stmt)
                 continue
-            territory_parts: List[Dict[str, Any]] = []
-            territory_parts = _parse_territory_expr(kwargs["value"])
+            territory_parts: List[Dict[str, Any]] = _parse_territory_expr(kwargs["value"])
             if not territory_parts:
-                append_python_layer(stmt)
+                append_python_layer(stmt=stmt)
                 continue
             label = args_dict.pop("label", None)
             args_dict.pop("parent", None)
             elements.append({
                 "type": "flag",
                 "label": label,
-                "value": territory_parts if territory_parts else [],
+                "value": territory_parts,
                 "args": {k: v for k, v in args_dict.items() if k != "value"},
             })
             continue
@@ -701,27 +768,22 @@ def sync_code_to_builder(request: CodeSyncRequest):
         if method == "River":
             label = args_dict.pop("label", None)
             source_type = "naturalearth"
-            value = ""
+            value: Any = ""
             v_node = kwargs.get("value")
             if isinstance(v_node, ast.Call):
                 loader = _call_name(v_node.func)
                 if loader == "overpass":
                     source_type = "overpass"
                 elif loader != "naturalearth":
-                    append_python_layer(stmt)
+                    append_python_layer(stmt=stmt)
                     continue
                 if v_node.args:
-                    v = _python_value(v_node.args[0])
-                    if isinstance(v, str):
-                        value = v
-                    else:
-                        append_python_layer(stmt)
-                        continue
+                    value = _builder_value_from_node(source_code, v_node.args[0])
                 else:
-                    append_python_layer(stmt)
+                    append_python_layer(stmt=stmt)
                     continue
             else:
-                append_python_layer(stmt)
+                append_python_layer(stmt=stmt)
                 continue
             river_args = {k: v for k, v in args_dict.items() if k != "value"}
             river_args["source_type"] = source_type
@@ -730,71 +792,73 @@ def sync_code_to_builder(request: CodeSyncRequest):
 
         if method in ("Point", "Text"):
             pos_node = kwargs.get("position")
-            if pos_node is not None and not _is_simple_python_value(pos_node):
-                append_python_layer(stmt)
-                continue
-            pos = _python_value(pos_node) if pos_node is not None else None
+            pos = _builder_value_from_node(source_code, pos_node) if pos_node is not None else None
             label = args_dict.pop("label", None)
-            value = json.dumps(pos) if isinstance(pos, list) else (pos or "")
+            if isinstance(pos, list):
+                value: Any = json.dumps(pos)
+            elif pos is None:
+                value = ""
+            else:
+                value = pos
             if method == "Point":
                 icon_node = kwargs.get("icon")
                 if isinstance(icon_node, ast.Call):
                     icon_call = _call_name(icon_node.func)
                     if icon_call == "Icon.builtin" and icon_node.args:
-                        args_dict["icon"] = _python_value(icon_node.args[0])
+                        args_dict["icon"] = _builder_value_from_node(source_code, icon_node.args[0])
                     elif icon_call == "Icon.geometric" and icon_node.args:
                         args_dict["icon"] = {
-                            "shape": _python_value(icon_node.args[0]) or "circle",
-                            "color": _python_value(next((kw.value for kw in icon_node.keywords if kw.arg == "color"), ast.Constant(value="#3388ff"))),
-                            "size": _python_value(next((kw.value for kw in icon_node.keywords if kw.arg == "size"), ast.Constant(value=24))),
+                            "shape": _builder_value_from_node(source_code, icon_node.args[0]) or "circle",
+                            "color": _builder_value_from_node(source_code, next((kw.value for kw in icon_node.keywords if kw.arg == "color"), ast.Constant(value="#3388ff"))),
+                            "size": _builder_value_from_node(source_code, next((kw.value for kw in icon_node.keywords if kw.arg == "size"), ast.Constant(value=24))),
                         }
                     elif icon_call == "Icon":
                         args_dict["icon"] = {
-                            "icon_url": _python_value(next((kw.value for kw in icon_node.keywords if kw.arg == "icon_url"), ast.Constant(value=""))) or ""
+                            "icon_url": _builder_value_from_node(source_code, next((kw.value for kw in icon_node.keywords if kw.arg == "icon_url"), ast.Constant(value=""))) or ""
                         }
                     else:
-                        append_python_layer(stmt)
+                        append_python_layer(stmt=stmt)
                         continue
                 elif icon_node is not None:
-                    append_python_layer(stmt)
-                    continue
+                    args_dict["icon"] = _builder_value_from_node(source_code, icon_node)
             elements.append({"type": method.lower(), "label": label, "value": value, "args": args_dict})
             continue
 
         if method == "Path":
             v_node = kwargs.get("value")
-            if v_node is not None and not _is_simple_python_value(v_node):
-                append_python_layer(stmt)
-                continue
+            path_val = _builder_value_from_node(source_code, v_node) if v_node is not None else None
             label = args_dict.pop("label", None)
-            path_val = _python_value(v_node) if v_node is not None else None
-            value = json.dumps(path_val) if isinstance(path_val, list) else (path_val or "")
+            if isinstance(path_val, list):
+                value: Any = json.dumps(path_val)
+            elif path_val is None:
+                value = ""
+            else:
+                value = path_val
             elements.append({"type": "path", "label": label, "value": value, "args": args_dict})
             continue
 
         if method == "Admin":
             gadm_node = kwargs.get("gadm")
-            if gadm_node is not None and not _is_simple_python_value(gadm_node):
-                append_python_layer(stmt)
-                continue
-            gadm_code = (_python_value(gadm_node) if gadm_node is not None else "") or ""
+            gadm_code = _builder_value_from_node(source_code, gadm_node) if gadm_node is not None else ""
             elements.append({"type": "admin", "label": None, "value": gadm_code, "args": args_dict})
             continue
 
         if method == "AdminRivers":
             sources_node = kwargs.get("sources")
-            if sources_node is not None and not _is_simple_python_value(sources_node):
-                append_python_layer(stmt)
-                continue
-            sources = _python_value(sources_node) if sources_node is not None else ["naturalearth"]
-            elements.append({"type": "admin_rivers", "label": "All Rivers", "value": json.dumps(sources), "args": args_dict})
+            sources = _builder_value_from_node(source_code, sources_node) if sources_node is not None else ["naturalearth"]
+            stored_sources = json.dumps(sources) if isinstance(sources, list) else sources
+            elements.append({"type": "admin_rivers", "label": "All Rivers", "value": stored_sources, "args": args_dict})
             continue
 
         if method == "Dataframe":
             elements.append({"type": "dataframe", "label": "Data", "value": "", "args": {}})
             continue
 
-        append_python_layer(stmt)
+        append_python_layer(stmt=stmt)
+
+    while comment_idx < len(comment_tokens):
+        append_python_layer(code_line=comment_tokens[comment_idx][1])
+        comment_idx += 1
 
     if flag_color_rows:
         options["flag_color_sequences"] = flag_color_rows
@@ -966,6 +1030,29 @@ def run_rendering_task(task_type, data, result_queue):
                     m.BaseOption(bm)
             return
         m.BaseOption("Esri.WorldTopoMap", default=True)
+
+    def eval_python_expr_value(value, eval_globals):
+        if _is_python_expr_value(value):
+            expr = value.get(PYTHON_EXPR_KEY, "").strip()
+            if not expr:
+                return None
+            try:
+                return eval(expr, eval_globals)
+            except Exception:
+                return None
+        return value
+
+    def resolve_builder_value(value, eval_globals):
+        evaluated = eval_python_expr_value(value, eval_globals)
+        if evaluated is not value:
+            return evaluated
+        if isinstance(value, list):
+            return [resolve_builder_value(v, eval_globals) for v in value]
+        if isinstance(value, dict):
+            if _is_python_expr_value(value):
+                return eval_python_expr_value(value, eval_globals)
+            return {k: resolve_builder_value(v, eval_globals) for k, v in value.items()}
+        return value
 
     try:
         # Re-import xatra inside the process just in case, though imports are inherited on fork (mostly)
@@ -1163,9 +1250,10 @@ def run_rendering_task(task_type, data, result_queue):
                 builder_exec_globals.update(predefined_namespace)
 
             for el in data.elements:
-                args = el.args.copy()
-                if el.label:
-                    args["label"] = el.label
+                args = resolve_builder_value(el.args.copy(), builder_exec_globals) if isinstance(el.args, dict) else {}
+                resolved_label = resolve_builder_value(el.label, builder_exec_globals)
+                if resolved_label not in (None, ""):
+                    args["label"] = resolved_label
                     
                 if el.type == "flag":
                     args.pop("parent", None)
@@ -1240,18 +1328,21 @@ def run_rendering_task(task_type, data, result_queue):
                 elif el.type == "river":
                     source_type = args.get("source_type", "naturalearth")
                     if "source_type" in args: del args["source_type"]
-                    if isinstance(el.value, str):
+                    river_value = resolve_builder_value(el.value, builder_exec_globals)
+                    if river_value is not None:
                         if source_type == "overpass":
-                            geom = xatra.loaders.overpass(el.value)
+                            geom = xatra.loaders.overpass(river_value)
                         else:
-                            geom = xatra.loaders.naturalearth(el.value)
+                            geom = xatra.loaders.naturalearth(river_value)
                         m.River(value=geom, **args)
                         
                 elif el.type == "point":
-                    pos = el.value
+                    pos = resolve_builder_value(el.value, builder_exec_globals)
                     if isinstance(pos, str):
-                        try: pos = json.loads(pos)
-                        except: continue
+                        try:
+                            pos = json.loads(pos)
+                        except Exception:
+                            pass
                     icon_arg = args.pop("icon", None)
                     if icon_arg is not None and icon_arg != "":
                         try:
@@ -1273,40 +1364,48 @@ def run_rendering_task(task_type, data, result_queue):
                                         icon_size=tuple(icon_arg.get("icon_size", icon_arg.get("iconSize", (25, 41)))),
                                         icon_anchor=tuple(icon_arg.get("icon_anchor", icon_arg.get("iconAnchor", (12, 41)))),
                                     )
+                            else:
+                                args["icon"] = icon_arg
                         except Exception:
                             pass
                     m.Point(position=pos, **args)
                     
                 elif el.type == "text":
-                    pos = el.value
+                    pos = resolve_builder_value(el.value, builder_exec_globals)
                     if isinstance(pos, str):
-                        try: pos = json.loads(pos)
-                        except: continue
+                        try:
+                            pos = json.loads(pos)
+                        except Exception:
+                            pass
                     m.Text(position=pos, **args)
                 
                 elif el.type == "path":
-                    val = el.value
+                    val = resolve_builder_value(el.value, builder_exec_globals)
                     if isinstance(val, str):
-                        try: val = json.loads(val)
-                        except: continue
+                        try:
+                            val = json.loads(val)
+                        except Exception:
+                            pass
                     m.Path(value=val, **args)
                     
                 elif el.type == "admin":
                     if "label" in args: del args["label"]
-                    m.Admin(gadm=el.value, **args)
+                    m.Admin(gadm=resolve_builder_value(el.value, builder_exec_globals), **args)
                 
                 elif el.type == "admin_rivers":
                     if "label" in args: del args["label"]
-                    sources = el.value
+                    sources = resolve_builder_value(el.value, builder_exec_globals)
                     if isinstance(sources, str):
-                        try: sources = json.loads(sources)
-                        except: sources = [sources]
+                        try:
+                            sources = json.loads(sources)
+                        except Exception:
+                            sources = [sources]
                     m.AdminRivers(sources=sources, **args)
 
                 elif el.type == "dataframe":
                     import pandas as pd
                     import io
-                    val = el.value
+                    val = resolve_builder_value(el.value, builder_exec_globals)
                     if isinstance(val, str):
                         if val.endswith('.csv') and os.path.exists(val):
                              df = pd.read_csv(val)
@@ -1316,10 +1415,16 @@ def run_rendering_task(task_type, data, result_queue):
                         if args.get("data_column") in (None, ""): args.pop("data_column", None)
                         if args.get("year_columns") in (None, [], ""): args.pop("year_columns", None)
                         m.Dataframe(df, **args)
+                    elif val is not None:
+                        if "label" in args: del args["label"]
+                        if args.get("data_column") in (None, ""): args.pop("data_column", None)
+                        if args.get("year_columns") in (None, [], ""): args.pop("year_columns", None)
+                        m.Dataframe(val, **args)
                 elif el.type == "titlebox":
                     if "label" in args:
                         del args["label"]
-                    html = el.value if isinstance(el.value, str) else str(el.value or "")
+                    title_val = resolve_builder_value(el.value, builder_exec_globals)
+                    html = title_val if isinstance(title_val, str) else str(title_val or "")
                     m.TitleBox(html, **args)
                 elif el.type == "python":
                     code_line = el.value if isinstance(el.value, str) else str(el.value or "")

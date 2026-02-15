@@ -1,35 +1,11 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Trash2, ChevronDown, ChevronUp, Info, MousePointer2, Save } from 'lucide-react';
 import AutocompleteInput from './AutocompleteInput';
 import TerritoryBuilder from './TerritoryBuilder';
+import PythonTextField from './PythonTextField';
+import { isPythonValue } from '../utils/pythonValue';
 
 const BUILTIN_ICON_SHAPES = ['circle', 'square', 'triangle', 'diamond', 'cross', 'plus', 'star', 'hexagon', 'pentagon', 'octagon'];
-
-const AutoGrowTextarea = ({ value, onChange, className, placeholder, ...rest }) => {
-  const ref = useRef(null);
-
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    el.style.height = 'auto';
-    el.style.height = `${Math.max(el.scrollHeight, 34)}px`;
-  }, [value]);
-
-  return (
-    <textarea
-      ref={ref}
-      value={value}
-      onChange={onChange}
-      onInput={(e) => {
-        e.currentTarget.style.height = 'auto';
-        e.currentTarget.style.height = `${Math.max(e.currentTarget.scrollHeight, 34)}px`;
-      }}
-      className={className}
-      placeholder={placeholder}
-      {...rest}
-    />
-  );
-};
 
 const LayerItem = ({ 
   element, index, elements, updateElement, updateArg, replaceElement, removeElement, 
@@ -42,11 +18,11 @@ const LayerItem = ({
   const isPicking = activePicker && activePicker.id === index && activePicker.context === 'layer';
   const isRiverReferencePicking = activePicker && activePicker.id === index && activePicker.context === 'reference-river';
 
-  const [periodText, setPeriodText] = useState(element.args?.period ? element.args.period.join(', ') : '');
+  const [periodText, setPeriodText] = useState(Array.isArray(element.args?.period) ? element.args.period.join(', ') : '');
 
   // Sync periodText when element changes (e.g. project load)
   useEffect(() => {
-      setPeriodText(element.args?.period ? element.args.period.join(', ') : '');
+      setPeriodText(Array.isArray(element.args?.period) ? element.args.period.join(', ') : '');
   }, [element.args?.period]);
 
   useEffect(() => {
@@ -115,6 +91,11 @@ const LayerItem = ({
   };
 
   const handlePeriodChange = (val) => {
+    if (val && typeof val === 'object' && !Array.isArray(val)) {
+      setPeriodText('');
+      updateArg(index, 'period', val);
+      return;
+    }
     setPeriodText(val);
     if (val === "") {
       updateArg(index, 'period', null);
@@ -140,12 +121,11 @@ const LayerItem = ({
           <div className="grid grid-cols-1 gap-3 mb-2">
             <div>
               <label className="block text-xs text-gray-500 mb-1">State name</label>
-              <input
-                type="text"
+              <PythonTextField
                 value={element.label || ''}
-                onChange={(e) => updateElement(index, 'label', e.target.value)}
+                onChange={(val) => updateElement(index, 'label', val)}
                 data-focus-primary="true"
-                className="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:border-blue-500 outline-none"
+                inputClassName="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:border-blue-500 outline-none"
                 placeholder="Name"
               />
               <div className="mt-1 text-[10px] text-gray-500 leading-snug">
@@ -185,12 +165,11 @@ const LayerItem = ({
             <div className="grid grid-cols-2 gap-3">
                 <div>
                 <label className="block text-xs text-gray-500 mb-1">Label</label>
-                <input
-                    type="text"
+                <PythonTextField
                     value={element.label || ''}
-                    onChange={(e) => updateElement(index, 'label', e.target.value)}
+                    onChange={(val) => updateElement(index, 'label', val)}
                     data-focus-primary="true"
-                    className="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:border-blue-500 outline-none"
+                    inputClassName="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:border-blue-500 outline-none"
                     placeholder="River Name"
                 />
                 </div>
@@ -217,11 +196,10 @@ const LayerItem = ({
             <div>
               <label className="block text-xs text-gray-500 mb-1">ID</label>
               <div className="flex gap-1">
-                <input
-                  type="text"
+                <PythonTextField
                   value={element.value || ''}
-                  onChange={(e) => updateElement(index, 'value', e.target.value)}
-                  className="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:border-blue-500 outline-none font-mono"
+                  onChange={(val) => updateElement(index, 'value', val)}
+                  inputClassName="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:border-blue-500 outline-none font-mono"
                   placeholder={element.args?.source_type === 'overpass' ? 'e.g. 1159233' : 'e.g. 1159122643'}
                 />
                 <button
@@ -249,28 +227,26 @@ const LayerItem = ({
       case 'point':
       case 'text': {
         const iconArg = element.args?.icon;
-        const iconMode = !iconArg ? 'default' : typeof iconArg === 'string' ? 'builtin' : iconArg.shape ? 'geometric' : 'custom';
+        const iconMode = !iconArg ? 'default' : (isPythonValue(iconArg) ? 'custom' : (typeof iconArg === 'string' ? 'builtin' : iconArg.shape ? 'geometric' : 'custom'));
         return (
            <div className="grid grid-cols-2 gap-3 mb-2">
             <div>
               <label className="block text-xs text-gray-500 mb-1">Label</label>
-                <input
-                type="text"
+                <PythonTextField
                 value={element.label || ''}
-                onChange={(e) => updateElement(index, 'label', e.target.value)}
+                onChange={(val) => updateElement(index, 'label', val)}
                 data-focus-primary="true"
-                className="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:border-blue-500 outline-none"
+                inputClassName="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:border-blue-500 outline-none"
                 placeholder="Label"
               />
             </div>
             <div>
               <label className="block text-xs text-gray-500 mb-1">Position [lat, lon]</label>
               <div className="flex gap-1">
-                  <input
-                    type="text"
+                  <PythonTextField
                     value={element.value || ''}
-                    onChange={(e) => updateElement(index, 'value', e.target.value)}
-                    className="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:border-blue-500 outline-none font-mono"
+                    onChange={(val) => updateElement(index, 'value', val)}
+                    inputClassName="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:border-blue-500 outline-none font-mono"
                     placeholder="[28.6, 77.2]"
                   />
                   <button 
@@ -330,12 +306,11 @@ const LayerItem = ({
                           <option key={s} value={s}>{s}</option>
                         ))}
                       </select>
-                      <input
-                        type="text"
+                      <PythonTextField
                         value={iconArg?.color || '#3388ff'}
-                        onChange={(e) => updateArg(index, 'icon', { ...iconArg, color: e.target.value })}
+                        onChange={(val) => updateArg(index, 'icon', { ...iconArg, color: val })}
                         placeholder="Color"
-                        className="w-20 text-xs px-2 py-1.5 border border-gray-200 rounded font-mono"
+                        inputClassName="w-20 text-xs px-2 py-1.5 border border-gray-200 rounded font-mono"
                         title="CSS color, e.g. red or #ff0000"
                       />
                       <input
@@ -350,12 +325,17 @@ const LayerItem = ({
                     </>
                   )}
                   {iconMode === 'custom' && (
-                    <input
-                      type="text"
-                      value={iconArg?.icon_url || iconArg?.iconUrl || ''}
-                      onChange={(e) => updateArg(index, 'icon', { ...iconArg, icon_url: e.target.value })}
+                    <PythonTextField
+                      value={isPythonValue(iconArg) ? iconArg : (iconArg?.icon_url || iconArg?.iconUrl || '')}
+                      onChange={(val) => {
+                        if (isPythonValue(val)) {
+                          updateArg(index, 'icon', val);
+                          return;
+                        }
+                        updateArg(index, 'icon', { ...(iconArg && typeof iconArg === 'object' && !isPythonValue(iconArg) ? iconArg : {}), icon_url: val });
+                      }}
                       placeholder="https://... or data:..."
-                      className="flex-1 min-w-[160px] text-xs px-2 py-1.5 border border-gray-200 rounded font-mono"
+                      inputClassName="flex-1 min-w-[160px] text-xs px-2 py-1.5 border border-gray-200 rounded font-mono"
                     />
                   )}
                 </div>
@@ -369,22 +349,23 @@ const LayerItem = ({
            <div className="grid grid-cols-2 gap-3 mb-2">
             <div>
               <label className="block text-xs text-gray-500 mb-1">Label</label>
-              <input
-                type="text"
+              <PythonTextField
                 value={element.label || ''}
-                onChange={(e) => updateElement(index, 'label', e.target.value)}
+                onChange={(val) => updateElement(index, 'label', val)}
                 data-focus-primary="true"
-                className="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:border-blue-500 outline-none"
+                inputClassName="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:border-blue-500 outline-none"
                 placeholder="Route Name"
               />
             </div>
             <div>
               <label className="block text-xs text-gray-500 mb-1">Coords [[lat,lon]...]</label>
               <div className="flex gap-1 items-start">
-                  <textarea
+                  <PythonTextField
                     value={element.value || ''}
-                    onChange={(e) => updateElement(index, 'value', e.target.value)}
-                    className="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:border-blue-500 outline-none font-mono h-20 resize-none"
+                    onChange={(val) => updateElement(index, 'value', val)}
+                    multiline
+                    rows={4}
+                    inputClassName="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:border-blue-500 outline-none font-mono h-20 resize-none"
                     placeholder="[[28.6, 77.2], [19.0, 72.8]]"
                   />
                   <button 
@@ -403,11 +384,13 @@ const LayerItem = ({
           <div className="space-y-3 mb-2">
             <div>
               <label className="block text-xs text-gray-500 mb-1">CSV Content or File Path</label>
-              <textarea
+              <PythonTextField
                 value={element.value || ''}
-                onChange={(e) => updateElement(index, 'value', e.target.value)}
+                onChange={(val) => updateElement(index, 'value', val)}
                 data-focus-primary="true"
-                className="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:border-blue-500 outline-none font-mono h-24 resize-y text-xs"
+                multiline
+                rows={6}
+                inputClassName="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:border-blue-500 outline-none font-mono h-24 resize-y text-xs"
                 placeholder="GID,value\nIND,100"
               />
               <div className="mt-1">
@@ -441,6 +424,7 @@ const LayerItem = ({
               <AutocompleteInput
                 value={element.value || ''}
                 onChange={(val) => updateElement(index, 'value', val)}
+                allowPython
                 inputProps={{ 'data-focus-primary': 'true' }}
                 className="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:border-blue-500 outline-none font-mono"
                 placeholder="e.g. IND"
@@ -461,13 +445,12 @@ const LayerItem = ({
          return (
            <div className="mb-2">
               <label className="block text-xs text-gray-500 mb-1">Sources (JSON list)</label>
-              <input
-                type="text"
+              <PythonTextField
                 value={element.value || '["naturalearth"]'}
-                onChange={(e) => updateElement(index, 'value', e.target.value)}
+                onChange={(val) => updateElement(index, 'value', val)}
                 data-focus-primary="true"
-                className="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:border-blue-500 outline-none font-mono"
-              placeholder='["naturalearth"]'
+                inputClassName="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:border-blue-500 outline-none font-mono"
+                placeholder='["naturalearth"]'
               />
           </div>
         );
@@ -475,11 +458,13 @@ const LayerItem = ({
         return (
           <div className="mb-2">
             <label className="block text-xs text-gray-500 mb-1">TitleBox (HTML)</label>
-            <textarea
+            <PythonTextField
               value={element.value || ''}
-              onChange={(e) => updateElement(index, 'value', e.target.value)}
+              onChange={(val) => updateElement(index, 'value', val)}
               data-focus-primary="true"
-              className="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:border-blue-500 outline-none font-mono h-20 resize-y"
+              multiline
+              rows={4}
+              inputClassName="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:border-blue-500 outline-none font-mono h-20 resize-y"
               placeholder="<b>My Map</b>"
             />
           </div>
@@ -517,11 +502,10 @@ const LayerItem = ({
         {/* Classes */}
         <div>
            <label className="block text-xs text-gray-500 mb-1">CSS Classes</label>
-           <input
-            type="text"
+           <PythonTextField
             value={element.args?.classes || ''}
-            onChange={(e) => updateArg(index, 'classes', e.target.value)}
-            className="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:border-blue-500 outline-none"
+            onChange={(val) => updateArg(index, 'classes', val)}
+            inputClassName="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:border-blue-500 outline-none"
             placeholder="e.g. my-style"
           />
         </div>
@@ -531,11 +515,10 @@ const LayerItem = ({
             <>
                  <div>
                     <label className="block text-xs text-gray-500 mb-1">Color (Hex)</label>
-                    <input
-                        type="text"
+                    <PythonTextField
                         value={element.args?.color || ''}
-                        onChange={(e) => updateArg(index, 'color', e.target.value)}
-                        className="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:border-blue-500 outline-none"
+                        onChange={(val) => updateArg(index, 'color', val)}
+                        inputClassName="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:border-blue-500 outline-none"
                         placeholder="#ff0000"
                     />
                 </div>
@@ -598,11 +581,10 @@ const LayerItem = ({
       {element.type !== 'python' && (
         <div className="mb-2">
             <label className="block text-xs text-gray-500 mb-1">Period [start, end]</label>
-            <input
-              type="text"
-              value={periodText}
-              onChange={(e) => handlePeriodChange(e.target.value)}
-              className="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:border-blue-500 outline-none font-mono"
+            <PythonTextField
+              value={element.args?.period ?? periodText}
+              onChange={handlePeriodChange}
+              inputClassName="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:border-blue-500 outline-none font-mono"
               placeholder="e.g. -320, -180"
             />
              <div className="text-[10px] text-gray-400 mt-0.5 flex items-center gap-1">
@@ -614,12 +596,14 @@ const LayerItem = ({
       {element.type !== 'titlebox' && element.type !== 'python' && (
         <div>
           <label className="block text-xs text-gray-500 mb-1">Note (Tooltip)</label>
-          <AutoGrowTextarea
+          <PythonTextField
             value={element.args?.note || ''}
-            onChange={(e) => updateArg(index, 'note', e.target.value)}
-            className="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:border-blue-500 outline-none font-mono resize-none overflow-hidden"
-            placeholder="Optional description..."
+            onChange={(val) => updateArg(index, 'note', val)}
+            multiline
+            autoGrow
             rows={1}
+            inputClassName="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:border-blue-500 outline-none font-mono resize-none overflow-hidden"
+            placeholder="Optional description..."
           />
         </div>
       )}

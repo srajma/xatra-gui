@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { Code2 } from 'lucide-react';
+import { isPythonValue, toPythonValue, getPythonExpr, toTextValue } from '../utils/pythonValue';
 
 const AutocompleteInput = ({
   value,
@@ -9,6 +11,7 @@ const AutocompleteInput = ({
   minChars = 2,
   onSelectSuggestion,
   inputProps = {},
+  allowPython = false,
 }) => {
   const [suggestions, setSuggestions] = useState([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
@@ -18,6 +21,9 @@ const AutocompleteInput = ({
   const timerRef = useRef(null);
   const listRef = useRef(null);
   const itemRefs = useRef([]);
+
+  const pythonMode = isPythonValue(value);
+  const shownValue = pythonMode ? getPythonExpr(value) : toTextValue(value);
 
   useEffect(() => {
     function handleClickOutside(event) {
@@ -30,6 +36,7 @@ const AutocompleteInput = ({
   }, [wrapperRef]);
 
   const fetchSuggestions = async (query) => {
+    if (pythonMode) return;
     if (!query || query.length < minChars) {
       setSuggestions([]);
       setActiveIndex(-1);
@@ -51,7 +58,13 @@ const AutocompleteInput = ({
 
   const handleChange = (e) => {
     const val = e.target.value;
-    onChange(val);
+    onChange(pythonMode ? toPythonValue(val) : val);
+    if (pythonMode) {
+      setSuggestions([]);
+      setShowSuggestions(false);
+      setActiveIndex(-1);
+      return;
+    }
     
     if (timerRef.current) clearTimeout(timerRef.current);
     
@@ -61,6 +74,7 @@ const AutocompleteInput = ({
   };
 
   const handleSelect = (item) => {
+    if (pythonMode) return;
     if (typeof onSelectSuggestion === 'function') {
       onSelectSuggestion(item);
     } else {
@@ -71,6 +85,7 @@ const AutocompleteInput = ({
   };
 
   const handleKeyDown = (e) => {
+    if (pythonMode) return;
     if (!showSuggestions || suggestions.length === 0) {
       if (e.key === 'Escape') setShowSuggestions(false);
       return;
@@ -107,19 +122,41 @@ const AutocompleteInput = ({
     activeEl.scrollIntoView({ block: 'nearest' });
   }, [activeIndex]);
 
+  const togglePython = () => {
+    if (!allowPython) return;
+    if (pythonMode) {
+      onChange(getPythonExpr(value));
+      return;
+    }
+    onChange(toPythonValue(shownValue));
+    setSuggestions([]);
+    setShowSuggestions(false);
+    setActiveIndex(-1);
+  };
+
   return (
     <div className="relative" ref={wrapperRef}>
       <input
         type="text"
-        value={value}
+        value={shownValue}
         onChange={handleChange}
         onKeyDown={handleKeyDown}
-        onFocus={() => { if (suggestions.length > 0) setShowSuggestions(true); }}
-        className={className}
-        placeholder={placeholder}
+        onFocus={() => { if (!pythonMode && suggestions.length > 0) setShowSuggestions(true); }}
+        className={`${className || ''} pr-8 ${pythonMode ? 'border-amber-400 bg-amber-50 font-mono' : ''}`.trim()}
+        placeholder={pythonMode ? 'Python expression' : placeholder}
         {...inputProps}
       />
-      {showSuggestions && suggestions.length > 0 && (
+      {allowPython && (
+        <button
+          type="button"
+          onClick={togglePython}
+          className={`absolute right-1 top-1/2 -translate-y-1/2 p-1 rounded transition-colors ${pythonMode ? 'text-amber-700 bg-amber-100 hover:bg-amber-200' : 'text-gray-400 hover:text-gray-700 hover:bg-gray-100'}`}
+          title={pythonMode ? 'Python mode ON (click to switch to text)' : 'Use Python expression'}
+        >
+          <Code2 size={12} />
+        </button>
+      )}
+      {!pythonMode && showSuggestions && suggestions.length > 0 && (
         <div ref={listRef} className="xatra-autocomplete-menu absolute z-50 w-full mt-1 bg-white border border-gray-200 rounded-md shadow-lg max-h-60 overflow-y-auto">
           {suggestions.map((item, idx) => (
             <div
@@ -148,8 +185,8 @@ const AutocompleteInput = ({
           ))}
         </div>
       )}
-      {loading && (
-          <div className="absolute right-2 top-1/2 transform -translate-y-1/2">
+      {!pythonMode && loading && (
+          <div className={`absolute top-1/2 transform -translate-y-1/2 ${allowPython ? 'right-8' : 'right-2'}`}>
               <div className="w-3 h-3 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
           </div>
       )}
