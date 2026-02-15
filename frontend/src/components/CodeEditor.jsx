@@ -216,11 +216,11 @@ const CodeEditor = ({ code, setCode, predefinedCode, setPredefinedCode, onSync }
       <div className="p-2 bg-gray-50 border rounded space-y-1">
         <p className="text-[10px] text-gray-500 uppercase font-bold mb-1">Editor</p>
         <p className="text-xs text-gray-600">
-          Type <kbd className="px-1 bg-gray-200 rounded">xatra.</kbd> for map methods. Use <kbd className="px-1 bg-gray-200 rounded">Ctrl+Space</kbd> for suggestions.
+          Type <kbd className="px-1 bg-gray-200 rounded">xatra.</kbd> for map methods. You should be able to use this code editor easily even if you don't know how to code.
         </p>
-        <p className="text-xs text-gray-600">
+        {/* <p className="text-xs text-gray-600">
           Focus active editor: <kbd className="px-1 bg-gray-200 rounded">Ctrl/Cmd+Alt+I</kbd>
-        </p>
+        </p> */}
       </div>
     </div>
   );
