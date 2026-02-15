@@ -1,5 +1,4 @@
 import React, { useRef, useCallback, useState, useEffect } from 'react';
-import { RefreshCw } from 'lucide-react';
 import Editor from '@monaco-editor/react';
 
 const XATRA_COMPLETIONS = {
@@ -33,7 +32,7 @@ const XATRA_COMPLETIONS = {
   ],
 };
 
-const CodeEditor = ({ code, setCode, predefinedCode, setPredefinedCode, onSync }) => {
+const CodeEditor = ({ code, setCode, predefinedCode, setPredefinedCode }) => {
   const editorRef = useRef(null);
   const predefinedEditorRef = useRef(null);
   const activeEditorRef = useRef('map');
@@ -186,13 +185,6 @@ const CodeEditor = ({ code, setCode, predefinedCode, setPredefinedCode, onSync }
       <div className="flex flex-col flex-[2] min-h-[200px] flex-1 min-h-0 overflow-hidden">
         <div className="flex justify-between items-center mb-2 flex-shrink-0">
           <label className="block text-sm font-medium text-gray-700">Map Code</label>
-          <button
-            onClick={onSync}
-            className="flex items-center gap-1 px-2 py-1 bg-blue-50 text-blue-600 text-xs font-bold rounded hover:bg-blue-100 transition-colors"
-            title="Generate code from Builder state"
-          >
-            <RefreshCw size={12} /> Sync from Builder
-          </button>
         </div>
         <div ref={mapCodeContainerRef} className="flex-1 border border-gray-700 rounded-md overflow-hidden min-h-[320px] flex flex-col">
           <Editor

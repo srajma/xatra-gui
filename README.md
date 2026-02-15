@@ -49,7 +49,7 @@ Bugs
     - [x] clicking the add/subtract/intersection buttons with my mouse rather than keyboard) "gadm" is not immediately focused. Like it shows in blue highlight, but pressing enter doesn't select it, pressing arrow keys doesn't cycle through the options etc. (4) "Esc" should also be cycled through in all cases.
     - [X] keyboard shortcuts (both the + - & shortcuts and the g p t o arrow-keys-cycle tab keyboard shortcuts) conflict in nested groups. All keyboard shortcuts should operate only on the lowest-level element we're focused in, and similarly focus should not shift to somewhere outside that current focused group.
 - [ ] Fixes for project export, code to builder conversion
-  - [ ] Triple-quoted mulitiline strings need better support in handling. Right now if I put something like this into the code editor:
+  - [x] Triple-quoted mulitiline strings need better support in handling. Right now if I put something like this into the code editor:
     ```python
       xatra.Flag(
       label="ŚAVASA",
@@ -81,13 +81,15 @@ Bugs
     Chhibha comprising Punch, Rajauri and Bhimbhara. - VS Agarwala Ch II, Sec 4.", label="ŚAVASA")
     ```
     i.e. the triple-quoted string gets converted into a single-quoted string, causing a syntax error. In order to fix this:
-    - [ ] when converting from Builder to Code, multiline strings should always be triple-quoted.
-    - [ ] "Note" fields in the Builder should be text areas. They should start at single-line height, but the user should be able to enter more lines by pressing Enter and that should automatically increase the height of that particular text area as well. Converting from code to builder should use this for multiline strings.
-  - [ ] CSS conversion when converting from Code to Builder---messes up when there are multiple xatra.CSS() lines. It should just merge them into a single string when converting to Builder.
-  - [ ] Allow "Python" layers. Any line of code that doesn't match the existing matches should be made a "Python" block in the Builder. Allow the user to add and edit Python layers through the Builder (so it will be one more layer type after Flag, River, ... complete with its own keyboard shortcut Ctrl/Cmd+Shift+Y).
+    - [x] when converting from Builder to Code, multiline strings should always be triple-quoted.
+    - [x] "Note" fields in the Builder should be text areas. They should start at single-line height, but the user should be able to enter more lines by pressing Enter and that should automatically increase the height of that particular text area as well. Converting from code to builder should use this for multiline strings.
+  - [x] CSS conversion when converting from Code to Builder---messes up when there are multiple xatra.CSS() lines. It should just merge them into a single string when converting to Builder.
+  - [x] Allow "Python" layers. Any line of code that doesn't match the existing matches should be made a "Python" block in the Builder. Allow the user to add and edit Python layers through the Builder (so it will be one more layer type after Flag, River, ... complete with its own keyboard shortcut Ctrl/Cmd+Shift+Y).
     - [ ] To make this useful, it should also be possible to use Python in any text field. Every text input field should have a little icon inside it near the right edge that one can toggle to input Python code for the value of that variable instead (so it wouldn't be interpreted as a string). Code to Builder conversion should use this when needed (i.e. where it would otherwise lead to error)
-  - [ ] Code doesn't directly turn into project json for download (the "Save Project" one, not the "Export Map JSON" one) without converting to Builder mode first. It should.
-  - [ ] Can remove the "Sync from Builder" button since it automatically syncs now.
+  - [x] Code doesn't directly turn into project json for download (the "Save Project" one, not the "Export Map JSON" one) without converting to Builder mode first. It should.
+  - [x] Can remove the "Sync from Builder" button since it automatically syncs now.
+  - [ ] Fix new weird bug where an Admin layer gets added every time we switch from Code to Builder
+  - [ ] Oh, and Code comments should also get converted to Python layers in the Builder.
 
 
 Basic extensions

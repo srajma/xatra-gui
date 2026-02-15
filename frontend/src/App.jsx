@@ -691,6 +691,7 @@ xatra.TitleBox("<b>My Map</b>")
           a: 'admin',
           d: 'dataframe',
           b: 'titlebox',
+          y: 'python',
         };
         const layerType = layerByKey[lowerKey];
         if (layerType) {
@@ -843,7 +844,21 @@ xatra.TitleBox("<b>My Map</b>")
     if (mapPayload) downloadFile(JSON.stringify(mapPayload, null, 2), "map.json", "application/json");
   };
 
-  const handleSaveProject = () => {
+  const handleSaveProject = async () => {
+    if (activeTab === 'code') {
+      try {
+        const parsed = await parseCodeToBuilder();
+        const project = {
+          elements: Array.isArray(parsed.elements) ? parsed.elements : [],
+          options: parsed.options && typeof parsed.options === 'object' ? parsed.options : { basemaps: [] },
+          predefinedCode: typeof parsed.predefined_code === 'string' ? parsed.predefined_code : (predefinedCode || ''),
+        };
+        downloadFile(JSON.stringify(project, null, 2), "project.json", "application/json");
+      } catch (err) {
+        setError(`Save Project failed: ${err.message}`);
+      }
+      return;
+    }
     const project = { elements: builderElements, options: builderOptions, predefinedCode };
     downloadFile(JSON.stringify(project, null, 2), "project.json", "application/json");
   };
@@ -940,10 +955,18 @@ xatra.TitleBox("<b>My Map</b>")
         : null);
     const needsPyplotImport = !!(dataColormapOpt && dataColormapOpt.type && dataColormapOpt.type !== 'LinearSegmented');
     const needsLinearSegmentedImport = !!(dataColormapOpt && dataColormapOpt.type === 'LinearSegmented');
+    const pyString = (s) => {
+        const str = String(s ?? '');
+        if (str.includes('\n')) {
+            const escapedTriple = str.replace(/"""/g, '\\"""');
+            return `"""${escapedTriple}"""`;
+        }
+        return JSON.stringify(str);
+    };
     const pyVal = (v) => {
         if (v == null || v === '') return 'None';
         if (typeof v === 'boolean') return v ? 'True' : 'False';
-        if (typeof v === 'string') return `"${v.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+        if (typeof v === 'string') return pyString(v);
         if (Array.isArray(v)) return JSON.stringify(v);
         return JSON.stringify(v).replace(/"/g, "'").replace(/null/g, 'None').replace(/true/g, 'True').replace(/false/g, 'False');
     };
@@ -1119,6 +1142,9 @@ xatra.TitleBox("<b>My Map</b>")
         } else if (el.type === 'titlebox') {
             const titleHtml = (el.value != null && el.value !== '') ? String(el.value).replace(/"""/g, '\\"\\"\\"') : '';
             lines.push(`xatra.TitleBox("""${titleHtml}"""${argsStr})`);
+        } else if (el.type === 'python') {
+            const raw = (el.value == null) ? '' : String(el.value);
+            if (raw.trim()) lines.push(raw);
         }
     });
 
@@ -1290,7 +1316,6 @@ xatra.TitleBox("<b>My Map</b>")
             <CodeEditor 
                 code={code} setCode={setCode} 
                 predefinedCode={predefinedCode} setPredefinedCode={setPredefinedCode}
-                onSync={generatePythonCode}
             />
           )}
         </div>
@@ -1522,6 +1547,7 @@ xatra.TitleBox("<b>My Map</b>")
                     <div>`Ctrl/Cmd+Shift+A` add Admin</div>
                     <div>`Ctrl/Cmd+Shift+D` add Data</div>
                     <div>`Ctrl/Cmd+Shift+B` add TitleBox</div>
+                    <div>`Ctrl/Cmd+Shift+Y` add Python</div>
                 </div>
             )}
             {activePicker && (activePicker.context === 'layer' || isTerritoryPolygonPicker(activePicker.context)) && (

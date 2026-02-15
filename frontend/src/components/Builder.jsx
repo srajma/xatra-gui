@@ -1,5 +1,5 @@
 import React, { useRef, useEffect } from 'react';
-import { Map, Users, MapPin, Type, GitMerge, Table, Heading } from 'lucide-react';
+import { Map, Users, MapPin, Type, GitMerge, Table, Heading, Code2 } from 'lucide-react';
 import LayerItem from './LayerItem';
 import GlobalOptions from './GlobalOptions';
 
@@ -50,6 +50,11 @@ const Builder = ({
       case 'titlebox':
         newElement.label = 'TitleBox';
         newElement.value = '<b>My Map</b>';
+        newElement.args = {};
+        break;
+      case 'python':
+        newElement.label = 'Python';
+        newElement.value = '# custom Python layer';
         newElement.args = {};
         break;
       default:
@@ -182,6 +187,9 @@ const Builder = ({
              </button>
              <button data-kind="titlebox" onClick={() => addElement('titlebox', { focusFirstField: true })} className="xatra-add-layer-btn flex flex-col items-center justify-center p-2 bg-fuchsia-50 text-fuchsia-700 rounded hover:bg-fuchsia-100 text-[10px] gap-1 border border-fuchsia-100">
                <Heading size={14}/> TitleBox
+             </button>
+             <button data-kind="python" onClick={() => addElement('python', { focusFirstField: true })} className="xatra-add-layer-btn flex flex-col items-center justify-center p-2 bg-amber-50 text-amber-700 rounded hover:bg-amber-100 text-[10px] gap-1 border border-amber-100">
+               <Code2 size={14}/> Python
              </button>
           </div>
         </div>

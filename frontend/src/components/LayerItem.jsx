@@ -1,9 +1,35 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Trash2, ChevronDown, ChevronUp, Info, MousePointer2, Save } from 'lucide-react';
 import AutocompleteInput from './AutocompleteInput';
 import TerritoryBuilder from './TerritoryBuilder';
 
 const BUILTIN_ICON_SHAPES = ['circle', 'square', 'triangle', 'diamond', 'cross', 'plus', 'star', 'hexagon', 'pentagon', 'octagon'];
+
+const AutoGrowTextarea = ({ value, onChange, className, placeholder, ...rest }) => {
+  const ref = useRef(null);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.max(el.scrollHeight, 34)}px`;
+  }, [value]);
+
+  return (
+    <textarea
+      ref={ref}
+      value={value}
+      onChange={onChange}
+      onInput={(e) => {
+        e.currentTarget.style.height = 'auto';
+        e.currentTarget.style.height = `${Math.max(e.currentTarget.scrollHeight, 34)}px`;
+      }}
+      className={className}
+      placeholder={placeholder}
+      {...rest}
+    />
+  );
+};
 
 const LayerItem = ({ 
   element, index, elements, updateElement, updateArg, replaceElement, removeElement, 
@@ -458,6 +484,19 @@ const LayerItem = ({
             />
           </div>
         );
+      case 'python':
+        return (
+          <div className="mb-2">
+            <label className="block text-xs text-gray-500 mb-1">Python Code</label>
+            <textarea
+              value={element.value || ''}
+              onChange={(e) => updateElement(index, 'value', e.target.value)}
+              data-focus-primary="true"
+              className="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:border-blue-500 outline-none font-mono h-28 resize-y"
+              placeholder="xatra.Flag(label='Custom', value=gadm('IND'))"
+            />
+          </div>
+        );
       default:
         return null;
     }
@@ -556,35 +595,36 @@ const LayerItem = ({
 
       {renderSpecificFields()}
 
-      {/* Period - Now visible by default */}
-      <div className="mb-2">
-          <label className="block text-xs text-gray-500 mb-1">Period [start, end]</label>
-          <input
-            type="text"
-            value={periodText}
-            onChange={(e) => handlePeriodChange(e.target.value)}
-            className="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:border-blue-500 outline-none font-mono"
-            placeholder="e.g. -320, -180"
-          />
-           <div className="text-[10px] text-gray-400 mt-0.5 flex items-center gap-1">
-               <Info size={10}/> Use negative numbers for BC years (e.g. -320, -180)
-           </div>
-      </div>
+      {element.type !== 'python' && (
+        <div className="mb-2">
+            <label className="block text-xs text-gray-500 mb-1">Period [start, end]</label>
+            <input
+              type="text"
+              value={periodText}
+              onChange={(e) => handlePeriodChange(e.target.value)}
+              className="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:border-blue-500 outline-none font-mono"
+              placeholder="e.g. -320, -180"
+            />
+             <div className="text-[10px] text-gray-400 mt-0.5 flex items-center gap-1">
+                 <Info size={10}/> Use negative numbers for BC years (e.g. -320, -180)
+             </div>
+        </div>
+      )}
 
-      {element.type !== 'titlebox' && (
+      {element.type !== 'titlebox' && element.type !== 'python' && (
         <div>
           <label className="block text-xs text-gray-500 mb-1">Note (Tooltip)</label>
-          <input
-            type="text"
+          <AutoGrowTextarea
             value={element.args?.note || ''}
             onChange={(e) => updateArg(index, 'note', e.target.value)}
-            className="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:border-blue-500 outline-none font-mono"
+            className="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:border-blue-500 outline-none font-mono resize-none overflow-hidden"
             placeholder="Optional description..."
+            rows={1}
           />
         </div>
       )}
 
-      {element.type !== 'titlebox' && (
+      {element.type !== 'titlebox' && element.type !== 'python' && (
         <>
           <button 
             onClick={() => setShowMore(!showMore)}
