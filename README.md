@@ -262,7 +262,7 @@ Design improvements
 - [x] the "Xatra Studio" title is cheesy. Replace it with just xatra (lowercase), and no icon.
 
 Experiments I have to do
-- [ ] Make sure my existing maps work in this
+- [x] Make sure my existing maps work in this
 - [ ] experiment with some different designs
 
 Development difficulties
