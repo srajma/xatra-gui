@@ -283,28 +283,6 @@ Efficiency and scalability for publishing as an app
 
 ---
 
-## Implementation plans for remaining roadmap items
-
-### 1) Vimium/editor insert mode
-- Add an optional "Force editor focus" mode that keeps focus in Monaco while the Code tab is active.
-- Add a fallback keyboard shortcut in-app (e.g. `Ctrl+Alt+I`) that focuses the active editor without mouse.
-- Document hard limit: browser extensions can still intercept keys globally before page handlers.
-
-### 2) Reverse sync (Code -> Builder) and predefined-territory sync
-- Define a canonical intermediate JSON schema for map state (elements, options, predefined territories).
-- Build a Python AST parser pipeline for supported `xatra.*` calls and loader expressions (`gadm`, `polygon`, `naturalearth`, `overpass`).
-- Parse `predefined_code` assignments into structured territory expressions and update in-memory territory namespace used by builder render requests.
-- Add conflict reporting when code contains unsupported dynamic constructs (loops/functions) and keep those in code-only mode.
-
-### 3) Reference map multi-select for GADM and bulk add/subtract
-- Add a reference-picker mode with explicit target flag + operator (`union`/`difference`).
-- Support modifier-key multi-select on map (Ctrl/Cmd) and maintain a selected-GADM chip list.
-- Add "Apply selected to territory" action that appends ordered operations into `TerritoryBuilder` state.
-
-### 4) Keyboard navigation completeness
-- Add global command palette / shortcut map (`?` overlay) for tab switch, render, stop, and picker toggles.
-- Ensure picker controls, layer cards, and operation rows are fully reachable via Tab/Shift+Tab with visible focus rings.
-- Add keyboard reordering for territory rows (`Alt+ArrowUp/Down`) in addition to drag-and-drop.
 
 ### 5) Production platform features (sandboxing/accounts/publishing/AI)
 - Sandbox:
