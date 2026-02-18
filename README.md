@@ -94,7 +94,7 @@ Bugs
   - [x] Oh, and Code comments should also get converted to Python layers in the Builder.
   - [x] Weird issue with code in the territory library getting duplicated when switching from Code editor to Builder---however don't try to fix this now, I think it will automatically get fixed when you implement the later-detailed changes to the Code editor sections that will prevent the need to mirror code between the Territory library and the Map Code---ok nvm, you fixed it.
   - [x] Code editor: cursor jumps to the bottom of the editor when typing rapidly
-    - [ ] Fixed, but now it randomly jumps to the end of the line instead
+    - [x] Fixed, but now it randomly jumps to the end of the line instead
 
 
 Basic extensions
@@ -316,9 +316,10 @@ For eventually publishing this as a website
 - [x] Move GUI to a separate repo instead of being part of the main xatra package
 - [ ] Security
   - [ ] Obviously can't allow users to just run any Python code. Instead of blindly running whatever code the user enters in the Code editor, we should convert it into the "Builder" format first and then run _that_.
-      - [ ] One thing that 
+      - [ ] "Python" blocks and "Python" input to fields should _only_ be available to "Trusted" users. Other users should not be able to do that or even see the options; however they should be able to import maps from users who did use these blocks.
+        - [ ] Even that code should only be run in a sandbox.
     - [ ] Is the parsing of Python into Builder json, and the parsing of Builder json back into Python code, perfectly secure?
-- [ ] AI agent --- only for paid users
+- [ ] AI agent that makes maps for you --- only for paid users [have to think about exactly how to implement this]
 
 Efficiency and scalability for publishing as an app
 - [ ] Re-rendering the whole map each time is inefficient

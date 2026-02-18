@@ -39,6 +39,10 @@ const CodeEditor = ({ code, setCode, predefinedCode, setPredefinedCode }) => {
   const completionDisposableRef = useRef(null);
   const mapChangeDisposableRef = useRef(null);
   const predefinedChangeDisposableRef = useRef(null);
+  const lastMapLocalValueRef = useRef(code ?? '');
+  const lastPredefinedLocalValueRef = useRef(predefinedCode ?? '');
+  const lastMapEditAtRef = useRef(0);
+  const lastPredefinedEditAtRef = useRef(0);
 
   const handleEditorDidMount = useCallback((editor, monaco) => {
     editorRef.current = editor;
@@ -51,6 +55,8 @@ const CodeEditor = ({ code, setCode, predefinedCode, setPredefinedCode }) => {
     }
     mapChangeDisposableRef.current = editor.onDidChangeModelContent(() => {
       const next = editor.getValue();
+      lastMapLocalValueRef.current = next;
+      lastMapEditAtRef.current = Date.now();
       setCode(next);
     });
     monaco.editor.defineTheme('xatra-dark', {
@@ -131,6 +137,8 @@ const CodeEditor = ({ code, setCode, predefinedCode, setPredefinedCode }) => {
     }
     predefinedChangeDisposableRef.current = editor.onDidChangeModelContent(() => {
       const next = editor.getValue();
+      lastPredefinedLocalValueRef.current = next;
+      lastPredefinedEditAtRef.current = Date.now();
       setPredefinedCode(next);
     });
   }, [setPredefinedCode]);
@@ -186,12 +194,19 @@ const CodeEditor = ({ code, setCode, predefinedCode, setPredefinedCode }) => {
     const model = editor.getModel();
     if (!model) return;
     const incoming = code ?? '';
-    if (model.getValue() === incoming) return;
-    const pos = editor.getPosition();
+    const current = model.getValue();
+    if (incoming === lastMapLocalValueRef.current) return;
+    if (current === incoming) return;
+    const editedRecently = (Date.now() - lastMapEditAtRef.current) < 750;
+    if (editedRecently && editor.hasTextFocus()) return;
+    const selections = editor.getSelections();
     const scrollTop = editor.getScrollTop();
-    model.pushEditOperations([], [{ range: model.getFullModelRange(), text: incoming }], () => null);
-    if (pos) editor.setPosition(pos);
+    const scrollLeft = editor.getScrollLeft();
+    editor.executeEdits('external-sync', [{ range: model.getFullModelRange(), text: incoming }]);
+    if (selections && selections.length) editor.setSelections(selections);
     editor.setScrollTop(scrollTop);
+    editor.setScrollLeft(scrollLeft);
+    lastMapLocalValueRef.current = incoming;
   }, [code]);
 
   useEffect(() => {
@@ -200,12 +215,19 @@ const CodeEditor = ({ code, setCode, predefinedCode, setPredefinedCode }) => {
     const model = editor.getModel();
     if (!model) return;
     const incoming = predefinedCode ?? '';
-    if (model.getValue() === incoming) return;
-    const pos = editor.getPosition();
+    const current = model.getValue();
+    if (incoming === lastPredefinedLocalValueRef.current) return;
+    if (current === incoming) return;
+    const editedRecently = (Date.now() - lastPredefinedEditAtRef.current) < 750;
+    if (editedRecently && editor.hasTextFocus()) return;
+    const selections = editor.getSelections();
     const scrollTop = editor.getScrollTop();
-    model.pushEditOperations([], [{ range: model.getFullModelRange(), text: incoming }], () => null);
-    if (pos) editor.setPosition(pos);
+    const scrollLeft = editor.getScrollLeft();
+    editor.executeEdits('external-sync', [{ range: model.getFullModelRange(), text: incoming }]);
+    if (selections && selections.length) editor.setSelections(selections);
     editor.setScrollTop(scrollTop);
+    editor.setScrollLeft(scrollLeft);
+    lastPredefinedLocalValueRef.current = incoming;
   }, [predefinedCode]);
 
   return (
