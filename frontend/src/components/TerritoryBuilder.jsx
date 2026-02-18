@@ -1055,7 +1055,7 @@ const TerritoryBuilder = ({
                       <TokenInput
                         tokens={toList(part.value)}
                         onChange={(vals) => updatePart(idx, { value: toStored(vals) })}
-                        placeholder="e.g. maurya, NORTH_INDIA"
+                        placeholder="e.g. KURU, LEVANT, AUDICYA"
                         mode="local"
                         localOptions={allPredefinedOptions}
                         inputPath={rowPathId}

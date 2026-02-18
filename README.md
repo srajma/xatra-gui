@@ -16,6 +16,8 @@ To restart if the page is blank or not responding:
    ```
 3. Run `./start_gui.sh` again.
 
+Backend at `localhost:8088`, frontend at `localhost:5188`.
+
 ## TODO
 
 Bugs
@@ -90,6 +92,8 @@ Bugs
   - [x] Can remove the "Sync from Builder" button since it automatically syncs now.
   - [x] Fix new weird bug where an Admin layer gets added every time we switch from Code to Builder
   - [x] Oh, and Code comments should also get converted to Python layers in the Builder.
+  - [ ] Weird issue with code in the territory library getting duplicated when switching from Code editor to Builder---however don't try to fix this now, I think it will automatically get fixed when you implement the later-detailed changes to the Code editor sections that will prevent the need to mirror code between the Territory library and the Map Code
+  - [ ] Code editor: cursor jumps to the bottom of the editor when typing rapidly
 
 
 Basic extensions
@@ -263,19 +267,52 @@ Design improvements
 
 Experiments I have to do
 - [x] Make sure my existing maps work in this
-- [ ] experiment with some different designs
+- [ ] experiment with some different designs [NOT NOW]
 
 Development difficulties
 - [x] keeping synchrony between things---this should be documented, i.e. "if you change this, then change this too"
   - See "Development / Synchrony" section below.
 
+Proper database of maps
+- [ ] A database of:
+  - users
+  - users may save, edit their own:
+    - maps (where it currently says "xatra" in the top-left of the GUI there will be the name of the map, which can be edited at any point by the user---only characters allowed are lowercase letters, numerals, underscores and dots---no spaces). It will also have a version number (which may be "alpha"), a "save" button next to it---and a "copy" button to copy the slug of the map name (e.g. `xatrahub("/username/map/mapname")`) for import.
+    - territory libraries (i.e. their "saved territories") in any map. Basically they will have a version number (which may be "alpha"), a "save" button next to the Territory library section of the code editor which will create a new version of that territory library (with the same name as the map itself)---and a "copy" button to copy the slug of the library name (e.g. `xatrahub("/username/lib/libname")`) for import.
+    - map themes (also just Python code, but typically comprised of xatra.CSS() and color sequence elements). This will be another code editor in the code editor tab alongside "Territory library" and "Map code", and again have the version number, save and copy slug icons next to its title.
+    Only the names of the maps, territory libraries and themes will be synced; their versions are only updated when their respective save buttons are clicked.
+  - each of these will have basic integer versioning, so the user can any time choose to publish the current state of that map/library/theme as a new version number. The current state (not necessarily published as a version) is considered the "alpha" build.
+- [ ] Importing maps, territory libraries and themes from the database (whether their own or another user's) into their project. Importing maps will allow people to smoothly combine maps of e.g. different kingdoms or different regions of the world into one.
+  - [ ] server should expose an API for getting any particular map, territory library or theme on the website as /username/map/mapname/12, /username/lib/libname/3 /username/css/themename/alpha (where the last number is the version number) and a registry of such "packages"
+  - [ ] We'll have to modify the xatra library itself (which I also maintain---it's in ../xatra.master) to allow importing from this library via the API, i.e.
+    - `xatrahub("/username/map/mapname/12")` and all the elements in that map just get included in ours
+    - `xatrahub("/username/css/themename")` similarly 
+    - `lib = xatrahub("/username/lib/libname/3")` then use `lib.TERRITORY_NAME` etc. as territories
+    - We could either get these as exact Python code (and exec it) or as project json that is interpreted and loaded into Python, whatever makes most snse
+    - `xatrahub` should also take optional arguments `filter_only` and `filter_not` which, for maps and css, allow you to supply lists to filter which elements in the imported code are used in your code, i.e. `filter_only=['Flag','River']` ensures only you only import xatra.Flag and xatra.River elements or `filter_not=['TitleBox']` ensures you do not import xatra.TitleBox elements.
+    - There will have to be a XATRAHUB_URL constant (which can be read as an environment variable)---by default, it will just point to the localhost URL of the API, but in future when we publish the xatra GUI as a website we will change this to a public URL.
+  - [ ] In xatra gui, the user should have an interface to import maps/themes/territory libraries (should be able to search through names, descriptions, usernames of contributors) from the Builder UI, which get translated into the `xatrahub(...)` statements in the code and vice versa. The interface should also include the ability to set the `filter_not` attribute through checkboxes.
+    - [ ] The current `xatra.territory_library` will be published on `xatrahub` under the admin user `srajma` i.e. `/srajma/lib/indic`. In the xatra Code editor, the default import will then be `xatrahub("/srajma/lib/indic")` rather than `from xatra.territory_library import *`.
+      - [ ] Also in general the Code editor tab needs to be a bit more organized. Instead of duplicating content between different code boxes in that tab, we should have the following sections with _distinct_ contents:
+        - Imports of all the important things in xatra, i.e.
+        ```python
+        import xatra
+        from xatra.loaders import gadm, naturalearth, polygon, overpass
+        from xatra.icon import Icon
+        from xatra.colorseq import Color, ColorSequence, LinearColorSequence
+        ```
+        (this could even be fixed and read-only, if possible)
+        - xatrahub Imports (including map, theme and territory library imports)
+        - Custom territory library (with its version/save/copy icons as mentioned)
+        - Custom theme (with its version/save/copy icons as mentioned)
+        - Map code, i.e. _not_ including the contents of the other fields above
+        - Not-for-library, i.e. code you only want to be executed in this map but not be part of the library (basically the analog of an `if __name__ = "__main__"` block).
+        Finally these code editor blocks should be "stuck" to one another with just the headings (with version/save/copy icons) of each section between them, and those headings should be similarly darkly-backgrounded to fit in with the flow of the code editor boxes perfectly. You know what I mean?
+    - [ ] The "Territory library" tab in the GUI, currently there are just two tabs "xatra.territory_library" and "Custom Library" (which is the "Custom territory library" created in this particular map) and they are in the side box. With an arbitrary number of territory libraries imported, they should instead all be listed (alongside "Custom Library") as sub-tabs under the main "Map Preview/Referennce Map/Territory library" tabs, with the sub-tabs updating when the territory library imports are chnaged.
+
 For eventually publishing this as an app
 - [x] Move GUI to a separate repo instead of being part of the main xatra package
 - [ ] Sandboxing code (like in those online coding assessment platforms)
-- [ ] Database of user accounts, maps created by them etc.
-  - [ ] saving and publishing maps on platform (publishing can be for paid users only)
-  - [ ] publishing territory libraries and CSS
-  - [ ] importing existing map content, territory libraries and CSS into project
 - [ ] AI agent --- only for paid users
 
 Efficiency and scalability for publishing as an app
