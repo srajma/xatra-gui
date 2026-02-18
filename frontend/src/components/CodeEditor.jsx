@@ -37,11 +37,21 @@ const CodeEditor = ({ code, setCode, predefinedCode, setPredefinedCode }) => {
   const predefinedEditorRef = useRef(null);
   const activeEditorRef = useRef('map');
   const completionDisposableRef = useRef(null);
+  const mapChangeDisposableRef = useRef(null);
+  const predefinedChangeDisposableRef = useRef(null);
 
   const handleEditorDidMount = useCallback((editor, monaco) => {
     editorRef.current = editor;
     editor.onDidFocusEditorText(() => {
       activeEditorRef.current = 'map';
+    });
+    if (mapChangeDisposableRef.current) {
+      mapChangeDisposableRef.current.dispose();
+      mapChangeDisposableRef.current = null;
+    }
+    mapChangeDisposableRef.current = editor.onDidChangeModelContent(() => {
+      const next = editor.getValue();
+      setCode(next);
     });
     monaco.editor.defineTheme('xatra-dark', {
       base: 'vs-dark',
@@ -90,7 +100,7 @@ const CodeEditor = ({ code, setCode, predefinedCode, setPredefinedCode }) => {
         return { suggestions: items };
       },
     });
-  }, []);
+  }, [setCode]);
 
   // Dispose completion provider on unmount to avoid duplicate registrations when switching tabs
   React.useEffect(() => {
@@ -98,6 +108,14 @@ const CodeEditor = ({ code, setCode, predefinedCode, setPredefinedCode }) => {
       if (completionDisposableRef.current) {
         completionDisposableRef.current.dispose();
         completionDisposableRef.current = null;
+      }
+      if (mapChangeDisposableRef.current) {
+        mapChangeDisposableRef.current.dispose();
+        mapChangeDisposableRef.current = null;
+      }
+      if (predefinedChangeDisposableRef.current) {
+        predefinedChangeDisposableRef.current.dispose();
+        predefinedChangeDisposableRef.current = null;
       }
     };
   }, []);
@@ -107,7 +125,15 @@ const CodeEditor = ({ code, setCode, predefinedCode, setPredefinedCode }) => {
     editor.onDidFocusEditorText(() => {
       activeEditorRef.current = 'predefined';
     });
-  }, []);
+    if (predefinedChangeDisposableRef.current) {
+      predefinedChangeDisposableRef.current.dispose();
+      predefinedChangeDisposableRef.current = null;
+    }
+    predefinedChangeDisposableRef.current = editor.onDidChangeModelContent(() => {
+      const next = editor.getValue();
+      setPredefinedCode(next);
+    });
+  }, [setPredefinedCode]);
 
   const mapCodeContainerRef = useRef(null);
   const predefinedCodeContainerRef = useRef(null);
@@ -154,6 +180,34 @@ const CodeEditor = ({ code, setCode, predefinedCode, setPredefinedCode }) => {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, []);
 
+  useEffect(() => {
+    const editor = editorRef.current;
+    if (!editor) return;
+    const model = editor.getModel();
+    if (!model) return;
+    const incoming = code ?? '';
+    if (model.getValue() === incoming) return;
+    const pos = editor.getPosition();
+    const scrollTop = editor.getScrollTop();
+    model.pushEditOperations([], [{ range: model.getFullModelRange(), text: incoming }], () => null);
+    if (pos) editor.setPosition(pos);
+    editor.setScrollTop(scrollTop);
+  }, [code]);
+
+  useEffect(() => {
+    const editor = predefinedEditorRef.current;
+    if (!editor) return;
+    const model = editor.getModel();
+    if (!model) return;
+    const incoming = predefinedCode ?? '';
+    if (model.getValue() === incoming) return;
+    const pos = editor.getPosition();
+    const scrollTop = editor.getScrollTop();
+    model.pushEditOperations([], [{ range: model.getFullModelRange(), text: incoming }], () => null);
+    if (pos) editor.setPosition(pos);
+    editor.setScrollTop(scrollTop);
+  }, [predefinedCode]);
+
   return (
     <div className="h-full flex flex-col space-y-4 min-h-0">
       <div className="bg-red-600 text-white border border-red-700 rounded-md px-3 py-2 text-xs font-semibold">
@@ -167,8 +221,8 @@ const CodeEditor = ({ code, setCode, predefinedCode, setPredefinedCode }) => {
           <Editor
             height={predefinedCodeHeight}
             defaultLanguage="python"
-            value={predefinedCode || ''}
-            onChange={(v) => setPredefinedCode(v ?? '')}
+            path="xatra_territory_library.py"
+            defaultValue={predefinedCode || ''}
             onMount={handlePredefinedMount}
             theme="vs-dark"
             options={{
@@ -190,8 +244,8 @@ const CodeEditor = ({ code, setCode, predefinedCode, setPredefinedCode }) => {
           <Editor
             height={mapCodeHeight}
             defaultLanguage="python"
-            value={code || ''}
-            onChange={(v) => setCode(v ?? '')}
+            path="xatra_map.py"
+            defaultValue={code || ''}
             onMount={handleEditorDidMount}
             theme="vs-dark"
             options={{

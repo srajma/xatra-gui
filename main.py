@@ -224,6 +224,7 @@ def gadm_levels(country: str):
 
 class CodeRequest(BaseModel):
     code: str
+    predefined_code: Optional[str] = None
 
 class CodeSyncRequest(BaseModel):
     code: str
@@ -1138,6 +1139,13 @@ def run_rendering_task(task_type, data, result_queue):
                 "overpass": xatra.loaders.overpass,
                 "map": m
             }
+            predefined_code = getattr(data, "predefined_code", "") or ""
+            if predefined_code.strip():
+                import xatra.territory_library as territory_library
+                for name in dir(territory_library):
+                    if not name.startswith("_"):
+                        exec_globals[name] = getattr(territory_library, name)
+                exec(predefined_code, exec_globals)
             exec(data.code, exec_globals)
             m = xatra.get_current_map() # Refresh in case they used map = xatra.Map()
             

@@ -804,7 +804,7 @@ xatra.TitleBox("<b>My Map</b>")
     try {
       const endpoint = activeTab === 'code' ? '/render/code' : '/render/builder';
       const body = activeTab === 'code' 
-        ? { code } 
+        ? { code, predefined_code: predefinedCode || undefined } 
         : { elements: builderElements, options: builderOptions, predefined_code: predefinedCode || undefined };
 
       const response = await fetch(`http://localhost:8088${endpoint}`, {
@@ -996,8 +996,6 @@ xatra.TitleBox("<b>My Map</b>")
         ...(needsColorSeqImport ? ['from xatra.colorseq import Color, LinearColorSequence', ''] : []),
         ...(needsPyplotImport ? ['import matplotlib.pyplot as plt', ''] : []),
         ...(needsLinearSegmentedImport ? ['from matplotlib.colors import LinearSegmentedColormap', ''] : []),
-        '',
-        predefinedCode,
         ''
     ];
 
