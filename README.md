@@ -261,10 +261,13 @@ Minor changes
   - [x] Upon clicking one of those buttons (or pressing +, - or & when that particular Flag item or anything therein is focused), it should turn into a prompt asking what sort of territory you want to add, e.g. if we select subtract then it expands to "(-) subtract: _**g**adm_ / **p**olygon / **t**erritory / gr**o**up / [Esc]". It immediately focuses on gadm (so it is underlined), and we can cycle to focus a different option with arrow or tab keys. Preessing Enter or clicking one of those options selects it. Pressing the respective bolded key (g, p, t or o) also selects that option. Navigating to Esc, clicking it or pressing the escape key on the keyboard escapes this selection and returns the state of the links to "(+) add / (-) subtract / (&) intersect". So e.g. if we press "o" here it would create an entry with operation "-" and territory type "group".
   - [x] Upon creating this entry, its field should immediately be focused (if GADM, Polygon or Territory) or the "Define Territory" button should be focused (if Group).
   - [x] Likewise, when clicking "Define Territory" it should lead to the "Base: _**g**adm_ / **p**olygon / **t**erritory / gr**o**up / [Esc]" state.
+  - [ ] Don't use the word "GADM" in the Flag territory builder (users won't understand) instead use "Admin unit"
+  - [ ] Change the button for downloading the Project JSON to a download icon (it's currently a save icon, which suggests just saving the map to the database). And remove the option to download the Map JSON ("Export Map JSON"), it will confuse the user. And maybe change the icon for Export HTML to something that looks like a map and change the hover tip to "Download Map" (rather than "Export HTML"), the user doesn't care that it's in HTML format, just that it's a nice visual map.
 
 Design improvements
 - [x] introduce a dark mode
 - [x] the "Xatra Studio" title is cheesy. Replace it with just xatra (lowercase), and no icon.
+- [ ] allow the user to freely resize the left sidebar
 
 Experiments I have to do
 - [x] Make sure my existing maps work in this
@@ -311,6 +314,37 @@ Proper database of maps
         - Not-for-library, i.e. code you only want to be executed in this map but not be part of the library (basically the analog of an `if __name__ = "__main__"` block).
         Finally these code editor blocks should be "stuck" to one another with just the headings (with version/save/copy icons) of each section between them, and those headings should be similarly darkly-backgrounded to fit in with the flow of the code editor boxes perfectly. You know what I mean?
     - [ ] The "Territory library" tab in the GUI, currently there are just two tabs "xatra.territory_library" and "Custom Library" (which is the "Custom territory library" created in this particular map) and they are in the side box. With an arbitrary number of territory libraries imported, they should instead all be listed (alongside "Custom Library") as sub-tabs under the main "Map Preview/Referennce Map/Territory library" tabs, with the sub-tabs updating when the territory library imports are chnaged.
+- [ ] Re: the attempt made at this:
+Thank you. However there are still lots of issues in this implementation:
+- Why would the username be an editable field? That makes no sense. It should be the user's username (linked to the user's profile page, see below), if logged-in, or just `new_user` if not. The default name of the map should also not be `xatra` but `new_map` (or, if the user is logged-in and already has a map called `new_map` then `new_map_1`, `new_map_2` etc.)
+- There should be proper user accounts and a login flow---and if possible we should have the option to login with Google account, etc. (we can put this off for later if it needs some manual setup from me). Like: right now I don't even know how to login as the admin user (srajma) and create a map with the main territory library. Obviously, don't roll your own auth, implement best practices.
+- There would also need to be additional UI for managing all this. The landing page can still be the map editor, but there should be a little xatra menu button at the top left (left of the map slug) which when clicked gives a dropdown menu including:
+  - Load (this should replace the current "Load Project" button we have with the same icon)
+  - Save (this should replace the "Save Project" button we have, except we should change the icon to a little download icon)
+  - Export (this should replace the "Export HTML" button we have, except we should change the icon to a map or image icon rather than an HTML angular brackets thing since the user doesn't really care that it's HTML---we should also just remove the "Export Map JSON" button, it's too confusing for the user especially given that Save Project also downloads a json file albeit one that serves a different purpose)
+  - Night mode toggle---this replaces the last of the clutter buttons we have right now
+  - Explore---opens a new tab `/explore` showing maps on the platform, in a grid layout, ordered by some sensible measure of popularity, votes (yes you have to implement votes, for logged-in users only) and recently edited, with a well-implemented search feature (which will be the same search feature we will use for imports)---there should be a hint in the search box showing `indica user:srajma` as an example of a search, and that should indeed be how the search works. The map thumbnails should ideally show little saved snapshots of the maps (which were generated earlier when the user last edited it), but we can hold that off and keep a sample thumbnail if that's too complicated.
+  - My profile (for logged-in users)---loads a new tab `/<username>` which consists of the user's account info (username, optional full name and profile description, password and login/auth stuff only visible to that user) and some basic stats (number of maps created, views on that user's maps etc.). Below should be a view of the user's maps, with search and pagination if the number of items exceeds 10, and the user can load any one of them. Apart from the login stuff, everything else on the user's profile should be publicly available to all.
+  - New Map... which opens a new tab on the landing page.
+  - Login/Signup (for logged-out users) or Logout (for logged-in users).
+  The user should be able to click on any of the maps in "Explore" which will take him to the editor for that map, available at URL /username/map/mapname (i.e. the username of the user who actually created the map). Obviously, his edits should not be stored in the other user's map, but rather if he clicks the Save button (in the version/save/copy trio that should be next to the map slug) it should save it as a "fork" of the map he was editing (with that forking clearly attributed and linked to the original map) to /hisusername/map/mapname. If he already has a map with that name, it should automatically add an `_n` at the end where `n` is the smallest integer such that a map with that name does not exist among the user's maps.
+  The "Explore" and "My Profile" pages should have a sidebar which kinda looks like the expanded xatra menu, with similar links
+- Re: the breakdown of the code editor
+  - Your implementation should divide the code so that the Python imports:
+    ```python
+    import xatra
+    from xatra.loaders import gadm, naturalearth, polygon, overpass
+    from xatra.icon import Icon
+    from xatra.colorseq import Color, ColorSequence, LinearColorSequence
+    from matplotlib.colors import LinearSegmentedColormap
+    ```
+    should be in the Python imports section (which needs to exist, btw--you haven't created it); xatrahub imports in their section; xatra.CSS(), xatra.BaseOption(), xatra.FlagColorSequence(), xatra.AdminColorSequence(), xatra.DataColormap() elements elements in the Theme section.
+- version/save/copy icons need design improvements.
+  - Instead of showing the version numbering as its own separate thing, the version number and publish version buttons should be integrated, i.e. a little button displaying a tag icon (instead of the save icon) and the version number in a small monospace font (do not add brackets, write it as `v1`, `v2`, `alpha` etc.) that upon clicking publishes a new version. It should only publish a new version if there have actually been any changes (otherwise it should display a little text left of the button saying "No changes"). 
+- The import from database search UI is absolutely terrible. I don't think I need to explain to you why; you should just trash this, think it through and come up with a perfect UI, which could be like a pop-up UI (which, like I said, should look the same and use the same search/browsing functionality as "Explore..."), with which the user can browse through his own as well as public maps/themes/libraries, select from a list of checkboxes which elements get imported (i.e. whatever is unselected gets passed to `filter_not`) and select for each entry that shows up whether to import the map, theme or territories (keyboard shortcuts m, c, t on focused entry) through little buttons stacked underneath each thumbnail. It should also just be called "Import from xatra hub" and should be present in the Builder not the code.
+- You should of course make sure all this extra UI is subject to the light and night mode color schemes
+- It should store the latest unsaved map in the database for both logged-in and logged-out users (using whatever auth/cookies/whatever idk for the latter) so it can be loaded again when the user revisits
+
 
 For eventually publishing this as a website
 - [x] Move GUI to a separate repo instead of being part of the main xatra package
