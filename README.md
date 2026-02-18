@@ -92,8 +92,9 @@ Bugs
   - [x] Can remove the "Sync from Builder" button since it automatically syncs now.
   - [x] Fix new weird bug where an Admin layer gets added every time we switch from Code to Builder
   - [x] Oh, and Code comments should also get converted to Python layers in the Builder.
-  - [ ] Weird issue with code in the territory library getting duplicated when switching from Code editor to Builder---however don't try to fix this now, I think it will automatically get fixed when you implement the later-detailed changes to the Code editor sections that will prevent the need to mirror code between the Territory library and the Map Code
-  - [ ] Code editor: cursor jumps to the bottom of the editor when typing rapidly
+  - [x] Weird issue with code in the territory library getting duplicated when switching from Code editor to Builder---however don't try to fix this now, I think it will automatically get fixed when you implement the later-detailed changes to the Code editor sections that will prevent the need to mirror code between the Territory library and the Map Code---ok nvm, you fixed it.
+  - [x] Code editor: cursor jumps to the bottom of the editor when typing rapidly
+    - [ ] Fixed, but now it randomly jumps to the end of the line instead
 
 
 Basic extensions
