@@ -8,6 +8,9 @@ import MapPreview from './components/MapPreview';
 import AutocompleteInput from './components/AutocompleteInput';
 import { isPythonValue, getPythonExpr } from './utils/pythonValue';
 
+const API_BASE = 'http://localhost:8088';
+const HUB_NAME_RE = /^[a-z0-9_.]+$/;
+
 const isTerritoryPolygonPicker = (ctx) => /^territory-\d+$/.test(String(ctx || ''));
 const isEditableTarget = (target) => (
   !!(target && typeof target.closest === 'function' && target.closest('input, textarea, [contenteditable="true"], [role="textbox"]'))
@@ -48,6 +51,34 @@ function App() {
   });
 
   // Code State
+  const [hubUsername, setHubUsername] = useState(() => {
+    try {
+      return localStorage.getItem('xatra-hub-username') || 'localuser';
+    } catch {
+      return 'localuser';
+    }
+  });
+  const [mapName, setMapName] = useState(() => {
+    try {
+      return localStorage.getItem('xatra-map-name') || 'xatra';
+    } catch {
+      return 'xatra';
+    }
+  });
+  const [mapVersionLabel, setMapVersionLabel] = useState('alpha');
+  const [libraryVersionLabel, setLibraryVersionLabel] = useState('alpha');
+  const [themeVersionLabel, setThemeVersionLabel] = useState('alpha');
+  const [importsCode, setImportsCode] = useState('');
+  const [themeCode, setThemeCode] = useState('');
+  const [runtimeCode, setRuntimeCode] = useState('');
+  const [hubQuery, setHubQuery] = useState('');
+  const [hubKindFilter, setHubKindFilter] = useState('map');
+  const [hubSearchResults, setHubSearchResults] = useState([]);
+  const [hubFilterNot, setHubFilterNot] = useState({
+    TitleBox: false,
+    CSS: false,
+    BaseOption: false,
+  });
   const [code, setCode] = useState(`import xatra
 from xatra.loaders import gadm, naturalearth
 
@@ -208,6 +239,12 @@ xatra.TitleBox("<b>My Map</b>")
     return `${html}${patchScript}`;
   };
 
+  const normalizedMapName = String(mapName || '').trim();
+  const normalizedHubUsername = String(hubUsername || '').trim().toLowerCase();
+  const mapSlugPath = `/${normalizedHubUsername}/map/${normalizedMapName}`;
+  const librarySlugPath = `/${normalizedHubUsername}/lib/${normalizedMapName}`;
+  const themeSlugPath = `/${normalizedHubUsername}/css/${normalizedMapName}`;
+
   useEffect(() => {
     try {
       localStorage.setItem('xatra-theme', isDarkMode ? 'dark' : 'light');
@@ -215,6 +252,130 @@ xatra.TitleBox("<b>My Map</b>")
       // Ignore persistence errors (e.g., private mode restrictions)
     }
   }, [isDarkMode]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('xatra-hub-username', hubUsername);
+      localStorage.setItem('xatra-map-name', mapName);
+    } catch {
+      // ignore
+    }
+  }, [hubUsername, mapName]);
+
+  useEffect(() => {
+    const ensureUser = async () => {
+      try {
+        await fetch(`${API_BASE}/hub/users/ensure`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username: hubUsername }),
+        });
+      } catch {
+        // ignore transient availability issues
+      }
+    };
+    ensureUser();
+  }, [hubUsername]);
+
+  useEffect(() => {
+    const loadVersionLabels = async () => {
+      const pairs = [
+        ['map', setMapVersionLabel],
+        ['lib', setLibraryVersionLabel],
+        ['css', setThemeVersionLabel],
+      ];
+      for (const [kind, setter] of pairs) {
+        try {
+          const resp = await fetch(`${API_BASE}/hub/${normalizedHubUsername}/${kind}/${normalizedMapName}`);
+          if (!resp.ok) {
+            setter('alpha');
+            continue;
+          }
+          const data = await resp.json();
+          setter(data.latest_published_version || 'alpha');
+        } catch {
+          setter('alpha');
+        }
+      }
+    };
+    if (normalizedHubUsername && HUB_NAME_RE.test(normalizedMapName)) {
+      loadVersionLabels();
+    }
+  }, [normalizedHubUsername, normalizedMapName]);
+
+  const copyText = async (text) => {
+    try {
+      await navigator.clipboard.writeText(String(text || ''));
+    } catch {
+      // ignore
+    }
+  };
+
+  const buildHubMetadata = (kind) => ({
+    kind,
+    map_name: normalizedMapName,
+    username: normalizedHubUsername,
+    updated_from: activeTab,
+  });
+
+  const publishHubArtifact = async (kind, content) => {
+    if (!HUB_NAME_RE.test(normalizedMapName)) {
+      throw new Error('Map name must contain only lowercase letters, numerals, underscores, and dots.');
+    }
+    if (!normalizedHubUsername) {
+      throw new Error('Username is required.');
+    }
+    const response = await fetch(`${API_BASE}/hub/${normalizedHubUsername}/${kind}/${normalizedMapName}/publish`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        content,
+        metadata: buildHubMetadata(kind),
+      }),
+    });
+    const data = await response.json();
+    if (!response.ok || data.detail || data.error) {
+      throw new Error(data.detail || data.error || 'Failed to publish artifact');
+    }
+    const latest = data.latest_published_version;
+    if (kind === 'map') setMapVersionLabel(latest || 'alpha');
+    if (kind === 'lib') setLibraryVersionLabel(latest || 'alpha');
+    if (kind === 'css') setThemeVersionLabel(latest || 'alpha');
+    return data;
+  };
+
+  const addHubImportLine = (item) => {
+    if (!item || !item.slug) return;
+    const quotedPath = `"${item.slug}${item.latest_version ? `/${item.latest_version}` : ''}"`;
+    const filterNot = Object.keys(hubFilterNot).filter((k) => hubFilterNot[k]);
+    let line = '';
+    if (item.kind === 'lib') {
+      const alias = `${item.name}_lib`.replace(/[^a-zA-Z0-9_]/g, '_');
+      line = `${alias} = xatrahub(${quotedPath})`;
+    } else {
+      if (filterNot.length) {
+        line = `xatrahub(${quotedPath}, filter_not=${JSON.stringify(filterNot)})`;
+      } else {
+        line = `xatrahub(${quotedPath})`;
+      }
+    }
+    setImportsCode((prev) => (prev.trim() ? `${prev.trim()}\n${line}\n` : `${line}\n`));
+  };
+
+  const searchHubRegistry = async () => {
+    try {
+      const params = new URLSearchParams();
+      if (hubKindFilter) params.set('kind', hubKindFilter);
+      if (hubQuery.trim()) params.set('q', hubQuery.trim());
+      params.set('limit', '20');
+      const response = await fetch(`${API_BASE}/hub/registry?${params.toString()}`);
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || 'Failed to search hub registry');
+      setHubSearchResults(Array.isArray(data.items) ? data.items : []);
+    } catch (err) {
+      setError(err.message);
+    }
+  };
 
   const updateDraft = (points, shapeType) => {
       const ref = activePreviewTab === 'picker'
@@ -775,7 +936,7 @@ xatra.TitleBox("<b>My Map</b>")
           if (!useDefaultSelection) {
             body.selected_names = selectedTerritoryNames;
           }
-          const response = await fetch('http://localhost:8088/render/territory-library', {
+      const response = await fetch('http://localhost:8088/render/territory-library', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify(body),
@@ -804,10 +965,23 @@ xatra.TitleBox("<b>My Map</b>")
     try {
       const endpoint = activeTab === 'code' ? '/render/code' : '/render/builder';
       const body = activeTab === 'code' 
-        ? { code, predefined_code: predefinedCode || undefined } 
-        : { elements: builderElements, options: builderOptions, predefined_code: predefinedCode || undefined };
+        ? {
+            code,
+            predefined_code: predefinedCode || undefined,
+            imports_code: importsCode || undefined,
+            theme_code: themeCode || undefined,
+            runtime_code: runtimeCode || undefined,
+          }
+        : {
+            elements: builderElements,
+            options: builderOptions,
+            predefined_code: predefinedCode || undefined,
+            imports_code: importsCode || undefined,
+            theme_code: themeCode || undefined,
+            runtime_code: runtimeCode || undefined,
+          };
 
-      const response = await fetch(`http://localhost:8088${endpoint}`, {
+      const response = await fetch(`${API_BASE}${endpoint}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
@@ -853,6 +1027,9 @@ xatra.TitleBox("<b>My Map</b>")
           elements: Array.isArray(parsed.elements) ? parsed.elements : [],
           options: parsed.options && typeof parsed.options === 'object' ? parsed.options : { basemaps: [] },
           predefinedCode: typeof parsed.predefined_code === 'string' ? parsed.predefined_code : (predefinedCode || ''),
+          importsCode,
+          themeCode,
+          runtimeCode,
         };
         downloadFile(JSON.stringify(project, null, 2), "project.json", "application/json");
       } catch (err) {
@@ -860,8 +1037,71 @@ xatra.TitleBox("<b>My Map</b>")
       }
       return;
     }
-    const project = { elements: builderElements, options: builderOptions, predefinedCode };
+    const project = { elements: builderElements, options: builderOptions, predefinedCode, importsCode, themeCode, runtimeCode };
     downloadFile(JSON.stringify(project, null, 2), "project.json", "application/json");
+  };
+
+  const buildMapArtifactContent = async () => {
+    let mapCodeText = code;
+    let projectPayload = { elements: builderElements, options: builderOptions, predefinedCode, importsCode, themeCode, runtimeCode };
+    if (activeTab === 'builder') {
+      mapCodeText = generatePythonCode() || '';
+    } else {
+      try {
+        const parsed = await parseCodeToBuilder();
+        projectPayload = {
+          elements: Array.isArray(parsed.elements) ? parsed.elements : [],
+          options: parsed.options && typeof parsed.options === 'object' ? parsed.options : { basemaps: [] },
+          predefinedCode: typeof parsed.predefined_code === 'string' ? parsed.predefined_code : (predefinedCode || ''),
+          importsCode,
+          themeCode,
+          runtimeCode,
+        };
+      } catch {
+        // Keep current in-memory payload if parsing fails
+      }
+    }
+    return JSON.stringify({
+      imports_code: importsCode || '',
+      theme_code: themeCode || '',
+      predefined_code: predefinedCode || '',
+      map_code: mapCodeText || '',
+      runtime_code: runtimeCode || '',
+      project: projectPayload,
+    });
+  };
+
+  const handlePublishMap = async () => {
+    try {
+      const content = await buildMapArtifactContent();
+      await publishHubArtifact('map', content);
+    } catch (err) {
+      setError(`Publish map failed: ${err.message}`);
+    }
+  };
+
+  const handlePublishLibrary = async () => {
+    try {
+      const content = JSON.stringify({
+        predefined_code: predefinedCode || '',
+        map_name: normalizedMapName,
+      });
+      await publishHubArtifact('lib', content);
+    } catch (err) {
+      setError(`Publish library failed: ${err.message}`);
+    }
+  };
+
+  const handlePublishTheme = async () => {
+    try {
+      const content = JSON.stringify({
+        theme_code: themeCode || '',
+        map_name: normalizedMapName,
+      });
+      await publishHubArtifact('css', content);
+    } catch (err) {
+      setError(`Publish theme failed: ${err.message}`);
+    }
   };
 
   const handleLoadProject = (e) => {
@@ -875,6 +1115,9 @@ xatra.TitleBox("<b>My Map</b>")
              setBuilderElements(project.elements);
              setBuilderOptions(project.options);
              if (project.predefinedCode) setPredefinedCode(project.predefinedCode);
+             if (typeof project.importsCode === 'string') setImportsCode(project.importsCode);
+             if (typeof project.themeCode === 'string') setThemeCode(project.themeCode);
+             if (typeof project.runtimeCode === 'string') setRuntimeCode(project.runtimeCode);
           }
         } catch (err) {
           setError("Failed to load project: " + err.message);
@@ -1170,14 +1413,17 @@ xatra.TitleBox("<b>My Map</b>")
         }
     });
 
-    setCode(lines.join('\n'));
+    const generated = lines.join('\n');
+    setCode(generated);
+    return generated;
   };
 
   const parseCodeToBuilder = async () => {
-    const response = await fetch('http://localhost:8088/sync/code_to_builder', {
+    const combinedCode = [themeCode || '', code || ''].filter((x) => String(x).trim()).join('\n\n');
+    const response = await fetch(`${API_BASE}/sync/code_to_builder`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ code, predefined_code: predefinedCode }),
+      body: JSON.stringify({ code: combinedCode, predefined_code: predefinedCode }),
     });
     const data = await response.json();
     if (!response.ok || data.error) {
@@ -1275,9 +1521,32 @@ xatra.TitleBox("<b>My Map</b>")
       <div className="w-1/3 min-w-[350px] max-w-[500px] flex flex-col bg-white border-r border-gray-200 shadow-md z-10">
         <div className="p-4 border-b border-gray-200 bg-gray-50 flex flex-col gap-3">
           <div className="flex items-center justify-between">
-            <h1 className="text-xl font-bold text-gray-800 flex items-center gap-2 lowercase">
-                xatra
-            </h1>
+            <div className="flex items-center gap-2 min-w-0">
+              <input
+                type="text"
+                value={hubUsername}
+                onChange={(e) => setHubUsername(e.target.value.toLowerCase().replace(/[^a-z0-9_.-]/g, ''))}
+                className="w-28 text-xs p-1 border rounded bg-white font-mono"
+                title="Username"
+                placeholder="username"
+              />
+              <span className="text-xs text-gray-500">/map/</span>
+              <input
+                type="text"
+                value={mapName}
+                onChange={(e) => setMapName(e.target.value.toLowerCase().replace(/[^a-z0-9_.]/g, ''))}
+                className={`w-36 text-sm p-1 border rounded bg-white font-mono ${HUB_NAME_RE.test(normalizedMapName) ? 'border-gray-300' : 'border-red-400'}`}
+                title="Map name"
+                placeholder="map_name"
+              />
+              <span className="text-[11px] px-1.5 py-0.5 rounded border bg-white text-gray-600">v{mapVersionLabel}</span>
+              <button onClick={handlePublishMap} className="p-1.5 bg-white border border-gray-300 rounded hover:bg-gray-50" title="Publish map version">
+                <Save size={14} className="text-gray-600"/>
+              </button>
+              <button onClick={() => copyText(`xatrahub("${mapSlugPath}")`)} className="p-1.5 bg-white border border-gray-300 rounded hover:bg-gray-50" title="Copy map slug">
+                <Copy size={14} className="text-gray-600"/>
+              </button>
+            </div>
             <div className="flex items-center gap-2">
               <button
                 type="button"
@@ -1314,6 +1583,56 @@ xatra.TitleBox("<b>My Map</b>")
              <button onClick={handleExportHtml} disabled={!mapHtml} className="p-1.5 bg-white border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50" title="Export HTML"><FileCode size={16} className="text-gray-600"/></button>
              <button onClick={handleExportJson} disabled={!mapPayload} className="p-1.5 bg-white border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50" title="Export Map JSON"><FileJson size={16} className="text-gray-600"/></button>
           </div>
+          {activeTab === 'code' && (
+            <div className="border border-gray-200 rounded bg-white p-2 space-y-2">
+              <div className="text-[10px] font-semibold uppercase text-gray-500">Import From Database</div>
+              <div className="flex gap-1">
+                <select
+                  value={hubKindFilter}
+                  onChange={(e) => setHubKindFilter(e.target.value)}
+                  className="text-xs p-1 border rounded bg-white"
+                >
+                  <option value="map">map</option>
+                  <option value="lib">lib</option>
+                  <option value="css">css</option>
+                </select>
+                <input
+                  type="text"
+                  value={hubQuery}
+                  onChange={(e) => setHubQuery(e.target.value)}
+                  placeholder="search name / username"
+                  className="flex-1 text-xs p-1 border rounded"
+                />
+                <button onClick={searchHubRegistry} className="text-xs px-2 border rounded bg-gray-50 hover:bg-gray-100">Find</button>
+              </div>
+              {(hubKindFilter === 'map' || hubKindFilter === 'css') && (
+                <div className="flex gap-2 text-[10px] text-gray-600">
+                  {Object.keys(hubFilterNot).map((k) => (
+                    <label key={k} className="flex items-center gap-1">
+                      <input
+                        type="checkbox"
+                        checked={hubFilterNot[k]}
+                        onChange={(e) => setHubFilterNot((prev) => ({ ...prev, [k]: e.target.checked }))}
+                      />
+                      filter_not {k}
+                    </label>
+                  ))}
+                </div>
+              )}
+              <div className="max-h-24 overflow-y-auto space-y-1">
+                {hubSearchResults.map((item) => (
+                  <button
+                    key={`${item.username}-${item.kind}-${item.name}`}
+                    onClick={() => addHubImportLine(item)}
+                    className="w-full text-left text-[11px] px-2 py-1 border rounded hover:bg-blue-50"
+                    title="Add xatrahub import line"
+                  >
+                    /{item.username}/{item.kind}/{item.name}{item.latest_version ? `/${item.latest_version}` : '/alpha'}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="flex-1 overflow-y-auto p-4">
@@ -1339,6 +1658,15 @@ xatra.TitleBox("<b>My Map</b>")
             <CodeEditor 
                 code={code} setCode={setCode} 
                 predefinedCode={predefinedCode} setPredefinedCode={setPredefinedCode}
+                importsCode={importsCode} setImportsCode={setImportsCode}
+                themeCode={themeCode} setThemeCode={setThemeCode}
+                runtimeCode={runtimeCode} setRuntimeCode={setRuntimeCode}
+                libraryVersionLabel={String(libraryVersionLabel)}
+                themeVersionLabel={String(themeVersionLabel)}
+                onSaveLibrary={handlePublishLibrary}
+                onSaveTheme={handlePublishTheme}
+                onCopyLibrarySlug={() => copyText(`xatrahub("${librarySlugPath}")`)}
+                onCopyThemeSlug={() => copyText(`xatrahub("${themeSlugPath}")`)}
             />
           )}
         </div>

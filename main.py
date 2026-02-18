@@ -10,6 +10,9 @@ import ast
 import re
 import io
 import tokenize
+import sqlite3
+from datetime import datetime, timezone
+from types import SimpleNamespace
 from collections import OrderedDict
 
 # Set matplotlib backend to Agg before importing anything else
@@ -36,6 +39,205 @@ process_lock = threading.Lock()
 render_cache_lock = threading.Lock()
 RENDER_CACHE_MAX_ENTRIES = 24
 render_cache = OrderedDict()
+
+HUB_DB_PATH = Path(__file__).parent / "xatra_hub.db"
+HUB_NAME_PATTERN = re.compile(r"^[a-z0-9_.]+$")
+HUB_USER_PATTERN = re.compile(r"^[a-z0-9_.-]+$")
+HUB_KINDS = {"map", "lib", "css"}
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
+def _hub_db_conn() -> sqlite3.Connection:
+    conn = sqlite3.connect(HUB_DB_PATH)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    return conn
+
+
+def _normalize_hub_name(name: str) -> str:
+    cleaned = str(name or "").strip()
+    if not HUB_NAME_PATTERN.fullmatch(cleaned):
+        raise HTTPException(status_code=400, detail="Name must match ^[a-z0-9_.]+$")
+    return cleaned
+
+
+def _normalize_hub_user(username: str) -> str:
+    cleaned = str(username or "").strip().lower()
+    if not HUB_USER_PATTERN.fullmatch(cleaned):
+        raise HTTPException(status_code=400, detail="Username must match ^[a-z0-9_.-]+$")
+    return cleaned
+
+
+def _normalize_hub_kind(kind: str) -> str:
+    cleaned = str(kind or "").strip().lower()
+    if cleaned not in HUB_KINDS:
+        raise HTTPException(status_code=400, detail=f"kind must be one of {sorted(HUB_KINDS)}")
+    return cleaned
+
+
+def _json_text(value: Any) -> str:
+    if value is None:
+        return "{}"
+    if isinstance(value, str):
+        try:
+            json.loads(value)
+            return value
+        except Exception:
+            return json.dumps({"value": value})
+    try:
+        return json.dumps(value, ensure_ascii=False)
+    except Exception:
+        return "{}"
+
+
+def _json_parse(value: Any, default: Any) -> Any:
+    if not isinstance(value, str) or not value.strip():
+        return default
+    try:
+        return json.loads(value)
+    except Exception:
+        return default
+
+
+def _init_hub_db():
+    conn = _hub_db_conn()
+    try:
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS hub_users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL UNIQUE,
+                created_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS hub_artifacts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL REFERENCES hub_users(id) ON DELETE CASCADE,
+                kind TEXT NOT NULL,
+                name TEXT NOT NULL,
+                alpha_content TEXT NOT NULL DEFAULT '',
+                alpha_metadata TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(user_id, kind, name)
+            );
+
+            CREATE TABLE IF NOT EXISTS hub_artifact_versions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                artifact_id INTEGER NOT NULL REFERENCES hub_artifacts(id) ON DELETE CASCADE,
+                version INTEGER NOT NULL,
+                content TEXT NOT NULL,
+                metadata TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL,
+                UNIQUE(artifact_id, version)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_hub_artifacts_lookup ON hub_artifacts(user_id, kind, name);
+            CREATE INDEX IF NOT EXISTS idx_hub_artifacts_kind_name ON hub_artifacts(kind, name);
+            CREATE INDEX IF NOT EXISTS idx_hub_versions_artifact ON hub_artifact_versions(artifact_id, version);
+            """
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _hub_ensure_user(conn: sqlite3.Connection, username: str) -> sqlite3.Row:
+    username = _normalize_hub_user(username)
+    now = _utc_now_iso()
+    conn.execute(
+        "INSERT OR IGNORE INTO hub_users(username, created_at) VALUES(?, ?)",
+        (username, now),
+    )
+    row = conn.execute(
+        "SELECT id, username, created_at FROM hub_users WHERE username = ?",
+        (username,),
+    ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=500, detail="Failed to create or load user")
+    return row
+
+
+def _hub_get_artifact(conn: sqlite3.Connection, username: str, kind: str, name: str) -> Optional[sqlite3.Row]:
+    username = _normalize_hub_user(username)
+    kind = _normalize_hub_kind(kind)
+    name = _normalize_hub_name(name)
+    return conn.execute(
+        """
+        SELECT
+            a.id, a.kind, a.name, a.alpha_content, a.alpha_metadata, a.created_at, a.updated_at,
+            u.username
+        FROM hub_artifacts a
+        JOIN hub_users u ON u.id = a.user_id
+        WHERE u.username = ? AND a.kind = ? AND a.name = ?
+        """,
+        (username, kind, name),
+    ).fetchone()
+
+
+def _hub_upsert_alpha(
+    conn: sqlite3.Connection,
+    username: str,
+    kind: str,
+    name: str,
+    content: str,
+    metadata: Any,
+) -> sqlite3.Row:
+    username = _normalize_hub_user(username)
+    kind = _normalize_hub_kind(kind)
+    name = _normalize_hub_name(name)
+    user = _hub_ensure_user(conn, username)
+    now = _utc_now_iso()
+    metadata_json = _json_text(metadata)
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO hub_artifacts(
+            user_id, kind, name, alpha_content, alpha_metadata, created_at, updated_at
+        ) VALUES(?, ?, ?, ?, ?, ?, ?)
+        """,
+        (user["id"], kind, name, content or "", metadata_json, now, now),
+    )
+    conn.execute(
+        """
+        UPDATE hub_artifacts
+        SET alpha_content = ?, alpha_metadata = ?, updated_at = ?
+        WHERE user_id = ? AND kind = ? AND name = ?
+        """,
+        (content or "", metadata_json, now, user["id"], kind, name),
+    )
+    row = _hub_get_artifact(conn, username, kind, name)
+    if row is None:
+        raise HTTPException(status_code=500, detail="Failed to persist artifact")
+    return row
+
+
+def _hub_publish_version(
+    conn: sqlite3.Connection,
+    username: str,
+    kind: str,
+    name: str,
+    content: str,
+    metadata: Any,
+) -> Dict[str, Any]:
+    artifact = _hub_upsert_alpha(conn, username, kind, name, content, metadata)
+    next_version = conn.execute(
+        "SELECT COALESCE(MAX(version), 0) + 1 AS v FROM hub_artifact_versions WHERE artifact_id = ?",
+        (artifact["id"],),
+    ).fetchone()["v"]
+    now = _utc_now_iso()
+    metadata_json = _json_text(metadata)
+    conn.execute(
+        """
+        INSERT INTO hub_artifact_versions(artifact_id, version, content, metadata, created_at)
+        VALUES(?, ?, ?, ?, ?)
+        """,
+        (artifact["id"], int(next_version), content or "", metadata_json, now),
+    )
+    conn.commit()
+    return {"version": int(next_version), "created_at": now}
 
 # GADM Indexing
 GADM_INDEX = []
@@ -152,6 +354,7 @@ else:
     threading.Thread(target=build_gadm_index).start()
 
 app = FastAPI()
+_init_hub_db()
 
 app.add_middleware(
     CORSMiddleware,
@@ -225,6 +428,9 @@ def gadm_levels(country: str):
 class CodeRequest(BaseModel):
     code: str
     predefined_code: Optional[str] = None
+    imports_code: Optional[str] = None
+    theme_code: Optional[str] = None
+    runtime_code: Optional[str] = None
 
 class CodeSyncRequest(BaseModel):
     code: str
@@ -240,6 +446,9 @@ class BuilderRequest(BaseModel):
     elements: List[MapElement]
     options: Dict[str, Any] = {}
     predefined_code: Optional[str] = None
+    imports_code: Optional[str] = None
+    theme_code: Optional[str] = None
+    runtime_code: Optional[str] = None
 
 class PickerEntry(BaseModel):
     country: str
@@ -258,6 +467,56 @@ class TerritoryLibraryRequest(BaseModel):
 
 class StopRequest(BaseModel):
     task_types: Optional[List[str]] = None
+
+
+class HubEnsureUserRequest(BaseModel):
+    username: str
+
+
+class HubArtifactWriteRequest(BaseModel):
+    content: str = ""
+    metadata: Dict[str, Any] = {}
+
+
+def _hub_kind_label(kind: str) -> str:
+    if kind == "map":
+        return "map"
+    if kind == "lib":
+        return "lib"
+    return "css"
+
+
+def _hub_artifact_response(conn: sqlite3.Connection, artifact: sqlite3.Row) -> Dict[str, Any]:
+    versions_rows = conn.execute(
+        """
+        SELECT version, created_at
+        FROM hub_artifact_versions
+        WHERE artifact_id = ?
+        ORDER BY version DESC
+        """,
+        (artifact["id"],),
+    ).fetchall()
+    versions = [
+        {"version": int(row["version"]), "created_at": row["created_at"]}
+        for row in versions_rows
+    ]
+    latest_version = versions[0]["version"] if versions else None
+    return {
+        "username": artifact["username"],
+        "kind": _hub_kind_label(artifact["kind"]),
+        "name": artifact["name"],
+        "slug": f'/{artifact["username"]}/{_hub_kind_label(artifact["kind"])}/{artifact["name"]}',
+        "alpha": {
+            "version": "alpha",
+            "content": artifact["alpha_content"] or "",
+            "metadata": _json_parse(artifact["alpha_metadata"], {}),
+            "updated_at": artifact["updated_at"],
+        },
+        "latest_published_version": latest_version,
+        "published_versions": versions,
+        "created_at": artifact["created_at"],
+        "updated_at": artifact["updated_at"],
+    }
 
 def _python_value(node: ast.AST):
     if isinstance(node, ast.Constant):
@@ -988,6 +1247,164 @@ def territory_library_catalog(request: TerritoryLibraryRequest):
 def health():
     return {"status": "ok"}
 
+
+@app.post("/hub/users/ensure")
+def hub_ensure_user(request: HubEnsureUserRequest):
+    conn = _hub_db_conn()
+    try:
+        user = _hub_ensure_user(conn, request.username)
+        conn.commit()
+        return {"username": user["username"], "created_at": user["created_at"]}
+    finally:
+        conn.close()
+
+
+@app.put("/hub/{username}/{kind}/{name}/alpha")
+def hub_save_alpha(username: str, kind: str, name: str, request: HubArtifactWriteRequest):
+    conn = _hub_db_conn()
+    try:
+        artifact = _hub_upsert_alpha(conn, username, kind, name, request.content or "", request.metadata or {})
+        conn.commit()
+        return _hub_artifact_response(conn, artifact)
+    finally:
+        conn.close()
+
+
+@app.post("/hub/{username}/{kind}/{name}/publish")
+def hub_publish(username: str, kind: str, name: str, request: HubArtifactWriteRequest):
+    conn = _hub_db_conn()
+    try:
+        publish_result = _hub_publish_version(conn, username, kind, name, request.content or "", request.metadata or {})
+        artifact = _hub_get_artifact(conn, username, kind, name)
+        if artifact is None:
+            raise HTTPException(status_code=500, detail="Artifact missing after publish")
+        response = _hub_artifact_response(conn, artifact)
+        response["published"] = publish_result
+        return response
+    finally:
+        conn.close()
+
+
+@app.get("/hub/{username}/{kind}/{name}")
+def hub_get_artifact(username: str, kind: str, name: str):
+    conn = _hub_db_conn()
+    try:
+        artifact = _hub_get_artifact(conn, username, kind, name)
+        if artifact is None:
+            raise HTTPException(status_code=404, detail="Artifact not found")
+        return _hub_artifact_response(conn, artifact)
+    finally:
+        conn.close()
+
+
+@app.get("/hub/{username}/{kind}/{name}/{version}")
+def hub_get_artifact_version(username: str, kind: str, name: str, version: str):
+    conn = _hub_db_conn()
+    try:
+        artifact = _hub_get_artifact(conn, username, kind, name)
+        if artifact is None:
+            raise HTTPException(status_code=404, detail="Artifact not found")
+        if str(version).strip().lower() == "alpha":
+            return {
+                "username": artifact["username"],
+                "kind": _hub_kind_label(artifact["kind"]),
+                "name": artifact["name"],
+                "version": "alpha",
+                "content": artifact["alpha_content"] or "",
+                "metadata": _json_parse(artifact["alpha_metadata"], {}),
+                "updated_at": artifact["updated_at"],
+                "slug": f'/{artifact["username"]}/{_hub_kind_label(artifact["kind"])}/{artifact["name"]}/alpha',
+            }
+        if not str(version).isdigit():
+            raise HTTPException(status_code=400, detail="version must be 'alpha' or integer")
+        row = conn.execute(
+            """
+            SELECT version, content, metadata, created_at
+            FROM hub_artifact_versions
+            WHERE artifact_id = ? AND version = ?
+            """,
+            (artifact["id"], int(version)),
+        ).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="Published version not found")
+        return {
+            "username": artifact["username"],
+            "kind": _hub_kind_label(artifact["kind"]),
+            "name": artifact["name"],
+            "version": int(row["version"]),
+            "content": row["content"] or "",
+            "metadata": _json_parse(row["metadata"], {}),
+            "created_at": row["created_at"],
+            "slug": f'/{artifact["username"]}/{_hub_kind_label(artifact["kind"])}/{artifact["name"]}/{int(row["version"])}',
+        }
+    finally:
+        conn.close()
+
+
+@app.get("/hub/registry")
+def hub_registry(
+    kind: Optional[str] = None,
+    q: Optional[str] = None,
+    limit: int = 50,
+):
+    normalized_kind = None
+    if kind is not None and str(kind).strip():
+        normalized_kind = _normalize_hub_kind(kind)
+    search_text = str(q or "").strip().lower()
+    safe_limit = max(1, min(int(limit or 50), 200))
+    conn = _hub_db_conn()
+    try:
+        where = []
+        params: List[Any] = []
+        if normalized_kind:
+            where.append("a.kind = ?")
+            params.append(normalized_kind)
+        if search_text:
+            where.append("(LOWER(a.name) LIKE ? OR LOWER(u.username) LIKE ? OR LOWER(a.alpha_metadata) LIKE ?)")
+            like = f"%{search_text}%"
+            params.extend([like, like, like])
+        where_sql = ("WHERE " + " AND ".join(where)) if where else ""
+        rows = conn.execute(
+            f"""
+            SELECT
+                a.id, a.kind, a.name, a.updated_at,
+                u.username,
+                COALESCE(MAX(v.version), 0) AS latest_version
+            FROM hub_artifacts a
+            JOIN hub_users u ON u.id = a.user_id
+            LEFT JOIN hub_artifact_versions v ON v.artifact_id = a.id
+            {where_sql}
+            GROUP BY a.id, a.kind, a.name, a.updated_at, u.username
+            ORDER BY a.updated_at DESC
+            LIMIT ?
+            """,
+            (*params, safe_limit),
+        ).fetchall()
+        items = []
+        for row in rows:
+            kind_label = _hub_kind_label(row["kind"])
+            latest = int(row["latest_version"]) if int(row["latest_version"]) > 0 else None
+            items.append({
+                "username": row["username"],
+                "kind": kind_label,
+                "name": row["name"],
+                "slug": f'/{row["username"]}/{kind_label}/{row["name"]}',
+                "latest_version": latest,
+                "updated_at": row["updated_at"],
+            })
+        return {"items": items}
+    finally:
+        conn.close()
+
+
+@app.get("/registry")
+def hub_registry_alias(
+    kind: Optional[str] = None,
+    q: Optional[str] = None,
+    limit: int = 50,
+):
+    return hub_registry(kind=kind, q=q, limit=limit)
+
 @app.post("/stop")
 def stop_generation(request: Optional[StopRequest] = Body(default=None)):
     allowed_task_types = {"picker", "territory_library", "code", "builder"}
@@ -1003,6 +1420,127 @@ def stop_generation(request: Optional[StopRequest] = Body(default=None)):
                 stopped.append(task_type)
             current_processes[task_type] = None
     return {"status": "stopped" if stopped else "no process running", "stopped_task_types": stopped}
+
+
+def _parse_xatrahub_path(path: str) -> Dict[str, Any]:
+    raw = str(path or "").strip()
+    if not raw:
+        raise ValueError("xatrahub path is empty")
+    if raw.startswith("xatrahub("):
+        raise ValueError("xatrahub path must be a path string, not xatrahub(...)")
+    cleaned = raw.strip().strip('"').strip("'")
+    parts = [p for p in cleaned.split("/") if p]
+    if len(parts) < 3:
+        raise ValueError("xatrahub path must be /username/{map|lib|css}/name[/version]")
+    username = _normalize_hub_user(parts[0])
+    kind = _normalize_hub_kind(parts[1])
+    name = _normalize_hub_name(parts[2])
+    version = "alpha"
+    if len(parts) >= 4 and parts[3]:
+        version = parts[3].strip()
+    return {"username": username, "kind": kind, "name": name, "version": version}
+
+
+def _hub_load_content(username: str, kind: str, name: str, version: str = "alpha") -> Dict[str, Any]:
+    conn = _hub_db_conn()
+    try:
+        artifact = _hub_get_artifact(conn, username, kind, name)
+        if artifact is None:
+            raise ValueError(f"xatrahub artifact not found: /{username}/{kind}/{name}")
+        if str(version).lower() == "alpha":
+            return {
+                "username": artifact["username"],
+                "kind": _hub_kind_label(artifact["kind"]),
+                "name": artifact["name"],
+                "version": "alpha",
+                "content": artifact["alpha_content"] or "",
+                "metadata": _json_parse(artifact["alpha_metadata"], {}),
+            }
+        if not str(version).isdigit():
+            raise ValueError("xatrahub version must be integer or alpha")
+        row = conn.execute(
+            """
+            SELECT version, content, metadata
+            FROM hub_artifact_versions
+            WHERE artifact_id = ? AND version = ?
+            """,
+            (artifact["id"], int(version)),
+        ).fetchone()
+        if row is None:
+            raise ValueError(f"xatrahub published version not found: /{username}/{kind}/{name}/{version}")
+        return {
+            "username": artifact["username"],
+            "kind": _hub_kind_label(artifact["kind"]),
+            "name": artifact["name"],
+            "version": int(row["version"]),
+            "content": row["content"] or "",
+            "metadata": _json_parse(row["metadata"], {}),
+        }
+    finally:
+        conn.close()
+
+
+def _extract_python_payload_text(kind: str, content: str, metadata: Dict[str, Any]) -> str:
+    text = content or ""
+    parsed = _json_parse(text, None)
+    if isinstance(parsed, dict):
+        if kind == "lib":
+            for key in ("predefined_code", "code", "content"):
+                val = parsed.get(key)
+                if isinstance(val, str):
+                    return val
+        if kind == "css":
+            for key in ("theme_code", "code", "content"):
+                val = parsed.get(key)
+                if isinstance(val, str):
+                    return val
+        if kind == "map":
+            parts = []
+            for key in ("imports_code", "theme_code", "map_code", "runtime_code", "code"):
+                val = parsed.get(key)
+                if isinstance(val, str) and val.strip():
+                    parts.append(val)
+            if parts:
+                return "\n\n".join(parts)
+        val = parsed.get("code")
+        if isinstance(val, str):
+            return val
+    if isinstance(metadata, dict):
+        candidate = metadata.get("code")
+        if isinstance(candidate, str):
+            return candidate
+    return text
+
+
+def _filter_xatra_code(code: str, filter_only: Optional[List[str]] = None, filter_not: Optional[List[str]] = None) -> str:
+    if not code or (not filter_only and not filter_not):
+        return code or ""
+    only = {str(x).strip() for x in (filter_only or []) if str(x).strip()}
+    blocked = {str(x).strip() for x in (filter_not or []) if str(x).strip()}
+    try:
+        tree = ast.parse(code)
+    except Exception:
+        return code
+    kept: List[str] = []
+    for stmt in tree.body:
+        segment = _python_expr_from_node(code, stmt) or ""
+        if not segment:
+            try:
+                segment = ast.unparse(stmt)
+            except Exception:
+                continue
+        keep_stmt = True
+        if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call):
+            name = _call_name(stmt.value.func)
+            if name and name.startswith("xatra."):
+                method = name.split(".", 1)[1]
+                if only and method not in only:
+                    keep_stmt = False
+                if method in blocked:
+                    keep_stmt = False
+        if keep_stmt:
+            kept.append(segment)
+    return "\n".join(kept)
 
 def run_rendering_task(task_type, data, result_queue):
     def parse_color_list(val):
@@ -1076,6 +1614,52 @@ def run_rendering_task(task_type, data, result_queue):
             return {k: resolve_builder_value(v, eval_globals) for k, v in value.items()}
         return value
 
+    def register_xatrahub(exec_globals):
+        def xatrahub(path, filter_only=None, filter_not=None):
+            parsed = _parse_xatrahub_path(str(path))
+            loaded = _hub_load_content(
+                parsed["username"],
+                parsed["kind"],
+                parsed["name"],
+                parsed["version"],
+            )
+            code_text = _extract_python_payload_text(
+                loaded["kind"],
+                loaded.get("content", ""),
+                loaded.get("metadata", {}) if isinstance(loaded.get("metadata"), dict) else {},
+            )
+            kind = loaded["kind"]
+            only = filter_only if isinstance(filter_only, list) else None
+            not_list = filter_not if isinstance(filter_not, list) else None
+            if kind in ("map", "css"):
+                filtered = _filter_xatra_code(code_text, filter_only=only, filter_not=not_list)
+                if filtered.strip():
+                    exec(filtered, exec_globals)
+                return None
+            if kind == "lib":
+                lib_globals = {
+                    "xatra": xatra,
+                    "gadm": xatra.loaders.gadm,
+                    "naturalearth": xatra.loaders.naturalearth,
+                    "polygon": xatra.loaders.polygon,
+                    "overpass": xatra.loaders.overpass,
+                    "Icon": Icon,
+                    "Color": Color,
+                    "LinearColorSequence": LinearColorSequence,
+                }
+                if "xatrahub" in exec_globals:
+                    lib_globals["xatrahub"] = exec_globals["xatrahub"]
+                exec(code_text or "", lib_globals)
+                names = [
+                    name for name in lib_globals.keys()
+                    if not name.startswith("_") and name not in {"xatra", "gadm", "naturalearth", "polygon", "overpass", "Icon", "Color", "LinearColorSequence", "xatrahub"}
+                ]
+                payload = {name: lib_globals[name] for name in names}
+                return SimpleNamespace(**payload)
+            raise ValueError(f"Unsupported xatrahub kind: {kind}")
+
+        exec_globals["xatrahub"] = xatrahub
+
     try:
         # Re-import xatra inside the process just in case, though imports are inherited on fork (mostly)
         # But we need fresh map state
@@ -1137,16 +1721,29 @@ def run_rendering_task(task_type, data, result_queue):
                 "naturalearth": xatra.loaders.naturalearth,
                 "polygon": xatra.loaders.polygon,
                 "overpass": xatra.loaders.overpass,
-                "map": m
+                "map": m,
+                "Icon": Icon,
+                "Color": Color,
+                "LinearColorSequence": LinearColorSequence,
             }
+            register_xatrahub(exec_globals)
+            imports_code = getattr(data, "imports_code", "") or ""
+            theme_code = getattr(data, "theme_code", "") or ""
+            runtime_code = getattr(data, "runtime_code", "") or ""
             predefined_code = getattr(data, "predefined_code", "") or ""
+            if imports_code.strip():
+                exec(imports_code, exec_globals)
             if predefined_code.strip():
                 import xatra.territory_library as territory_library
                 for name in dir(territory_library):
                     if not name.startswith("_"):
                         exec_globals[name] = getattr(territory_library, name)
                 exec(predefined_code, exec_globals)
+            if theme_code.strip():
+                exec(theme_code, exec_globals)
             exec(data.code, exec_globals)
+            if runtime_code.strip():
+                exec(runtime_code, exec_globals)
             m = xatra.get_current_map() # Refresh in case they used map = xatra.Map()
             
         elif task_type == 'builder':
@@ -1277,6 +1874,15 @@ def run_rendering_task(task_type, data, result_queue):
             }
             if predefined_namespace:
                 builder_exec_globals.update(predefined_namespace)
+            register_xatrahub(builder_exec_globals)
+
+            imports_code = getattr(data, "imports_code", "") or ""
+            theme_code = getattr(data, "theme_code", "") or ""
+            runtime_code = getattr(data, "runtime_code", "") or ""
+            if imports_code.strip():
+                exec(imports_code, builder_exec_globals)
+            if theme_code.strip():
+                exec(theme_code, builder_exec_globals)
 
             for el in data.elements:
                 args = resolve_builder_value(el.args.copy(), builder_exec_globals) if isinstance(el.args, dict) else {}
@@ -1460,6 +2066,9 @@ def run_rendering_task(task_type, data, result_queue):
                     if code_line.strip():
                         exec(code_line, builder_exec_globals)
 
+            if runtime_code.strip():
+                exec(runtime_code, builder_exec_globals)
+
         payload = m._export_json()
         html = export_html_string(payload)
         result = {"html": html, "payload": payload}
@@ -1557,6 +2166,16 @@ def render_builder(request: BuilderRequest):
     if "error" in result:
         return result
     return result
+
+
+@app.get("/{username}/{kind}/{name}/{version}")
+def public_hub_artifact_version(username: str, kind: str, name: str, version: str):
+    return hub_get_artifact_version(username=username, kind=kind, name=name, version=version)
+
+
+@app.get("/{username}/{kind}/{name}")
+def public_hub_artifact_alpha(username: str, kind: str, name: str):
+    return hub_get_artifact_version(username=username, kind=kind, name=name, version="alpha")
 
 if __name__ == "__main__":
     import uvicorn

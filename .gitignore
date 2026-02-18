@@ -50,3 +50,6 @@ htmlcov/
 # Build
 *.whl
 *.tar.gz
+
+# Local DB
+xatra_hub.db

@@ -1,9 +1,11 @@
 import React, { useRef, useCallback, useState, useEffect } from 'react';
 import Editor from '@monaco-editor/react';
+import { Save, Copy } from 'lucide-react';
 
 const XATRA_COMPLETIONS = {
   globals: [
     { label: 'xatra', kind: 'module', insertText: 'xatra', detail: 'Main map library' },
+    { label: 'xatrahub', kind: 'function', insertText: 'xatrahub("${1:/username/map/name}")', insertTextRules: 4, detail: 'Import from XatraHub database' },
     { label: 'gadm', kind: 'function', insertText: 'gadm("${1:IND}")', insertTextRules: 4, detail: 'GADM territory by code' },
     { label: 'naturalearth', kind: 'function', insertText: 'naturalearth("${1:id}")', insertTextRules: 4, detail: 'Natural Earth river/feature' },
     { label: 'overpass', kind: 'function', insertText: 'overpass("${1:id}")', insertTextRules: 4, detail: 'Overpass/OSM feature' },
@@ -32,42 +34,49 @@ const XATRA_COMPLETIONS = {
   ],
 };
 
-const CodeEditor = ({ code, setCode, predefinedCode, setPredefinedCode }) => {
+const headingClass = 'px-3 py-2 bg-slate-900 text-slate-100 text-xs font-semibold rounded-t border border-slate-700 flex items-center justify-between';
+
+const CodeEditor = ({
+  code,
+  setCode,
+  predefinedCode,
+  setPredefinedCode,
+  importsCode,
+  setImportsCode,
+  themeCode,
+  setThemeCode,
+  runtimeCode,
+  setRuntimeCode,
+  libraryVersionLabel,
+  themeVersionLabel,
+  onSaveLibrary,
+  onSaveTheme,
+  onCopyLibrarySlug,
+  onCopyThemeSlug,
+}) => {
   const editorRef = useRef(null);
   const predefinedEditorRef = useRef(null);
-  const activeEditorRef = useRef('map');
   const completionDisposableRef = useRef(null);
   const mapChangeDisposableRef = useRef(null);
   const predefinedChangeDisposableRef = useRef(null);
-  const lastMapLocalValueRef = useRef(code ?? '');
-  const lastPredefinedLocalValueRef = useRef(predefinedCode ?? '');
-  const lastMapEditAtRef = useRef(0);
-  const lastPredefinedEditAtRef = useRef(0);
 
   const handleEditorDidMount = useCallback((editor, monaco) => {
     editorRef.current = editor;
-    editor.onDidFocusEditorText(() => {
-      activeEditorRef.current = 'map';
-    });
     if (mapChangeDisposableRef.current) {
       mapChangeDisposableRef.current.dispose();
       mapChangeDisposableRef.current = null;
     }
     mapChangeDisposableRef.current = editor.onDidChangeModelContent(() => {
-      const next = editor.getValue();
-      lastMapLocalValueRef.current = next;
-      lastMapEditAtRef.current = Date.now();
-      setCode(next);
+      setCode(editor.getValue());
     });
     monaco.editor.defineTheme('xatra-dark', {
       base: 'vs-dark',
       inherit: true,
       rules: [],
-      colors: { 'editor.background': '#2d2d2d' },
+      colors: { 'editor.background': '#0f172a' },
     });
     monaco.editor.setTheme('xatra-dark');
 
-    // Dispose any previous provider so tab switching doesn't duplicate suggestions
     if (completionDisposableRef.current) {
       completionDisposableRef.current.dispose();
       completionDisposableRef.current = null;
@@ -79,7 +88,6 @@ const CodeEditor = ({ code, setCode, predefinedCode, setPredefinedCode }) => {
         const textUntilPosition = model.getValueInRange({ startLineNumber: 1, startColumn: 1, endLineNumber: position.lineNumber, endColumn: position.column });
         const word = model.getWordUntilPosition(position);
         const linePrefix = textUntilPosition.slice(-80);
-
         const items = [];
         if (linePrefix.endsWith('xatra.')) {
           XATRA_COMPLETIONS.xatraMethods.forEach((m) => {
@@ -108,187 +116,118 @@ const CodeEditor = ({ code, setCode, predefinedCode, setPredefinedCode }) => {
     });
   }, [setCode]);
 
-  // Dispose completion provider on unmount to avoid duplicate registrations when switching tabs
-  React.useEffect(() => {
-    return () => {
-      if (completionDisposableRef.current) {
-        completionDisposableRef.current.dispose();
-        completionDisposableRef.current = null;
-      }
-      if (mapChangeDisposableRef.current) {
-        mapChangeDisposableRef.current.dispose();
-        mapChangeDisposableRef.current = null;
-      }
-      if (predefinedChangeDisposableRef.current) {
-        predefinedChangeDisposableRef.current.dispose();
-        predefinedChangeDisposableRef.current = null;
-      }
-    };
-  }, []);
-
   const handlePredefinedMount = useCallback((editor) => {
     predefinedEditorRef.current = editor;
-    editor.onDidFocusEditorText(() => {
-      activeEditorRef.current = 'predefined';
-    });
     if (predefinedChangeDisposableRef.current) {
       predefinedChangeDisposableRef.current.dispose();
       predefinedChangeDisposableRef.current = null;
     }
     predefinedChangeDisposableRef.current = editor.onDidChangeModelContent(() => {
-      const next = editor.getValue();
-      lastPredefinedLocalValueRef.current = next;
-      lastPredefinedEditAtRef.current = Date.now();
-      setPredefinedCode(next);
+      setPredefinedCode(editor.getValue());
     });
   }, [setPredefinedCode]);
 
-  const mapCodeContainerRef = useRef(null);
-  const predefinedCodeContainerRef = useRef(null);
-  const [mapCodeHeight, setMapCodeHeight] = useState(420);
-  const [predefinedCodeHeight, setPredefinedCodeHeight] = useState(200);
-
   useEffect(() => {
-    const el = mapCodeContainerRef.current;
-    if (!el) return;
-    const ro = new ResizeObserver(() => {
-      const h = el.clientHeight;
-      if (h > 100) setMapCodeHeight(h);
-    });
-    ro.observe(el);
-    setMapCodeHeight(el.clientHeight > 100 ? el.clientHeight : 420);
-    return () => ro.disconnect();
-  }, []);
-
-  useEffect(() => {
-    const el = predefinedCodeContainerRef.current;
-    if (!el) return;
-    const ro = new ResizeObserver(() => {
-      const h = el.clientHeight;
-      if (h > 80) setPredefinedCodeHeight(h);
-    });
-    ro.observe(el);
-    setPredefinedCodeHeight(el.clientHeight > 80 ? el.clientHeight : 200);
-    return () => ro.disconnect();
-  }, []);
-
-  useEffect(() => {
-    const onKeyDown = (e) => {
-      const isMac = navigator.platform.toUpperCase().includes('MAC');
-      const mod = isMac ? e.metaKey : e.ctrlKey;
-      if (!mod || !e.altKey || String(e.key).toLowerCase() !== 'i') return;
-      e.preventDefault();
-      if (activeEditorRef.current === 'predefined' && predefinedEditorRef.current) {
-        predefinedEditorRef.current.focus();
-      } else if (editorRef.current) {
-        editorRef.current.focus();
-      }
+    return () => {
+      if (completionDisposableRef.current) completionDisposableRef.current.dispose();
+      if (mapChangeDisposableRef.current) mapChangeDisposableRef.current.dispose();
+      if (predefinedChangeDisposableRef.current) predefinedChangeDisposableRef.current.dispose();
     };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
   }, []);
-
-  useEffect(() => {
-    const editor = editorRef.current;
-    if (!editor) return;
-    const model = editor.getModel();
-    if (!model) return;
-    const incoming = code ?? '';
-    const current = model.getValue();
-    if (incoming === lastMapLocalValueRef.current) return;
-    if (current === incoming) return;
-    const editedRecently = (Date.now() - lastMapEditAtRef.current) < 750;
-    if (editedRecently && editor.hasTextFocus()) return;
-    const selections = editor.getSelections();
-    const scrollTop = editor.getScrollTop();
-    const scrollLeft = editor.getScrollLeft();
-    editor.executeEdits('external-sync', [{ range: model.getFullModelRange(), text: incoming }]);
-    if (selections && selections.length) editor.setSelections(selections);
-    editor.setScrollTop(scrollTop);
-    editor.setScrollLeft(scrollLeft);
-    lastMapLocalValueRef.current = incoming;
-  }, [code]);
-
-  useEffect(() => {
-    const editor = predefinedEditorRef.current;
-    if (!editor) return;
-    const model = editor.getModel();
-    if (!model) return;
-    const incoming = predefinedCode ?? '';
-    const current = model.getValue();
-    if (incoming === lastPredefinedLocalValueRef.current) return;
-    if (current === incoming) return;
-    const editedRecently = (Date.now() - lastPredefinedEditAtRef.current) < 750;
-    if (editedRecently && editor.hasTextFocus()) return;
-    const selections = editor.getSelections();
-    const scrollTop = editor.getScrollTop();
-    const scrollLeft = editor.getScrollLeft();
-    editor.executeEdits('external-sync', [{ range: model.getFullModelRange(), text: incoming }]);
-    if (selections && selections.length) editor.setSelections(selections);
-    editor.setScrollTop(scrollTop);
-    editor.setScrollLeft(scrollLeft);
-    lastPredefinedLocalValueRef.current = incoming;
-  }, [predefinedCode]);
 
   return (
-    <div className="h-full flex flex-col space-y-4 min-h-0">
+    <div className="h-full flex flex-col space-y-3 min-h-0">
       <div className="bg-red-600 text-white border border-red-700 rounded-md px-3 py-2 text-xs font-semibold">
         If you are using <b>Vimium</b>, please DISABLE it on this website.
       </div>
-      <div className="flex flex-col flex-1 min-h-[120px] min-h-0 overflow-hidden">
-        <div className="flex justify-between items-center mb-2 flex-shrink-0">
-          <label className="block text-sm font-medium text-gray-700">Territory library</label>
-        </div>
-        <div ref={predefinedCodeContainerRef} className="flex-1 border border-gray-700 rounded-md overflow-hidden min-h-[120px] flex flex-col">
-          <Editor
-            height={predefinedCodeHeight}
-            defaultLanguage="python"
-            path="xatra_territory_library.py"
-            defaultValue={predefinedCode || ''}
-            onMount={handlePredefinedMount}
-            theme="vs-dark"
-            options={{
-              minimap: { enabled: false },
-              fontSize: 13,
-              lineNumbers: 'on',
-              scrollBeyondLastLine: false,
-              wordWrap: 'on',
-            }}
+
+      <div className="flex flex-col min-h-0 space-y-3 overflow-y-auto pr-1">
+        <div>
+          <div className={headingClass}>
+            <span>xatrahub Imports</span>
+            <span className="text-[10px] text-slate-300">`xatrahub("/user/map/name")`</span>
+          </div>
+          <textarea
+            className="w-full min-h-[92px] p-2 border border-slate-700 border-t-0 rounded-b bg-slate-950 text-slate-100 font-mono text-xs focus:outline-none"
+            value={importsCode}
+            onChange={(e) => setImportsCode(e.target.value)}
+            spellCheck={false}
           />
         </div>
-      </div>
 
-      <div className="flex flex-col flex-[2] min-h-[200px] flex-1 min-h-0 overflow-hidden">
-        <div className="flex justify-between items-center mb-2 flex-shrink-0">
-          <label className="block text-sm font-medium text-gray-700">Map Code</label>
+        <div>
+          <div className={headingClass}>
+            <span>Custom Territory Library ({libraryVersionLabel || 'alpha'})</span>
+            <div className="flex items-center gap-1">
+              <button type="button" onClick={onSaveLibrary} className="p-1 rounded border border-slate-600 hover:bg-slate-800" title="Publish new version">
+                <Save size={12} />
+              </button>
+              <button type="button" onClick={onCopyLibrarySlug} className="p-1 rounded border border-slate-600 hover:bg-slate-800" title="Copy slug">
+                <Copy size={12} />
+              </button>
+            </div>
+          </div>
+          <div className="border border-slate-700 border-t-0 rounded-b overflow-hidden">
+            <Editor
+              height={160}
+              defaultLanguage="python"
+              path="xatra_territory_library.py"
+              value={predefinedCode || ''}
+              onMount={handlePredefinedMount}
+              theme="xatra-dark"
+              options={{ minimap: { enabled: false }, fontSize: 13, lineNumbers: 'on', scrollBeyondLastLine: false, wordWrap: 'on' }}
+            />
+          </div>
         </div>
-        <div ref={mapCodeContainerRef} className="flex-1 border border-gray-700 rounded-md overflow-hidden min-h-[320px] flex flex-col">
-          <Editor
-            height={mapCodeHeight}
-            defaultLanguage="python"
-            path="xatra_map.py"
-            defaultValue={code || ''}
-            onMount={handleEditorDidMount}
-            theme="vs-dark"
-            options={{
-              minimap: { enabled: false },
-              fontSize: 13,
-              lineNumbers: 'on',
-              scrollBeyondLastLine: false,
-              wordWrap: 'on',
-            }}
+
+        <div>
+          <div className={headingClass}>
+            <span>Custom Theme ({themeVersionLabel || 'alpha'})</span>
+            <div className="flex items-center gap-1">
+              <button type="button" onClick={onSaveTheme} className="p-1 rounded border border-slate-600 hover:bg-slate-800" title="Publish new version">
+                <Save size={12} />
+              </button>
+              <button type="button" onClick={onCopyThemeSlug} className="p-1 rounded border border-slate-600 hover:bg-slate-800" title="Copy slug">
+                <Copy size={12} />
+              </button>
+            </div>
+          </div>
+          <textarea
+            className="w-full min-h-[140px] p-2 border border-slate-700 border-t-0 rounded-b bg-slate-950 text-slate-100 font-mono text-xs focus:outline-none"
+            value={themeCode}
+            onChange={(e) => setThemeCode(e.target.value)}
+            spellCheck={false}
           />
         </div>
-      </div>
 
-      <div className="p-2 bg-gray-50 border rounded space-y-1">
-        <p className="text-[10px] text-gray-500 uppercase font-bold mb-1">Editor</p>
-        <p className="text-xs text-gray-600">
-          Type <kbd className="px-1 bg-gray-200 rounded">xatra.</kbd> for map methods. You should be able to use this code editor easily even if you don't know how to code.
-        </p>
-        {/* <p className="text-xs text-gray-600">
-          Focus active editor: <kbd className="px-1 bg-gray-200 rounded">Ctrl/Cmd+Alt+I</kbd>
-        </p> */}
+        <div>
+          <div className={headingClass}>
+            <span>Map Code</span>
+          </div>
+          <div className="border border-slate-700 border-t-0 rounded-b overflow-hidden">
+            <Editor
+              height={320}
+              defaultLanguage="python"
+              path="xatra_map.py"
+              value={code || ''}
+              onMount={handleEditorDidMount}
+              theme="xatra-dark"
+              options={{ minimap: { enabled: false }, fontSize: 13, lineNumbers: 'on', scrollBeyondLastLine: false, wordWrap: 'on' }}
+            />
+          </div>
+        </div>
+
+        <div>
+          <div className={headingClass}>
+            <span>Not-for-library</span>
+          </div>
+          <textarea
+            className="w-full min-h-[120px] p-2 border border-slate-700 border-t-0 rounded-b bg-slate-950 text-slate-100 font-mono text-xs focus:outline-none"
+            value={runtimeCode}
+            onChange={(e) => setRuntimeCode(e.target.value)}
+            spellCheck={false}
+          />
+        </div>
       </div>
     </div>
   );

@@ -319,10 +319,11 @@ For eventually publishing this as a website
       - [ ] "Python" blocks and "Python" input to fields should _only_ be available to "Trusted" users. Other users should not be able to do that or even see the options; however they should be able to import maps from users who did use these blocks.
         - [ ] Even that code should only be run in a sandbox.
     - [ ] Is the parsing of Python into Builder json, and the parsing of Builder json back into Python code, perfectly secure?
+- [ ] Efficiency and scalability concerns [for now, just answer in words, don't implement anything]
+  - Can this website handle, idk, approx 1000 users making maps? How can we estimate the resources etc. that will cost and the servers we will need? (I'm totally new to this, I have no idea if this makes sense).
+  - Is it inefficient that for every change the user makes to the map, it has to be re-rendered from ground up by xatra? Are there better solutions?
 - [ ] AI agent that makes maps for you --- only for paid users [have to think about exactly how to implement this]
 
-Efficiency and scalability for publishing as an app
-- [ ] Re-rendering the whole map each time is inefficient
 
 ---
 
