@@ -7,13 +7,15 @@ const Builder = ({
   elements, setElements, options, setOptions, onGetCurrentView, 
   lastMapClick, activePicker, setActivePicker, draftPoints, setDraftPoints,
   onSaveTerritory, predefinedCode, onStartReferencePick, addLayerSignal, onConsumeAddLayerSignal,
-  hubImports, onOpenImportModal, onRemoveHubImport, getImportVersionOptions, onSwitchHubImportVersion
+  hubImports, onOpenImportModal, onRemoveHubImport, getImportVersionOptions, onSwitchHubImportVersion,
+  readOnly = false,
 }) => {
   const layersEndRef = useRef(null);
   const prevElementsLengthRef = useRef(elements.length);
   const pendingFocusNewLayerRef = useRef(false);
 
   const addElement = (type, opts = { focusFirstField: true }) => {
+    if (readOnly) return;
     let newElement = { 
       type, 
       label: 'New ' + type, 
@@ -99,31 +101,35 @@ const Builder = ({
   }, [addLayerSignal]);
 
   const removeElement = (index) => {
+    if (readOnly) return;
     const newElements = [...elements];
     newElements.splice(index, 1);
     setElements(newElements);
   };
 
   const updateElement = (index, field, value) => {
+    if (readOnly) return;
     const newElements = [...elements];
     newElements[index][field] = value;
     setElements(newElements);
   };
 
   const updateArg = (index, key, value) => {
+    if (readOnly) return;
     const newElements = [...elements];
     newElements[index].args = { ...newElements[index].args, [key]: value };
     setElements(newElements);
   };
 
   const replaceElement = (index, newElement) => {
+    if (readOnly) return;
     const newElements = [...elements];
     newElements[index] = newElement;
     setElements(newElements);
   };
 
   return (
-    <div className="space-y-6">
+    <div className={`space-y-6 ${readOnly ? 'pointer-events-none opacity-70' : ''}`}>
       <section className="bg-white p-4 rounded-lg border border-gray-200 shadow-sm">
         <div className="flex items-center justify-between mb-2">
           <h3 className="text-sm font-semibold text-gray-900">Imports</h3>

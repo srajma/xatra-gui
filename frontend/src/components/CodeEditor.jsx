@@ -1,6 +1,6 @@
 import React, { useRef, useCallback, useState, useEffect } from 'react';
 import Editor from '@monaco-editor/react';
-import { Tag } from 'lucide-react';
+import { Save } from 'lucide-react';
 
 const XATRA_COMPLETIONS = {
   globals: [
@@ -54,6 +54,13 @@ const CodeEditor = ({
   themeSlugText,
   onSaveLibrary,
   onSaveTheme,
+  onSelectLibraryVersion,
+  onSelectThemeVersion,
+  libraryVersionOptions = [{ value: 'alpha', label: 'alpha' }],
+  themeVersionOptions = [{ value: 'alpha', label: 'alpha' }],
+  readOnlyMap = false,
+  readOnlyLibrary = false,
+  readOnlyTheme = false,
 }) => {
   const editorRef = useRef(null);
   const predefinedEditorRef = useRef(null);
@@ -164,6 +171,7 @@ const CodeEditor = ({
             className="w-full min-h-[92px] p-2 border border-slate-700 border-t-0 rounded-b bg-slate-950 text-slate-100 font-mono text-xs focus:outline-none"
             value={importsCode}
             onChange={(e) => setImportsCode(e.target.value)}
+            readOnly={readOnlyMap}
             spellCheck={false}
           />
         </div>
@@ -172,9 +180,12 @@ const CodeEditor = ({
           <div className={headingClass}>
             <span>Custom Territory Library <span className="font-mono text-[10px] text-slate-300 ml-1">{librarySlugText}</span></span>
             <div className="flex items-center gap-1">
-              <button type="button" onClick={onSaveLibrary} className="px-1.5 py-1 rounded border border-slate-600 hover:bg-slate-800 inline-flex items-center gap-1" title="Publish new version">
-                <Tag size={12} /> <span className="font-mono text-[10px]">{libraryVersionLabel === 'alpha' ? 'alpha' : `v${libraryVersionLabel}`}</span>
+              <button type="button" onClick={onSaveLibrary} disabled={readOnlyLibrary} className="px-1.5 py-1 rounded border border-slate-600 hover:bg-slate-800 inline-flex items-center gap-1 disabled:opacity-40" title="Save library alpha">
+                <Save size={12} /> <span className="font-mono text-[10px]">Save</span>
               </button>
+              <select value={libraryVersionLabel} onChange={(e) => onSelectLibraryVersion?.(e.target.value)} className="px-1 py-1 rounded border border-slate-600 bg-slate-900 text-slate-100 text-[10px] font-mono">
+                {libraryVersionOptions.map((opt) => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+              </select>
             </div>
           </div>
           <div className="border border-slate-700 border-t-0 rounded-b overflow-hidden">
@@ -185,7 +196,7 @@ const CodeEditor = ({
               value={predefinedCode || ''}
               onMount={handlePredefinedMount}
               theme="xatra-dark"
-              options={{ minimap: { enabled: false }, fontSize: 13, lineNumbers: 'on', scrollBeyondLastLine: false, wordWrap: 'on' }}
+              options={{ minimap: { enabled: false }, fontSize: 13, lineNumbers: 'on', scrollBeyondLastLine: false, wordWrap: 'on', readOnly: readOnlyLibrary }}
             />
           </div>
         </div>
@@ -194,15 +205,19 @@ const CodeEditor = ({
           <div className={headingClass}>
             <span>Custom Theme <span className="font-mono text-[10px] text-slate-300 ml-1">{themeSlugText}</span></span>
             <div className="flex items-center gap-1">
-              <button type="button" onClick={onSaveTheme} className="px-1.5 py-1 rounded border border-slate-600 hover:bg-slate-800 inline-flex items-center gap-1" title="Publish new version">
-                <Tag size={12} /> <span className="font-mono text-[10px]">{themeVersionLabel === 'alpha' ? 'alpha' : `v${themeVersionLabel}`}</span>
+              <button type="button" onClick={onSaveTheme} disabled={readOnlyTheme} className="px-1.5 py-1 rounded border border-slate-600 hover:bg-slate-800 inline-flex items-center gap-1 disabled:opacity-40" title="Save theme alpha">
+                <Save size={12} /> <span className="font-mono text-[10px]">Save</span>
               </button>
+              <select value={themeVersionLabel} onChange={(e) => onSelectThemeVersion?.(e.target.value)} className="px-1 py-1 rounded border border-slate-600 bg-slate-900 text-slate-100 text-[10px] font-mono">
+                {themeVersionOptions.map((opt) => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+              </select>
             </div>
           </div>
           <textarea
             className="w-full min-h-[140px] p-2 border border-slate-700 border-t-0 rounded-b bg-slate-950 text-slate-100 font-mono text-xs focus:outline-none"
             value={themeCode}
             onChange={(e) => setThemeCode(e.target.value)}
+            readOnly={readOnlyTheme}
             spellCheck={false}
           />
         </div>
@@ -219,7 +234,7 @@ const CodeEditor = ({
               value={code || ''}
               onMount={handleEditorDidMount}
               theme="xatra-dark"
-              options={{ minimap: { enabled: false }, fontSize: 13, lineNumbers: 'on', scrollBeyondLastLine: false, wordWrap: 'on' }}
+              options={{ minimap: { enabled: false }, fontSize: 13, lineNumbers: 'on', scrollBeyondLastLine: false, wordWrap: 'on', readOnly: readOnlyMap }}
             />
           </div>
         </div>
@@ -232,6 +247,7 @@ const CodeEditor = ({
             className="w-full min-h-[120px] p-2 border border-slate-700 border-t-0 rounded-b bg-slate-950 text-slate-100 font-mono text-xs focus:outline-none"
             value={runtimeCode}
             onChange={(e) => setRuntimeCode(e.target.value)}
+            readOnly={readOnlyMap}
             spellCheck={false}
           />
         </div>

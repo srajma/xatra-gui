@@ -1865,6 +1865,45 @@ def maps_explore(
         conn.close()
 
 
+@app.get("/users")
+def users_list(
+    q: Optional[str] = None,
+    page: int = 1,
+    per_page: int = 20,
+):
+    query = str(q or "").strip().lower()
+    safe_page = max(1, int(page or 1))
+    safe_per_page = max(1, min(int(per_page or 20), 50))
+    offset = (safe_page - 1) * safe_per_page
+    conn = _hub_db_conn()
+    try:
+        where = []
+        params: List[Any] = []
+        if query:
+            like = f"%{query}%"
+            where.append("(LOWER(u.username) LIKE ? OR LOWER(u.full_name) LIKE ? OR LOWER(u.bio) LIKE ?)")
+            params.extend([like, like, like])
+        where_sql = ("WHERE " + " AND ".join(where)) if where else ""
+        total = conn.execute(
+            f"SELECT COUNT(*) AS c FROM hub_users u {where_sql}",
+            tuple(params),
+        ).fetchone()["c"]
+        rows = conn.execute(
+            f"""
+            SELECT u.*
+            FROM hub_users u
+            {where_sql}
+            ORDER BY u.username ASC
+            LIMIT ? OFFSET ?
+            """,
+            (*params, safe_per_page, offset),
+        ).fetchall()
+        users = [_user_public_profile(conn, row) for row in rows]
+        return {"items": users, "page": safe_page, "per_page": safe_per_page, "total": int(total or 0)}
+    finally:
+        conn.close()
+
+
 @app.get("/users/{username}")
 def user_profile(username: str, q: Optional[str] = None, page: int = 1, per_page: int = 10):
     uname = _normalize_hub_user(username)

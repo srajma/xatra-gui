@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Layers, Code, Play, Upload, Download, Image, Plus, Trash2, Keyboard, Copy, Check, Moon, Sun, Menu, Compass, User, LogIn, LogOut, FilePlus2, Import, Save, Heart } from 'lucide-react';
+import { Layers, Code, Play, Upload, Download, Image, Plus, Trash2, Keyboard, Copy, Check, Moon, Sun, Menu, Compass, User, Users, LogIn, LogOut, FilePlus2, Import, Save, Heart, GitFork } from 'lucide-react';
 
 // Components (defined inline for simplicity first, can be split later)
 import Builder from './components/Builder';
@@ -35,6 +35,7 @@ const parsePath = (pathname) => {
   if (parts.length === 0) return { page: 'editor' };
   if (parts[0] === 'new-map') return { page: 'editor', newMap: true };
   if (parts[0] === 'explore') return { page: 'explore' };
+  if (parts[0] === 'users') return { page: 'users' };
   if (parts[0] === 'login') return { page: 'login' };
   if (parts.length >= 3 && parts[1] === 'map') {
     let version = 'alpha';
@@ -84,6 +85,14 @@ function App() {
   const [exploreData, setExploreData] = useState({ items: [], page: 1, per_page: 12, total: 0 });
   const [exploreQuery, setExploreQuery] = useState('');
   const [explorePage, setExplorePage] = useState(1);
+  const [usersData, setUsersData] = useState({ items: [], page: 1, per_page: 20, total: 0 });
+  const [usersQuery, setUsersQuery] = useState('');
+  const [usersPage, setUsersPage] = useState(1);
+  const [exploreLoading, setExploreLoading] = useState(false);
+  const [profileLoading, setProfileLoading] = useState(false);
+  const [usersLoading, setUsersLoading] = useState(false);
+  const [importLoading, setImportLoading] = useState(false);
+  const [authSubmitting, setAuthSubmitting] = useState(false);
 
   // Builder State
   const [builderElements, setBuilderElements] = useState([
@@ -114,9 +123,14 @@ function App() {
   const [mapVersionLabel, setMapVersionLabel] = useState('alpha');
   const [libraryVersionLabel, setLibraryVersionLabel] = useState('alpha');
   const [themeVersionLabel, setThemeVersionLabel] = useState('alpha');
+  const [selectedLibraryVersion, setSelectedLibraryVersion] = useState('alpha');
+  const [selectedThemeVersion, setSelectedThemeVersion] = useState('alpha');
   const [mapOwner, setMapOwner] = useState('new_user');
   const [sourceMapRef, setSourceMapRef] = useState(null);
   const [mapDescription, setMapDescription] = useState('');
+  const [mapDescriptionModalOpen, setMapDescriptionModalOpen] = useState(false);
+  const [mapDescriptionDraft, setMapDescriptionDraft] = useState('');
+  const [pendingMapPublish, setPendingMapPublish] = useState(null);
   const [mapVotes, setMapVotes] = useState(0);
   const [mapViews, setMapViews] = useState(0);
   const [importsCode, setImportsCode] = useState('indic = xatrahub("/srajma/lib/indic")\n');
@@ -174,6 +188,8 @@ xatra.TitleBox("<b>My Map</b>")
   const territoryLibraryIframeRef = useRef(null);
   const menuRef = useRef(null);
   const importSearchRef = useRef(null);
+  const menuOpenRef = useRef(false);
+  const menuFocusIndexRef = useRef(0);
 
   const injectTerritoryLabelOverlayPatch = (html) => {
     if (!html || typeof html !== 'string') return html;
@@ -292,6 +308,9 @@ xatra.TitleBox("<b>My Map</b>")
 
   const normalizedMapName = String(mapName || '').trim();
   const normalizedHubUsername = String(currentUser?.user?.username || 'new_user').trim().toLowerCase() || 'new_user';
+  const viewedMapVersion = String(route?.version || 'alpha');
+  const isMapAuthor = !!(currentUser.is_authenticated && normalizedHubUsername === mapOwner);
+  const isReadOnlyMap = !!(route.owner && route.map) && (!isMapAuthor || viewedMapVersion !== 'alpha');
 
   useEffect(() => {
     try {
@@ -335,6 +354,13 @@ xatra.TitleBox("<b>My Map</b>")
     }, 0);
   }, [importModalOpen]);
 
+  useEffect(() => {
+    const v = String(route?.version || 'alpha');
+    setMapVersionLabel(v);
+    setSelectedLibraryVersion(v);
+    setSelectedThemeVersion(v);
+  }, [route?.owner, route?.map, route?.version]);
+
   const navigateTo = (path) => {
     if (window.location.pathname !== path) {
       window.history.pushState({}, '', path);
@@ -359,6 +385,14 @@ xatra.TitleBox("<b>My Map</b>")
   useEffect(() => {
     loadMe();
   }, []);
+
+  useEffect(() => {
+    menuOpenRef.current = menuOpen;
+  }, [menuOpen]);
+
+  useEffect(() => {
+    menuFocusIndexRef.current = menuFocusIndex;
+  }, [menuFocusIndex]);
 
   useEffect(() => {
     const loadVersionLabels = async () => {
@@ -401,7 +435,8 @@ xatra.TitleBox("<b>My Map</b>")
       () => handleExportHtml(),
       () => setIsDarkMode((prev) => !prev),
       () => window.open('/explore', '_blank'),
-      () => window.open(`/${normalizedHubUsername}`, '_blank'),
+      () => window.open('/users', '_blank'),
+      () => (currentUser.is_authenticated ? window.open(`/${normalizedHubUsername}`, '_blank') : navigateTo('/login')),
       () => window.open('/new-map', '_blank'),
       () => (currentUser.is_authenticated ? handleLogout() : navigateTo('/login')),
     ];
@@ -556,8 +591,13 @@ xatra.TitleBox("<b>My Map</b>")
   };
 
   const searchHubRegistry = async () => {
+    setImportLoading(true);
     setExploreQuery(hubQuery);
-    await loadExplore(1, hubQuery);
+    try {
+      await loadExplore(1, hubQuery);
+    } finally {
+      setImportLoading(false);
+    }
   };
 
   const ensureArtifactVersions = async (username, name, kind) => {
@@ -596,6 +636,14 @@ xatra.TitleBox("<b>My Map</b>")
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hubSearchResults]);
 
+  useEffect(() => {
+    if (!mapOwner || !normalizedMapName || !HUB_NAME_RE.test(normalizedMapName)) return;
+    ensureArtifactVersions(mapOwner, normalizedMapName, 'map');
+    ensureArtifactVersions(mapOwner, normalizedMapName, 'css');
+    ensureArtifactVersions(mapOwner, normalizedMapName, 'lib');
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mapOwner, normalizedMapName]);
+
   const loadMapFromHub = async (owner, name, version = 'alpha') => {
     try {
       const resp = await apiFetch(`/maps/${owner}/${name}?version=${encodeURIComponent(version || 'alpha')}`);
@@ -628,7 +676,7 @@ xatra.TitleBox("<b>My Map</b>")
       if (artifactResp.ok) {
         setMapVotes(Number(artifactData.votes || 0));
         setMapViews(Number(artifactData.views || 0));
-        setMapVersionLabel(version === 'alpha' ? (artifactData.latest_published_version || 'alpha') : String(version));
+        setMapVersionLabel(version === 'alpha' ? 'alpha' : String(version));
         setMapDescription(String(artifactData?.alpha?.metadata?.description || ''));
       }
     } catch (err) {
@@ -683,6 +731,7 @@ xatra.TitleBox("<b>My Map</b>")
   }, [normalizedMapName, builderElements, builderOptions, code, predefinedCode, importsCode, themeCode, runtimeCode]);
 
   const loadExplore = async (page = 1, query = exploreQuery) => {
+    setExploreLoading(true);
     try {
       const params = new URLSearchParams({ page: String(page), per_page: '12', q: query || '' });
       const resp = await apiFetch(`/explore?${params.toString()}`);
@@ -692,11 +741,14 @@ xatra.TitleBox("<b>My Map</b>")
       setHubSearchResults(Array.isArray(data.items) ? data.items : []);
     } catch (err) {
       setError(err.message);
+    } finally {
+      setExploreLoading(false);
     }
   };
 
   const loadProfile = async (username, page = 1, query = profileSearch) => {
     if (!username) return;
+    setProfileLoading(true);
     try {
       const params = new URLSearchParams({ page: String(page), per_page: '10', q: query || '' });
       const resp = await apiFetch(`/users/${username}?${params.toString()}`);
@@ -706,6 +758,23 @@ xatra.TitleBox("<b>My Map</b>")
       setProfileEdit({ full_name: data?.profile?.full_name || '', bio: data?.profile?.bio || '' });
     } catch (err) {
       setError(err.message);
+    } finally {
+      setProfileLoading(false);
+    }
+  };
+
+  const loadUsers = async (page = 1, query = usersQuery) => {
+    setUsersLoading(true);
+    try {
+      const params = new URLSearchParams({ page: String(page), per_page: '20', q: query || '' });
+      const resp = await apiFetch(`/users?${params.toString()}`);
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.detail || 'Failed to load users');
+      setUsersData(data);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setUsersLoading(false);
     }
   };
 
@@ -730,6 +799,7 @@ xatra.TitleBox("<b>My Map</b>")
 
   useEffect(() => {
     if (route.page === 'explore') loadExplore(explorePage, exploreQuery);
+    if (route.page === 'users') loadUsers(usersPage, usersQuery);
     if (route.page === 'profile') loadProfile(route.username, profilePage, profileSearch);
     if (route.page === 'editor' && route.owner && route.map) {
       setMapOwner(route.owner);
@@ -760,12 +830,13 @@ xatra.TitleBox("<b>My Map</b>")
       setMapOwner(normalizedHubUsername);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [route.page, route.owner, route.map]);
+  }, [route.page, route.owner, route.map, route.version]);
 
-  const handleLogin = async () => {
+  const handleLogin = async (mode = authMode) => {
+    setAuthSubmitting(true);
     try {
-      const endpoint = authMode === 'signup' ? '/auth/signup' : '/auth/login';
-      const payload = authMode === 'signup'
+      const endpoint = mode === 'signup' ? '/auth/signup' : '/auth/login';
+      const payload = mode === 'signup'
         ? { username: authForm.username, password: authForm.password, full_name: authForm.full_name }
         : { username: authForm.username, password: authForm.password };
       const resp = await apiFetch(endpoint, {
@@ -779,6 +850,8 @@ xatra.TitleBox("<b>My Map</b>")
       navigateTo('/');
     } catch (err) {
       setError(err.message);
+    } finally {
+      setAuthSubmitting(false);
     }
   };
 
@@ -1272,14 +1345,30 @@ xatra.TitleBox("<b>My Map</b>")
         || (isMeta && e.shiftKey && lowerKey === 'x')
       );
       if (editableTarget && !allowInputShortcut) return;
-      if (menuOpen && ['ArrowDown', 'ArrowUp', 'Enter', 'Escape'].includes(e.key)) {
+      if (menuOpenRef.current && ['ArrowDown', 'ArrowUp', 'Enter', 'Escape'].includes(e.key)) {
         e.preventDefault();
-        const total = 8;
+        const total = 9;
         if (e.key === 'ArrowDown') setMenuFocusIndex((i) => (i + 1) % total);
         if (e.key === 'ArrowUp') setMenuFocusIndex((i) => (i - 1 + total) % total);
-        if (e.key === 'Enter') executeMenuAction(menuFocusIndex);
-        if (e.key === 'Escape') setMenuOpen(false);
+        if (e.key === 'Enter') executeMenuAction(menuFocusIndexRef.current);
+        if (e.key === 'Escape') {
+          setMenuOpen(false);
+          setMenuFocusIndex(0);
+        }
         return;
+      }
+      if (mapDescriptionModalOpen) {
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          setMapDescriptionModalOpen(false);
+          setPendingMapPublish(null);
+          return;
+        }
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault();
+          confirmMapPublish();
+          return;
+        }
       }
       if (e.key === 'Escape' && importModalOpen) {
         e.preventDefault();
@@ -1358,7 +1447,7 @@ xatra.TitleBox("<b>My Map</b>")
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [activeTab, code, predefinedCode, builderElements, builderOptions, activePreviewTab, territoryLibrarySource, activePicker, referencePickTarget]);
+  }, [activeTab, code, predefinedCode, builderElements, builderOptions, activePreviewTab, territoryLibrarySource, activePicker, referencePickTarget, mapDescriptionModalOpen, pendingMapPublish, mapDescriptionDraft]);
 
   const handleGetCurrentView = () => {
     const ref = activePreviewTab === 'picker' ? pickerIframeRef : activePreviewTab === 'library' ? territoryLibraryIframeRef : iframeRef;
@@ -1574,41 +1663,124 @@ xatra.TitleBox("<b>My Map</b>")
         setTimeout(() => setStatusNotice(''), 1800);
         return;
       }
+      if (isReadOnlyMap) {
+        setError('Read-only view. Fork this map to edit.');
+        return;
+      }
       let targetName = normalizedMapName;
-      const viewingOthersMap = !!(mapOwner && mapOwner !== normalizedHubUsername);
-      if (viewingOthersMap) {
-        const resp = await apiFetch(`/maps/resolve-name?base=${encodeURIComponent(normalizedMapName)}`);
-        const data = await resp.json();
-        if (resp.ok && data?.name) {
-          targetName = data.name;
-        }
+      const check = await apiFetch(`/hub/${normalizedHubUsername}/map/${targetName}`);
+      const exists = check.ok;
+      const isSameCurrent = !!(route.owner === normalizedHubUsername && route.map === targetName);
+      if (exists && !isSameCurrent) {
+        setError(`Map name '${targetName}' already exists in your account. Choose a different name.`);
+        return;
       }
-      if (!viewingOthersMap) {
-        const check = await apiFetch(`/hub/${normalizedHubUsername}/map/${targetName}`);
-        const exists = check.ok;
-        const isSameCurrent = !!(route.owner === normalizedHubUsername && route.map === targetName);
-        if (exists && !isSameCurrent) {
-          setError(`Map name '${targetName}' already exists in your account. Choose a different name.`);
-          return;
-        }
-      }
-      const descInput = window.prompt('Map description', mapDescription || '');
-      if (descInput === null) return;
-      setMapDescription(descInput);
       const content = await buildMapArtifactContent();
-      await publishHubArtifact('map', content, { owner: normalizedHubUsername, name: targetName, description: descInput });
+      setPendingMapPublish({ targetName, content });
+      setMapDescriptionDraft(mapDescription || '');
+      setMapDescriptionModalOpen(true);
     } catch (err) {
       setError(`Publish map failed: ${err.message}`);
     }
   };
 
+  const confirmMapPublish = async () => {
+    if (!pendingMapPublish) return;
+    try {
+      await publishHubArtifact('map', pendingMapPublish.content, {
+        owner: normalizedHubUsername,
+        name: pendingMapPublish.targetName,
+        description: mapDescriptionDraft,
+      });
+      setMapDescription(mapDescriptionDraft);
+      setMapDescriptionModalOpen(false);
+      setPendingMapPublish(null);
+    } catch (err) {
+      setError(`Publish map failed: ${err.message}`);
+    }
+  };
+
+  const handleForkMap = async () => {
+    if (!currentUser.is_authenticated) {
+      navigateTo('/login');
+      return;
+    }
+    try {
+      const base = normalizedMapName || 'new_map';
+      const resp = await apiFetch(`/maps/resolve-name?base=${encodeURIComponent(base)}`);
+      const data = await resp.json();
+      if (!resp.ok || !data?.name) throw new Error(data?.detail || 'Failed to resolve fork name');
+      const content = await buildMapArtifactContent();
+      await publishHubArtifact('map', content, {
+        owner: normalizedHubUsername,
+        name: data.name,
+        description: mapDescription,
+      });
+    } catch (err) {
+      setError(`Fork failed: ${err.message}`);
+    }
+  };
+
+  const handleMapVersionSelect = (version) => {
+    if (!route.owner || !route.map) return;
+    setMapVersionLabel(String(version || 'alpha'));
+    const next = String(version || 'alpha');
+    navigateTo(`/${route.owner}/map/${route.map}/${next === 'alpha' ? 'alpha' : `v${next}`}`);
+  };
+
+  const handleLibraryVersionSelect = async (version) => {
+    const v = String(version || 'alpha');
+    setSelectedLibraryVersion(v);
+    if (!route.owner || !route.map || !mapOwner || !normalizedMapName) return;
+    try {
+      const resp = await apiFetch(`/hub/${mapOwner}/lib/${normalizedMapName}/${v}`);
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.detail || 'Failed to load library version');
+      let nextCode = '';
+      try {
+        const parsed = JSON.parse(data.content || '{}');
+        nextCode = String(parsed.predefined_code || '');
+      } catch {
+        nextCode = String(data.content || '');
+      }
+      setPredefinedCode(nextCode);
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
+  const handleThemeVersionSelect = async (version) => {
+    const v = String(version || 'alpha');
+    setSelectedThemeVersion(v);
+    if (!route.owner || !route.map || !mapOwner || !normalizedMapName) return;
+    try {
+      const resp = await apiFetch(`/hub/${mapOwner}/css/${normalizedMapName}/${v}`);
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.detail || 'Failed to load theme version');
+      let nextCode = '';
+      try {
+        const parsed = JSON.parse(data.content || '{}');
+        nextCode = String(parsed.theme_code || '');
+      } catch {
+        nextCode = String(data.content || '');
+      }
+      setThemeCode(nextCode);
+    } catch (err) {
+      setError(err.message);
+    }
+  };
+
   const handlePublishLibrary = async () => {
     try {
+      if (isReadOnlyMap || selectedLibraryVersion !== 'alpha') {
+        setError('Library is read-only in this view.');
+        return;
+      }
       const content = JSON.stringify({
         predefined_code: predefinedCode || '',
         map_name: normalizedMapName,
       });
-      await publishHubArtifact('lib', content);
+      await publishHubArtifact('lib', content, { owner: mapOwner, name: normalizedMapName });
     } catch (err) {
       setError(`Publish library failed: ${err.message}`);
     }
@@ -1616,17 +1788,25 @@ xatra.TitleBox("<b>My Map</b>")
 
   const handlePublishTheme = async () => {
     try {
+      if (isReadOnlyMap || selectedThemeVersion !== 'alpha') {
+        setError('Theme is read-only in this view.');
+        return;
+      }
       const content = JSON.stringify({
         theme_code: themeCode || '',
         map_name: normalizedMapName,
       });
-      await publishHubArtifact('css', content);
+      await publishHubArtifact('css', content, { owner: mapOwner, name: normalizedMapName });
     } catch (err) {
       setError(`Publish theme failed: ${err.message}`);
     }
   };
 
   const handleLoadProject = (e) => {
+    if (isReadOnlyMap) {
+      e.target.value = null;
+      return;
+    }
     const file = e.target.files[0];
     if (file) {
       const reader = new FileReader();
@@ -2067,6 +2247,21 @@ xatra.TitleBox("<b>My Map</b>")
   const shortcutsPanelClass = isDarkMode
     ? 'bg-slate-900/95 border-slate-700 text-slate-200'
     : 'bg-white/95 border-gray-200 text-gray-700';
+  const currentMapVersionOptions = getImportVersionOptions({
+    username: mapOwner,
+    kind: 'map',
+    name: normalizedMapName,
+  });
+  const currentLibraryVersionOptions = getImportVersionOptions({
+    username: mapOwner,
+    kind: 'lib',
+    name: normalizedMapName,
+  });
+  const currentThemeVersionOptions = getImportVersionOptions({
+    username: mapOwner,
+    kind: 'css',
+    name: normalizedMapName,
+  });
   const importedBaseSet = new Set((hubImports || []).map((imp) => `${imp.kind}:${imp.username}:${imp.name}`));
   const renderExploreCatalogCard = (item) => {
     const mapKey = artifactKey(item.username, 'map', item.name);
@@ -2080,7 +2275,9 @@ xatra.TitleBox("<b>My Map</b>")
         <img src={item.thumbnail || '/vite.svg'} alt="" className="w-full h-24 object-cover bg-gray-100" />
         <div className="p-2">
           <a href={`/${item.username}/map/${item.name}`} target="_blank" rel="noreferrer" className="font-mono text-[11px] text-blue-700 hover:underline">{item.name}</a>
-          <div className="text-[10px] text-gray-500 truncate">by {item.username} · {item.votes || 0} votes · {item.views || 0} views</div>
+          <div className="text-[10px] text-gray-500 truncate">
+            by <a href={`/${item.username}`} target="_blank" rel="noreferrer" className="text-blue-700 hover:underline">{item.username}</a> · {item.votes || 0} votes · {item.views || 0} views
+          </div>
           <div className="text-[10px] text-gray-600 line-clamp-2">{item.description || 'No description'}</div>
           <div className="mt-2 flex gap-1">
             <select
@@ -2125,7 +2322,9 @@ xatra.TitleBox("<b>My Map</b>")
         <img src={item.thumbnail || '/vite.svg'} alt="" className="w-full h-20 object-cover bg-gray-100 rounded-t" />
         <div className="p-2">
           <a href={`/${item.username}/map/${item.name}`} target="_blank" rel="noreferrer" className="font-mono text-[11px] text-blue-700 hover:underline">{item.name}</a>
-          <div className="text-[10px] text-gray-500 truncate">by {item.username} · {item.votes || 0} votes · {item.views || 0} views</div>
+          <div className="text-[10px] text-gray-500 truncate">
+            by <a href={`/${item.username}`} target="_blank" rel="noreferrer" className="text-blue-700 hover:underline">{item.username}</a> · {item.votes || 0} votes · {item.views || 0} views
+          </div>
           <div className="mt-2 space-y-1 border rounded border-gray-200 bg-gray-50 p-1.5">
             <div className="text-[10px] font-semibold text-gray-700 px-0.5">Import actions</div>
             <div className="flex gap-1 items-center">
@@ -2164,7 +2363,7 @@ xatra.TitleBox("<b>My Map</b>")
               <input className="w-full border rounded p-2 text-sm font-mono" placeholder="username" value={authForm.username} onChange={(e) => setAuthForm((p) => ({ ...p, username: e.target.value.toLowerCase().replace(/[^a-z0-9_.-]/g, '') }))} />
               <input className="w-full border rounded p-2 text-sm" type="password" placeholder="password" value={authForm.password} onChange={(e) => setAuthForm((p) => ({ ...p, password: e.target.value }))} />
             </div>
-            <button className="mt-3 w-full px-3 py-2 bg-blue-600 text-white rounded text-sm hover:bg-blue-700" onClick={async () => { setAuthMode('login'); await handleLogin(); }}>Login</button>
+            <button disabled={authSubmitting} className="mt-3 w-full px-3 py-2 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 disabled:opacity-50" onClick={async () => { setAuthMode('login'); await handleLogin('login'); }}>{authSubmitting && authMode === 'login' ? 'Logging in ...' : 'Login'}</button>
           </div>
           <div>
             <h1 className="text-xl font-bold mb-3">Sign up</h1>
@@ -2173,7 +2372,7 @@ xatra.TitleBox("<b>My Map</b>")
               <input className="w-full border rounded p-2 text-sm" placeholder="full name (optional)" value={authForm.full_name} onChange={(e) => setAuthForm((p) => ({ ...p, full_name: e.target.value }))} />
               <input className="w-full border rounded p-2 text-sm" type="password" placeholder="password (min 8)" value={authForm.password} onChange={(e) => setAuthForm((p) => ({ ...p, password: e.target.value }))} />
             </div>
-            <button className="mt-3 w-full px-3 py-2 bg-slate-900 text-white rounded text-sm hover:bg-slate-800" onClick={async () => { setAuthMode('signup'); await handleLogin(); }}>Create account</button>
+            <button disabled={authSubmitting} className="mt-3 w-full px-3 py-2 bg-slate-900 text-white rounded text-sm hover:bg-slate-800 disabled:opacity-50" onClick={async () => { setAuthMode('signup'); await handleLogin('signup'); }}>{authSubmitting && authMode === 'signup' ? 'Signing up ...' : 'Create account'}</button>
           </div>
           <div className="md:col-span-2">
             <button className="px-3 py-2 border rounded text-sm" onClick={() => navigateTo('/')}>Back to editor</button>
@@ -2194,7 +2393,8 @@ xatra.TitleBox("<b>My Map</b>")
           <div className="text-lg font-bold lowercase px-2">xatra</div>
           <button className={`w-full text-left px-2 py-2 rounded inline-flex items-center gap-2 ${isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-gray-100'}`} onClick={() => setIsDarkMode((p) => !p)}>{isDarkMode ? <Sun size={14}/> : <Moon size={14}/>} Night mode</button>
           <button className={`w-full text-left px-2 py-2 rounded inline-flex items-center gap-2 ${isDarkMode ? 'hover:bg-slate-800 bg-slate-800 text-slate-100' : 'hover:bg-gray-100 bg-blue-50 text-blue-700'}`}><Compass size={14}/> Explore</button>
-          <button className={`w-full text-left px-2 py-2 rounded inline-flex items-center gap-2 ${isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-gray-100'}`} onClick={() => navigateTo(`/${normalizedHubUsername}`)}><User size={14}/> {normalizedHubUsername}</button>
+          <button className={`w-full text-left px-2 py-2 rounded inline-flex items-center gap-2 ${isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-gray-100'}`} onClick={() => navigateTo('/users')}><Users size={14}/> Users</button>
+          <button className={`w-full text-left px-2 py-2 rounded inline-flex items-center gap-2 ${isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-gray-100'}`} onClick={() => (currentUser.is_authenticated ? navigateTo(`/${normalizedHubUsername}`) : navigateTo('/login'))}><User size={14}/> {currentUser.is_authenticated ? normalizedHubUsername : 'My Profile'}</button>
           <button className={`w-full text-left px-2 py-2 rounded inline-flex items-center gap-2 ${isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-gray-100'}`} onClick={() => window.open('/new-map', '_blank')}><FilePlus2 size={14}/> New map...</button>
           {currentUser.is_authenticated ? (
             <button className={`w-full text-left px-2 py-2 rounded inline-flex items-center gap-2 ${isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-gray-100'}`} onClick={handleLogout}><LogOut size={14}/> Logout</button>
@@ -2203,6 +2403,7 @@ xatra.TitleBox("<b>My Map</b>")
           )}
         </div>
         <div className="flex-1 p-4 overflow-y-auto">
+          {exploreLoading && <div className="mb-3 text-xs px-2 py-1 border rounded bg-blue-50 text-blue-700 border-blue-200">Loading maps...</div>}
           <div className="flex gap-2 mb-3">
             <input value={exploreQuery} onChange={(e) => setExploreQuery(e.target.value)} placeholder='Search maps, e.g. "indica user:srajma"' className="flex-1 border rounded p-2 text-sm" />
             <button className="px-3 py-2 border rounded" onClick={() => { setExplorePage(1); loadExplore(1, exploreQuery); }}>Search</button>
@@ -2214,6 +2415,48 @@ xatra.TitleBox("<b>My Map</b>")
             <button disabled={explorePage <= 1} className="px-2 py-1 border rounded disabled:opacity-40" onClick={() => { const p = Math.max(1, explorePage - 1); setExplorePage(p); loadExplore(p, exploreQuery); }}>Prev</button>
             <div className="text-xs self-center">Page {explorePage} / {totalPages}</div>
             <button disabled={explorePage >= totalPages} className="px-2 py-1 border rounded disabled:opacity-40" onClick={() => { const p = Math.min(totalPages, explorePage + 1); setExplorePage(p); loadExplore(p, exploreQuery); }}>Next</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (route.page === 'users') {
+    const totalPages = Math.max(1, Math.ceil((usersData.total || 0) / (usersData.per_page || 20)));
+    return (
+      <div className={`h-screen w-full flex ${isDarkMode ? 'theme-dark bg-slate-950 text-slate-100' : 'bg-gray-100'}`}>
+        <div className="w-64 border-r p-4 bg-white space-y-2">
+          <div className="text-lg font-bold lowercase px-2">xatra</div>
+          <button className={`w-full text-left px-2 py-2 rounded inline-flex items-center gap-2 ${isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-gray-100'}`} onClick={() => setIsDarkMode((p) => !p)}>{isDarkMode ? <Sun size={14}/> : <Moon size={14}/>} Night mode</button>
+          <button className={`w-full text-left px-2 py-2 rounded inline-flex items-center gap-2 ${isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-gray-100'}`} onClick={() => navigateTo('/explore')}><Compass size={14}/> Explore</button>
+          <button className={`w-full text-left px-2 py-2 rounded inline-flex items-center gap-2 ${isDarkMode ? 'hover:bg-slate-800 bg-slate-800 text-slate-100' : 'hover:bg-gray-100 bg-blue-50 text-blue-700'}`}><Users size={14}/> Users</button>
+          <button className={`w-full text-left px-2 py-2 rounded inline-flex items-center gap-2 ${isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-gray-100'}`} onClick={() => (currentUser.is_authenticated ? navigateTo(`/${normalizedHubUsername}`) : navigateTo('/login'))}><User size={14}/> {currentUser.is_authenticated ? normalizedHubUsername : 'My Profile'}</button>
+          <button className={`w-full text-left px-2 py-2 rounded inline-flex items-center gap-2 ${isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-gray-100'}`} onClick={() => window.open('/new-map', '_blank')}><FilePlus2 size={14}/> New map...</button>
+          {currentUser.is_authenticated ? (
+            <button className={`w-full text-left px-2 py-2 rounded inline-flex items-center gap-2 ${isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-gray-100'}`} onClick={handleLogout}><LogOut size={14}/> Logout</button>
+          ) : (
+            <button className={`w-full text-left px-2 py-2 rounded inline-flex items-center gap-2 ${isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-gray-100'}`} onClick={() => navigateTo('/login')}><LogIn size={14}/> Login/Signup</button>
+          )}
+        </div>
+        <div className="flex-1 p-4 overflow-y-auto">
+          {usersLoading && <div className="mb-3 text-xs px-2 py-1 border rounded bg-blue-50 text-blue-700 border-blue-200">Loading users...</div>}
+          <div className="flex gap-2 mb-3">
+            <input value={usersQuery} onChange={(e) => setUsersQuery(e.target.value)} placeholder='Search users...' className="flex-1 border rounded p-2 text-sm" />
+            <button className="px-3 py-2 border rounded" onClick={() => { setUsersPage(1); loadUsers(1, usersQuery); }}>Search</button>
+          </div>
+          <div className="space-y-2">
+            {(usersData.items || []).map((u) => (
+              <a key={u.username} href={`/${u.username}`} className="block border rounded bg-white p-3 hover:bg-blue-50">
+                <div className="font-mono text-sm text-blue-700">{u.username}</div>
+                <div className="text-xs text-gray-600">{u.full_name || ''}</div>
+                <div className="text-[11px] text-gray-500 mt-1">maps {u.maps_count || 0} · views {u.views_count || 0}</div>
+              </a>
+            ))}
+          </div>
+          <div className="flex gap-2 mt-4">
+            <button disabled={usersPage <= 1} className="px-2 py-1 border rounded disabled:opacity-40" onClick={() => { const p = Math.max(1, usersPage - 1); setUsersPage(p); loadUsers(p, usersQuery); }}>Prev</button>
+            <div className="text-xs self-center">Page {usersPage} / {totalPages}</div>
+            <button disabled={usersPage >= totalPages} className="px-2 py-1 border rounded disabled:opacity-40" onClick={() => { const p = Math.min(totalPages, usersPage + 1); setUsersPage(p); loadUsers(p, usersQuery); }}>Next</button>
           </div>
         </div>
       </div>
@@ -2239,6 +2482,7 @@ xatra.TitleBox("<b>My Map</b>")
           <div className="text-lg font-bold lowercase px-2">xatra</div>
           <button className={`w-full text-left px-2 py-2 rounded inline-flex items-center gap-2 ${isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-gray-100'}`} onClick={() => setIsDarkMode((p) => !p)}>{isDarkMode ? <Sun size={14}/> : <Moon size={14}/>} Night mode</button>
           <button className={`w-full text-left px-2 py-2 rounded inline-flex items-center gap-2 ${isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-gray-100'}`} onClick={() => navigateTo('/explore')}><Compass size={14}/> Explore</button>
+          <button className={`w-full text-left px-2 py-2 rounded inline-flex items-center gap-2 ${isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-gray-100'}`} onClick={() => navigateTo('/users')}><Users size={14}/> Users</button>
           <button className={`w-full text-left px-2 py-2 rounded inline-flex items-center gap-2 ${isDarkMode ? 'hover:bg-slate-800 bg-slate-800 text-slate-100' : 'hover:bg-gray-100 bg-blue-50 text-blue-700'}`}><User size={14}/> {profile?.username || normalizedHubUsername}</button>
           <button className={`w-full text-left px-2 py-2 rounded inline-flex items-center gap-2 ${isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-gray-100'}`} onClick={() => window.open('/new-map', '_blank')}><FilePlus2 size={14}/> New map...</button>
           {currentUser.is_authenticated ? (
@@ -2248,6 +2492,7 @@ xatra.TitleBox("<b>My Map</b>")
           )}
         </div>
         <div className="flex-1 p-4 overflow-y-auto">
+          {profileLoading && <div className="mb-3 text-xs px-2 py-1 border rounded bg-blue-50 text-blue-700 border-blue-200">Loading maps...</div>}
           <h1 className="text-xl font-bold">{profile?.username || route.username}</h1>
           <div className="text-sm text-gray-600">{profile?.full_name || ''}</div>
           <div className="text-sm mt-1">{profile?.bio || ''}</div>
@@ -2314,17 +2559,18 @@ xatra.TitleBox("<b>My Map</b>")
                 </button>
                 {menuOpen && (
                   <div className="absolute left-0 top-9 w-52 bg-white border rounded shadow-lg z-50 text-xs">
-                    <label className={`flex items-center gap-2 px-3 py-2 cursor-pointer ${menuFocusIndex === 0 ? 'bg-blue-50 text-blue-700' : 'hover:bg-gray-50'}`}><Upload size={12}/> Load<input id="xatra-load-input" type="file" className="hidden" accept=".json" onChange={handleLoadProject} /></label>
-                    <button onClick={handleSaveProject} className={`w-full flex items-center gap-2 px-3 py-2 ${menuFocusIndex === 1 ? 'bg-blue-50 text-blue-700' : 'hover:bg-gray-50'}`}><Download size={12}/> Save</button>
-                    <button onClick={handleExportHtml} className={`w-full flex items-center gap-2 px-3 py-2 ${menuFocusIndex === 2 ? 'bg-blue-50 text-blue-700' : 'hover:bg-gray-50'}`}><Image size={12}/> Export</button>
-                    <button onClick={() => setIsDarkMode((prev) => !prev)} className={`w-full flex items-center gap-2 px-3 py-2 ${menuFocusIndex === 3 ? 'bg-blue-50 text-blue-700' : 'hover:bg-gray-50'}`}>{isDarkMode ? <Sun size={12}/> : <Moon size={12}/>} Night mode</button>
-                    <button onClick={() => window.open('/explore', '_blank')} className={`w-full flex items-center gap-2 px-3 py-2 ${menuFocusIndex === 4 ? 'bg-blue-50 text-blue-700' : 'hover:bg-gray-50'}`}><Compass size={12}/> Explore</button>
-                    <button onClick={() => window.open(`/${normalizedHubUsername}`, '_blank')} className={`w-full flex items-center gap-2 px-3 py-2 ${menuFocusIndex === 5 ? 'bg-blue-50 text-blue-700' : 'hover:bg-gray-50'}`}><User size={12}/> {normalizedHubUsername}</button>
-                    <button onClick={() => window.open('/new-map', '_blank')} className={`w-full flex items-center gap-2 px-3 py-2 ${menuFocusIndex === 6 ? 'bg-blue-50 text-blue-700' : 'hover:bg-gray-50'}`}><FilePlus2 size={12}/> New map...</button>
+                    <label onMouseEnter={() => setMenuFocusIndex(0)} className={`flex items-center gap-2 px-3 py-2 cursor-pointer ${menuFocusIndex === 0 ? 'bg-blue-50 text-blue-700' : 'hover:bg-gray-50'}`}><Upload size={12}/> Load<input id="xatra-load-input" type="file" className="hidden" accept=".json" onChange={handleLoadProject} /></label>
+                    <button onMouseEnter={() => setMenuFocusIndex(1)} onClick={handleSaveProject} className={`w-full flex items-center gap-2 px-3 py-2 ${menuFocusIndex === 1 ? 'bg-blue-50 text-blue-700' : 'hover:bg-gray-50'}`}><Download size={12}/> Save</button>
+                    <button onMouseEnter={() => setMenuFocusIndex(2)} onClick={handleExportHtml} className={`w-full flex items-center gap-2 px-3 py-2 ${menuFocusIndex === 2 ? 'bg-blue-50 text-blue-700' : 'hover:bg-gray-50'}`}><Image size={12}/> Export</button>
+                    <button onMouseEnter={() => setMenuFocusIndex(3)} onClick={() => setIsDarkMode((prev) => !prev)} className={`w-full flex items-center gap-2 px-3 py-2 ${menuFocusIndex === 3 ? 'bg-blue-50 text-blue-700' : 'hover:bg-gray-50'}`}>{isDarkMode ? <Sun size={12}/> : <Moon size={12}/>} Night mode</button>
+                    <button onMouseEnter={() => setMenuFocusIndex(4)} onClick={() => window.open('/explore', '_blank')} className={`w-full flex items-center gap-2 px-3 py-2 ${menuFocusIndex === 4 ? 'bg-blue-50 text-blue-700' : 'hover:bg-gray-50'}`}><Compass size={12}/> Explore</button>
+                    <button onMouseEnter={() => setMenuFocusIndex(5)} onClick={() => window.open('/users', '_blank')} className={`w-full flex items-center gap-2 px-3 py-2 ${menuFocusIndex === 5 ? 'bg-blue-50 text-blue-700' : 'hover:bg-gray-50'}`}><Users size={12}/> Users</button>
+                    <button onMouseEnter={() => setMenuFocusIndex(6)} onClick={() => (currentUser.is_authenticated ? window.open(`/${normalizedHubUsername}`, '_blank') : navigateTo('/login'))} className={`w-full flex items-center gap-2 px-3 py-2 ${menuFocusIndex === 6 ? 'bg-blue-50 text-blue-700' : 'hover:bg-gray-50'}`}><User size={12}/> {currentUser.is_authenticated ? normalizedHubUsername : 'My Profile'}</button>
+                    <button onMouseEnter={() => setMenuFocusIndex(7)} onClick={() => window.open('/new-map', '_blank')} className={`w-full flex items-center gap-2 px-3 py-2 ${menuFocusIndex === 7 ? 'bg-blue-50 text-blue-700' : 'hover:bg-gray-50'}`}><FilePlus2 size={12}/> New map...</button>
                     {currentUser.is_authenticated ? (
-                      <button onClick={handleLogout} className={`w-full flex items-center gap-2 px-3 py-2 ${menuFocusIndex === 7 ? 'bg-blue-50 text-blue-700' : 'hover:bg-gray-50'}`}><LogOut size={12}/> Logout</button>
+                      <button onMouseEnter={() => setMenuFocusIndex(8)} onClick={handleLogout} className={`w-full flex items-center gap-2 px-3 py-2 ${menuFocusIndex === 8 ? 'bg-blue-50 text-blue-700' : 'hover:bg-gray-50'}`}><LogOut size={12}/> Logout</button>
                     ) : (
-                      <button onClick={() => navigateTo('/login')} className={`w-full flex items-center gap-2 px-3 py-2 ${menuFocusIndex === 7 ? 'bg-blue-50 text-blue-700' : 'hover:bg-gray-50'}`}><LogIn size={12}/> Login/Signup</button>
+                      <button onMouseEnter={() => setMenuFocusIndex(8)} onClick={() => navigateTo('/login')} className={`w-full flex items-center gap-2 px-3 py-2 ${menuFocusIndex === 8 ? 'bg-blue-50 text-blue-700' : 'hover:bg-gray-50'}`}><LogIn size={12}/> Login/Signup</button>
                     )}
                   </div>
                 )}
@@ -2333,13 +2579,36 @@ xatra.TitleBox("<b>My Map</b>")
                 type="text"
                 value={mapName}
                 onChange={(e) => setMapName(e.target.value.toLowerCase().replace(/[^a-z0-9_.]/g, ''))}
-                className={`w-56 text-sm p-1.5 border rounded bg-white font-mono ${HUB_NAME_RE.test(normalizedMapName) ? 'border-gray-300' : 'border-red-400'}`}
+                disabled={isReadOnlyMap}
+                className={`w-40 text-sm p-1.5 border rounded bg-white font-mono disabled:bg-gray-100 disabled:text-gray-500 ${HUB_NAME_RE.test(normalizedMapName) ? 'border-gray-300' : 'border-red-400'}`}
                 title="Map title"
                 placeholder="map_name"
               />
               {statusNotice && <span className="text-[10px] text-amber-700">{statusNotice}</span>}
-              <button onClick={handlePublishMap} className="px-2 py-1 bg-white border border-gray-300 rounded hover:bg-gray-50 inline-flex items-center gap-1" title="Save / Publish version">
-                <Save size={12} className="text-gray-700"/> <span className="font-mono text-[11px]">{mapVersionLabel === 'alpha' ? 'alpha' : `v${mapVersionLabel}`}</span>
+              {isReadOnlyMap ? (
+                <button onClick={handleForkMap} className="px-2 py-1 bg-white border border-gray-300 rounded hover:bg-gray-50 inline-flex items-center gap-1" title="Fork map">
+                  <GitFork size={12} className="text-gray-700"/> <span className="font-mono text-[11px]">Fork</span>
+                </button>
+              ) : (
+                <button onClick={handlePublishMap} className="px-2 py-1 bg-white border border-gray-300 rounded hover:bg-gray-50 inline-flex items-center gap-1" title="Save alpha">
+                  <Save size={12} className="text-gray-700"/> <span className="font-mono text-[11px]">Save</span>
+                </button>
+              )}
+              <select
+                value={viewedMapVersion}
+                onChange={(e) => handleMapVersionSelect(e.target.value)}
+                className="text-[11px] border rounded px-1.5 py-1 bg-white font-mono"
+                title="Map version"
+              >
+                {currentMapVersionOptions.map((opt) => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+              </select>
+              <button
+                onClick={handleVoteMap}
+                disabled={!(route.owner && route.map)}
+                className={`p-1 rounded border ${route.owner && route.map ? 'hover:bg-gray-50' : 'opacity-40'}`}
+                title="Like/unlike"
+              >
+                <Heart size={12} className={mapVotes > 0 ? 'text-rose-600 fill-rose-600' : 'text-gray-500'} />
               </button>
             </div>
             <div className="flex items-center gap-2">
@@ -2364,15 +2633,12 @@ xatra.TitleBox("<b>My Map</b>")
             <a href={`/${mapOwner}`} className="text-blue-700 hover:underline">{mapOwner}</a>
             <span>·</span>
             <span>{mapVotes} likes</span>
-            <button onClick={handleVoteMap} disabled={!(route.owner && route.map)} className={`p-1 rounded border ${route.owner && route.map ? 'hover:bg-gray-50' : 'opacity-40'}`} title="Like/unlike">
-              <Heart size={12} className={mapVotes > 0 ? 'text-rose-600 fill-rose-600' : 'text-gray-500'} />
-            </button>
             <span>·</span>
             <span>{mapViews} views</span>
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-4">
+        <div className={`flex-1 overflow-y-auto p-4 ${isReadOnlyMap ? 'opacity-60' : ''}`}>
           {activeTab === 'builder' ? (
             <Builder 
               elements={builderElements} 
@@ -2400,6 +2666,7 @@ xatra.TitleBox("<b>My Map</b>")
               }}
               getImportVersionOptions={getImportVersionOptions}
               onSwitchHubImportVersion={switchHubImportVersion}
+              readOnly={isReadOnlyMap}
             />
           ) : (
             <CodeEditor 
@@ -2409,12 +2676,19 @@ xatra.TitleBox("<b>My Map</b>")
                 importsCode={importsCode} setImportsCode={setImportsCode}
                 themeCode={themeCode} setThemeCode={setThemeCode}
                 runtimeCode={runtimeCode} setRuntimeCode={setRuntimeCode}
-                libraryVersionLabel={String(libraryVersionLabel)}
-                themeVersionLabel={String(themeVersionLabel)}
-                librarySlugText={`${mapOwner}/lib/${normalizedMapName}`}
-                themeSlugText={`${mapOwner}/css/${normalizedMapName}`}
+                libraryVersionLabel={String(selectedLibraryVersion)}
+                themeVersionLabel={String(selectedThemeVersion)}
+                librarySlugText={`${mapOwner}/lib/${normalizedMapName}/${selectedLibraryVersion}`}
+                themeSlugText={`${mapOwner}/css/${normalizedMapName}/${selectedThemeVersion}`}
                 onSaveLibrary={handlePublishLibrary}
                 onSaveTheme={handlePublishTheme}
+                onSelectLibraryVersion={handleLibraryVersionSelect}
+                onSelectThemeVersion={handleThemeVersionSelect}
+                libraryVersionOptions={currentLibraryVersionOptions}
+                themeVersionOptions={currentThemeVersionOptions}
+                readOnlyMap={isReadOnlyMap}
+                readOnlyLibrary={isReadOnlyMap || selectedLibraryVersion !== 'alpha'}
+                readOnlyTheme={isReadOnlyMap || selectedThemeVersion !== 'alpha'}
             />
           )}
         </div>
@@ -2422,7 +2696,8 @@ xatra.TitleBox("<b>My Map</b>")
         <div className="p-4 border-t border-gray-200 bg-gray-50">
           <button
             onClick={renderMap}
-            className="w-full py-2.5 px-4 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg shadow-sm flex items-center justify-center gap-2 transition-all"
+            disabled={isReadOnlyMap}
+            className="w-full py-2.5 px-4 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg shadow-sm flex items-center justify-center gap-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <Play className="w-5 h-5 fill-current" /> Render Map
           </button>
@@ -2697,6 +2972,7 @@ xatra.TitleBox("<b>My Map</b>")
               />
               <button className="px-3 py-2 border rounded" onClick={searchHubRegistry}>Search</button>
             </div>
+            {importLoading && <div className="mx-3 mt-2 text-xs px-2 py-1 border rounded bg-blue-50 text-blue-700 border-blue-200">Loading maps...</div>}
             <div className="px-3 py-2 border-b bg-gray-50">
               <div className="text-[11px] font-semibold mb-1 text-gray-700">Imported layers from maps/themes</div>
               <div className="flex flex-wrap gap-2">
@@ -2714,6 +2990,28 @@ xatra.TitleBox("<b>My Map</b>")
             </div>
             <div className="flex-1 overflow-auto p-3 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
               {(hubSearchResults || []).map((item) => renderImportCatalogCard(item))}
+            </div>
+          </div>
+        </div>
+      )}
+      {mapDescriptionModalOpen && (
+        <div className="fixed inset-0 bg-black/40 z-[110] flex items-center justify-center">
+          <div className="w-[520px] max-w-[92vw] bg-white rounded-lg border shadow-xl">
+            <div className="px-4 py-3 border-b">
+              <div className="font-semibold text-sm">Map description</div>
+            </div>
+            <div className="p-4">
+              <textarea
+                autoFocus
+                value={mapDescriptionDraft}
+                onChange={(e) => setMapDescriptionDraft(e.target.value)}
+                className="w-full min-h-[110px] border rounded p-2 text-sm"
+                placeholder="Describe this map..."
+              />
+            </div>
+            <div className="px-4 py-3 border-t flex justify-end gap-2">
+              <button className="px-3 py-1.5 border rounded text-sm" onClick={() => { setMapDescriptionModalOpen(false); setPendingMapPublish(null); }}>Cancel</button>
+              <button className="px-3 py-1.5 bg-blue-600 text-white rounded text-sm hover:bg-blue-700" onClick={confirmMapPublish}>Save map</button>
             </div>
           </div>
         </div>
