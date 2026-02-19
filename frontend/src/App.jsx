@@ -2080,9 +2080,8 @@ xatra.TitleBox("<b>My Map</b>")
         <img src={item.thumbnail || '/vite.svg'} alt="" className="w-full h-24 object-cover bg-gray-100" />
         <div className="p-2">
           <a href={`/${item.username}/map/${item.name}`} target="_blank" rel="noreferrer" className="font-mono text-[11px] text-blue-700 hover:underline">{item.name}</a>
-          <div className="text-[10px] text-gray-500">by {item.username}</div>
+          <div className="text-[10px] text-gray-500 truncate">by {item.username} · {item.votes || 0} votes · {item.views || 0} views</div>
           <div className="text-[10px] text-gray-600 line-clamp-2">{item.description || 'No description'}</div>
-          <div className="text-[10px] text-gray-500 mt-1">votes {item.votes || 0} · views {item.views || 0}</div>
           <div className="mt-2 flex gap-1">
             <select
               value={mapVersion}
@@ -2126,7 +2125,7 @@ xatra.TitleBox("<b>My Map</b>")
         <img src={item.thumbnail || '/vite.svg'} alt="" className="w-full h-20 object-cover bg-gray-100 rounded-t" />
         <div className="p-2">
           <a href={`/${item.username}/map/${item.name}`} target="_blank" rel="noreferrer" className="font-mono text-[11px] text-blue-700 hover:underline">{item.name}</a>
-          <div className="text-[10px] text-gray-500">by {item.username}</div>
+          <div className="text-[10px] text-gray-500 truncate">by {item.username} · {item.votes || 0} votes · {item.views || 0} views</div>
           <div className="mt-2 space-y-1 border rounded border-gray-200 bg-gray-50 p-1.5">
             <div className="text-[10px] font-semibold text-gray-700 px-0.5">Import actions</div>
             <div className="flex gap-1 items-center">
@@ -2150,7 +2149,6 @@ xatra.TitleBox("<b>My Map</b>")
           </div>
           {isCurrentMap && <div className="mt-1 text-[10px] text-gray-500">Current map cannot import itself.</div>}
           <div className="text-[10px] text-gray-600 mt-1 line-clamp-2">{item.description || 'No description'}</div>
-          <div className="text-[10px] text-gray-500 mt-1">votes {item.votes || 0} · views {item.views || 0}</div>
         </div>
       </div>
     );
