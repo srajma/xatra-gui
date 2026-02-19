@@ -1592,7 +1592,7 @@ xatra.TitleBox("<b>My Map</b>")
           return;
         }
       }
-      const descInput = window.prompt('Map description (shown in Explore):', mapDescription || '');
+      const descInput = window.prompt('Map description', mapDescription || '');
       if (descInput === null) return;
       setMapDescription(descInput);
       const content = await buildMapArtifactContent();
@@ -2068,7 +2068,37 @@ xatra.TitleBox("<b>My Map</b>")
     ? 'bg-slate-900/95 border-slate-700 text-slate-200'
     : 'bg-white/95 border-gray-200 text-gray-700';
   const importedBaseSet = new Set((hubImports || []).map((imp) => `${imp.kind}:${imp.username}:${imp.name}`));
-  const renderCatalogCard = (item, importMode = false) => {
+  const renderExploreCatalogCard = (item) => {
+    const mapKey = artifactKey(item.username, 'map', item.name);
+    const mapOptions = artifactVersionOptions[mapKey] || [{ value: 'alpha', label: 'alpha' }];
+    const mapVersion = importVersionDraft[mapKey] || mapOptions[0]?.value || 'alpha';
+    return (
+      <div
+        key={`${item.username}-${item.name}`}
+        className="border rounded bg-white overflow-hidden focus-within:ring-2 ring-blue-500 shadow-sm"
+      >
+        <img src={item.thumbnail || '/vite.svg'} alt="" className="w-full h-24 object-cover bg-gray-100" />
+        <div className="p-2">
+          <a href={`/${item.username}/map/${item.name}`} target="_blank" rel="noreferrer" className="font-mono text-[11px] text-blue-700 hover:underline">{item.name}</a>
+          <div className="text-[10px] text-gray-500">by {item.username}</div>
+          <div className="text-[10px] text-gray-600 line-clamp-2">{item.description || 'No description'}</div>
+          <div className="text-[10px] text-gray-500 mt-1">votes {item.votes || 0} · views {item.views || 0}</div>
+          <div className="mt-2 flex gap-1">
+            <select
+              value={mapVersion}
+              onChange={(e) => setImportVersionDraft((prev) => ({ ...prev, [mapKey]: e.target.value }))}
+              className="text-[11px] border rounded px-1 py-1"
+            >
+              {mapOptions.map((opt) => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+            </select>
+            <button className="flex-1 text-xs px-2 py-1 border rounded hover:bg-blue-50" onClick={() => navigateTo(`/${item.username}/map/${item.name}/${mapVersion === 'alpha' ? 'alpha' : `v${mapVersion}`}`)}>Open</button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderImportCatalogCard = (item) => {
     const mapKey = artifactKey(item.username, 'map', item.name);
     const cssKey = artifactKey(item.username, 'css', item.name);
     const libKey = artifactKey(item.username, 'lib', item.name);
@@ -2085,54 +2115,42 @@ xatra.TitleBox("<b>My Map</b>")
     return (
       <div
         key={`${item.username}-${item.name}`}
-        className={`border rounded bg-white overflow-hidden focus-within:ring-2 ring-blue-500 shadow-sm ${isCurrentMap && importMode ? 'opacity-50 grayscale' : ''}`}
+        className={`border rounded bg-white focus-within:ring-2 ring-blue-500 shadow-sm min-h-[280px] ${isCurrentMap ? 'opacity-50 grayscale' : ''}`}
         tabIndex={0}
         onKeyDown={(e) => {
-          if (!importMode) return;
-          if (e.key.toLowerCase() === 'm') addHubImportLine({ ...item, kind: 'map', latest_version: item.latest_version || undefined });
-          if (e.key.toLowerCase() === 'c') addHubImportLine({ ...item, kind: 'css', latest_version: item.latest_version || undefined });
-          if (e.key.toLowerCase() === 't') addHubImportLine({ ...item, kind: 'lib', latest_version: item.latest_version || undefined });
+          if (e.key.toLowerCase() === 'm') addHubImportLine({ ...item, kind: 'map', latest_version: mapVersion });
+          if (e.key.toLowerCase() === 'c') addHubImportLine({ ...item, kind: 'css', latest_version: cssVersion });
+          if (e.key.toLowerCase() === 't') addHubImportLine({ ...item, kind: 'lib', latest_version: libVersion });
         }}
       >
-        <img src={item.thumbnail || '/vite.svg'} alt="" className="w-full h-24 object-cover bg-gray-100" />
+        <img src={item.thumbnail || '/vite.svg'} alt="" className="w-full h-20 object-cover bg-gray-100 rounded-t" />
         <div className="p-2">
           <a href={`/${item.username}/map/${item.name}`} target="_blank" rel="noreferrer" className="font-mono text-[11px] text-blue-700 hover:underline">{item.name}</a>
           <div className="text-[10px] text-gray-500">by {item.username}</div>
-          <div className="text-[10px] text-gray-600 line-clamp-2">{item.description || 'No description'}</div>
-          <div className="text-[10px] text-gray-500 mt-1">votes {item.votes || 0} · views {item.views || 0}</div>
-          {!importMode ? (
-            <div className="mt-2 flex gap-1">
-              <select
-                value={mapVersion}
-                onChange={(e) => setImportVersionDraft((prev) => ({ ...prev, [mapKey]: e.target.value }))}
-                className="text-[11px] border rounded px-1 py-1"
-              >
+          <div className="mt-2 space-y-1 border rounded border-gray-200 bg-gray-50 p-1.5">
+            <div className="text-[10px] font-semibold text-gray-700 px-0.5">Import actions</div>
+            <div className="flex gap-1 items-center">
+              <select value={mapVersion} onChange={(e) => setImportVersionDraft((prev) => ({ ...prev, [mapKey]: e.target.value }))} className="text-[11px] border rounded px-1 py-1 min-w-[72px]">
                 {mapOptions.map((opt) => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
               </select>
-              <button className="flex-1 text-xs px-2 py-1 border rounded hover:bg-blue-50" onClick={() => navigateTo(`/${item.username}/map/${item.name}/${mapVersion === 'alpha' ? 'alpha' : `v${mapVersion}`}`)}>Open</button>
+              <button disabled={mapImported || isCurrentMap} className={`flex-1 text-[11px] px-2 py-1 border rounded transition-colors ${mapImported ? 'bg-blue-600 text-white border-blue-600 cursor-not-allowed' : 'hover:bg-blue-50'}`} onClick={() => addHubImportLine({ ...item, kind: 'map', latest_version: mapVersion })}>{mapImported ? '✓ Map Imported' : 'm Import Map'}</button>
             </div>
-          ) : (
-            <div className="mt-2 space-y-1">
-              <div className="flex gap-1">
-                <select value={mapVersion} onChange={(e) => setImportVersionDraft((prev) => ({ ...prev, [mapKey]: e.target.value }))} className="text-[11px] border rounded px-1 py-1">
-                  {mapOptions.map((opt) => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
-                </select>
-                <button disabled={mapImported || isCurrentMap} className={`flex-1 text-[11px] px-2 py-1 border rounded transition-colors ${mapImported ? 'bg-blue-600 text-white border-blue-600 cursor-not-allowed' : 'hover:bg-blue-50'}`} onClick={() => addHubImportLine({ ...item, kind: 'map', latest_version: mapVersion })}>{mapImported ? '✓ Map Imported' : 'm Import Map'}</button>
-              </div>
-              <div className="flex gap-1">
-                <select value={cssVersion} onChange={(e) => setImportVersionDraft((prev) => ({ ...prev, [cssKey]: e.target.value }))} className="text-[11px] border rounded px-1 py-1">
-                  {cssOptions.map((opt) => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
-                </select>
-                <button disabled={cssImported || isCurrentMap} className={`flex-1 text-[11px] px-2 py-1 border rounded transition-colors ${cssImported ? 'bg-blue-600 text-white border-blue-600 cursor-not-allowed' : 'hover:bg-blue-50'}`} onClick={() => addHubImportLine({ ...item, kind: 'css', latest_version: cssVersion })}>{cssImported ? '✓ CSS Imported' : 'c Import CSS'}</button>
-              </div>
-              <div className="flex gap-1">
-                <select value={libVersion} onChange={(e) => setImportVersionDraft((prev) => ({ ...prev, [libKey]: e.target.value }))} className="text-[11px] border rounded px-1 py-1">
-                  {libOptions.map((opt) => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
-                </select>
-                <button disabled={libImported || isCurrentMap} className={`flex-1 text-[11px] px-2 py-1 border rounded transition-colors ${libImported ? 'bg-blue-600 text-white border-blue-600 cursor-not-allowed' : 'hover:bg-blue-50'}`} onClick={() => addHubImportLine({ ...item, kind: 'lib', latest_version: libVersion })}>{libImported ? '✓ Territories Imported' : 't Import Territories'}</button>
-              </div>
+            <div className="flex gap-1 items-center">
+              <select value={cssVersion} onChange={(e) => setImportVersionDraft((prev) => ({ ...prev, [cssKey]: e.target.value }))} className="text-[11px] border rounded px-1 py-1 min-w-[72px]">
+                {cssOptions.map((opt) => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+              </select>
+              <button disabled={cssImported || isCurrentMap} className={`flex-1 text-[11px] px-2 py-1 border rounded transition-colors ${cssImported ? 'bg-blue-600 text-white border-blue-600 cursor-not-allowed' : 'hover:bg-blue-50'}`} onClick={() => addHubImportLine({ ...item, kind: 'css', latest_version: cssVersion })}>{cssImported ? '✓ CSS Imported' : 'c Import CSS'}</button>
             </div>
-          )}
+            <div className="flex gap-1 items-center">
+              <select value={libVersion} onChange={(e) => setImportVersionDraft((prev) => ({ ...prev, [libKey]: e.target.value }))} className="text-[11px] border rounded px-1 py-1 min-w-[72px]">
+                {libOptions.map((opt) => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+              </select>
+              <button disabled={libImported || isCurrentMap} className={`flex-1 text-[11px] px-2 py-1 border rounded transition-colors ${libImported ? 'bg-blue-600 text-white border-blue-600 cursor-not-allowed' : 'hover:bg-blue-50'}`} onClick={() => addHubImportLine({ ...item, kind: 'lib', latest_version: libVersion })}>{libImported ? '✓ Territories Imported' : 't Import Territories'}</button>
+            </div>
+          </div>
+          {isCurrentMap && <div className="mt-1 text-[10px] text-gray-500">Current map cannot import itself.</div>}
+          <div className="text-[10px] text-gray-600 mt-1 line-clamp-2">{item.description || 'No description'}</div>
+          <div className="text-[10px] text-gray-500 mt-1">votes {item.votes || 0} · views {item.views || 0}</div>
         </div>
       </div>
     );
@@ -2192,7 +2210,7 @@ xatra.TitleBox("<b>My Map</b>")
             <button className="px-3 py-2 border rounded" onClick={() => { setExplorePage(1); loadExplore(1, exploreQuery); }}>Search</button>
           </div>
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-            {(exploreData.items || []).map((item) => renderCatalogCard(item, false))}
+            {(exploreData.items || []).map((item) => renderExploreCatalogCard(item))}
           </div>
           <div className="flex gap-2 mt-4">
             <button disabled={explorePage <= 1} className="px-2 py-1 border rounded disabled:opacity-40" onClick={() => { const p = Math.max(1, explorePage - 1); setExplorePage(p); loadExplore(p, exploreQuery); }}>Prev</button>
@@ -2696,8 +2714,8 @@ xatra.TitleBox("<b>My Map</b>")
                 ))}
               </div>
             </div>
-            <div className="flex-1 overflow-auto p-3 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-              {(hubSearchResults || []).map((item) => renderCatalogCard(item, true))}
+            <div className="flex-1 overflow-auto p-3 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+              {(hubSearchResults || []).map((item) => renderImportCatalogCard(item))}
             </div>
           </div>
         </div>

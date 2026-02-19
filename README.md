@@ -264,7 +264,7 @@ Minor changes
   - [x] Upon creating this entry, its field should immediately be focused (if GADM, Polygon or Territory) or the "Define Territory" button should be focused (if Group).
   - [x] Likewise, when clicking "Define Territory" it should lead to the "Base: _**g**adm_ / **p**olygon / **t**erritory / gr**o**up / [Esc]" state.
 - [ ] Don't use the word "GADM" in the Flag territory builder (users won't understand) instead use "Admin unit"
-- [ ] Change the button for downloading the Project JSON to a download icon (it's currently a save icon, which suggests just saving the map to the database). And remove the option to download the Map JSON ("Export Map JSON"), it will confuse the user. And maybe change the icon for Export HTML to something that looks like a map and change the hover tip to "Download Map" (rather than "Export HTML"), the user doesn't care that it's in HTML format, just that it's a nice visual map.
+- [x] Change the button for downloading the Project JSON to a download icon (it's currently a save icon, which suggests just saving the map to the database). And remove the option to download the Map JSON ("Export Map JSON"), it will confuse the user. And maybe change the icon for Export HTML to something that looks like a map and change the hover tip to "Download Map" (rather than "Export HTML"), the user doesn't care that it's in HTML format, just that it's a nice visual map.
 - [ ] There is a default Flag layer that gets loaded when a user loads the GUI for the first time. That's fine, but initialize it with a territory that is GADM IND, rather than None.
 - [ ] Add users list in the sidebar
 - [ ] Make the "Map description" prompt use a dialog within the website's design rather than bizarrely using a browser pop-up for the purpose. Obviously make sure it is keyboard navigable (enter, escape should perform the expected functions)
@@ -273,7 +273,7 @@ Design improvements
 - [x] introduce a dark mode
 - [x] the "Xatra Studio" title is cheesy. Replace it with just xatra (lowercase), and no icon.
 - [ ] allow the user to freely resize the left sidebar
-- [ ] Design consistency and prettiness---the main map editor has nice design; everything else not so much.
+- [ ] Design consistency and prettiness---the main map editor has nice design; everything else (i.e. the Explore, profile and Login pages) have jarringly boring UIs.
 
 Experiments I have to do
 - [x] Make sure my existing maps work in this
@@ -285,7 +285,7 @@ Development difficulties
   - See "Development / Synchrony" section below.
 
 Proper database of maps
-- [ ] A database of:
+- [x] A database of:
   - users
   - users may save, edit their own:
     - maps (where it currently says "xatra" in the top-left of the GUI there will be the name of the map, which can be edited at any point by the user---only characters allowed are lowercase letters, numerals, underscores and dots---no spaces). It will also have a version number (which may be "alpha"), a "save" button next to it---and a "copy" button to copy the slug of the map name (e.g. `xatrahub("/username/map/mapname")`) for import.
@@ -293,17 +293,17 @@ Proper database of maps
     - map themes (also just Python code, but typically comprised of xatra.CSS(), xatra.BaseOption(), xatra.FlagColorSequence(), xatra.AdminColorSequence(), xatra.DataColormap() elements). This will be another code editor in the code editor tab alongside "Territory library" and "Map code", and again have the version number, save and copy slug icons next to its title.
     Only the names of the maps, territory libraries and themes will be synced; their versions are only updated when their respective save buttons are clicked.
   - each of these will have basic integer versioning, so the user can any time choose to publish the current state of that map/library/theme as a new version number. The current state (not necessarily published as a version) is considered the "alpha" build.
-- [ ] Importing maps, territory libraries and themes from the database (whether their own or another user's) into their project. Importing maps will allow people to smoothly combine maps of e.g. different kingdoms or different regions of the world into one.
-  - [ ] server should expose an API for getting any particular map, territory library or theme on the website as /username/map/mapname/12, /username/lib/libname/3 /username/css/themename/alpha (where the last number is the version number) and a registry of such "packages"
-  - [ ] We'll have to modify the xatra library itself (which I also maintain---it's in ../xatra.master) to allow importing from this library via the API, i.e.
+- [x] Importing maps, territory libraries and themes from the database (whether their own or another user's) into their project. Importing maps will allow people to smoothly combine maps of e.g. different kingdoms or different regions of the world into one.
+  - [x] server should expose an API for getting any particular map, territory library or theme on the website as /username/map/mapname/12, /username/lib/libname/3 /username/css/themename/alpha (where the last number is the version number) and a registry of such "packages"
+  - [x] We'll have to modify the xatra library itself (which I also maintain---it's in ../xatra.master) to allow importing from this library via the API, i.e.
     - `xatrahub("/username/map/mapname/12")` and all the elements in that map just get included in ours
     - `xatrahub("/username/css/themename")` similarly 
     - `lib = xatrahub("/username/lib/libname/3")` then use `lib.TERRITORY_NAME` etc. as territories
     - We could either get these as exact Python code (and exec it) or as project json that is interpreted and loaded into Python, whatever makes most snse
     - `xatrahub` should also take optional arguments `filter_only` and `filter_not` which, for maps and css, allow you to supply lists to filter which elements in the imported code are used in your code, i.e. `filter_only=['Flag','River']` ensures only you only import xatra.Flag and xatra.River elements or `filter_not=['TitleBox']` ensures you do not import xatra.TitleBox elements.
     - There will have to be a XATRAHUB_URL constant (which can be read as an environment variable)---by default, it will just point to the localhost URL of the API, but in future when we publish the xatra GUI as a website we will change this to a public URL.
-  - [ ] In xatra gui, the user should have an interface to import maps/themes/territory libraries (should be able to search through names, descriptions, usernames of contributors) from the Builder UI, which get translated into the `xatrahub(...)` statements in the code and vice versa. The interface should also include the ability to set the `filter_not` attribute through checkboxes.
-    - [ ] The current `xatra.territory_library` will be published on `xatrahub` under the admin user `srajma` i.e. `/srajma/lib/indic`. In the xatra Code editor, the default import will then be `xatrahub("/srajma/lib/indic")` rather than `from xatra.territory_library import *`.
+  - [x] In xatra gui, the user should have an interface to import maps/themes/territory libraries (should be able to search through names, descriptions, usernames of contributors) from the Builder UI, which get translated into the `xatrahub(...)` statements in the code and vice versa. The interface should also include the ability to set the `filter_not` attribute through checkboxes.
+    - [x] The current `xatra.territory_library` will be published on `xatrahub` under the admin user `srajma` i.e. `/srajma/lib/indic`. In the xatra Code editor, the default import will then be `xatrahub("/srajma/lib/indic")` rather than `from xatra.territory_library import *`.
       - [ ] Also in general the Code editor tab needs to be a bit more organized. Instead of duplicating content between different code boxes in that tab, we should have the following sections with _distinct_ contents:
         - Imports of all the important things in xatra, i.e.
         ```python
@@ -320,39 +320,7 @@ Proper database of maps
         - Map code, i.e. _not_ including the contents of the other fields above
         - Not-for-library, i.e. code you only want to be executed in this map but not be part of the library (basically the analog of an `if __name__ = "__main__"` block).
         Finally these code editor blocks should be "stuck" to one another with just the headings (with version/save/copy icons) of each section between them, and those headings should be similarly darkly-backgrounded to fit in with the flow of the code editor boxes perfectly. You know what I mean?
-    - [ ] The "Territory library" tab in the GUI, currently there are just two tabs "xatra.territory_library" and "Custom Library" (which is the "Custom territory library" created in this particular map) and they are in the side box. With an arbitrary number of territory libraries imported, they should instead all be listed (alongside "Custom Library") as sub-tabs under the main "Map Preview/Referennce Map/Territory library" tabs, with the sub-tabs updating when the territory library imports are chnaged.
-- [ ] Re: the attempt made at this:
-Thank you. However there are still lots of issues in this implementation:
-- Why would the username be an editable field? That makes no sense. It should be the user's username (linked to the user's profile page, see below), if logged-in, or just `new_user` if not. The default name of the map should also not be `xatra` but `new_map` (or, if the user is logged-in and already has a map called `new_map` then `new_map_1`, `new_map_2` etc.)
-- There should be proper user accounts and a login flow---and if possible we should have the option to login with Google account, etc. (we can put this off for later if it needs some manual setup from me). Like: right now I don't even know how to login as the admin user (srajma) and create a map with the main territory library. Obviously, don't roll your own auth, implement best practices.
-- There would also need to be additional UI for managing all this. The landing page can still be the map editor, but there should be a little xatra menu button at the top left (left of the map slug) which when clicked gives a dropdown menu including:
-  - Load (this should replace the current "Load Project" button we have with the same icon)
-  - Save (this should replace the "Save Project" button we have, except we should change the icon to a little download icon)
-  - Export (this should replace the "Export HTML" button we have, except we should change the icon to a map or image icon rather than an HTML angular brackets thing since the user doesn't really care that it's HTML---we should also just remove the "Export Map JSON" button, it's too confusing for the user especially given that Save Project also downloads a json file albeit one that serves a different purpose)
-  - Night mode toggle---this replaces the last of the clutter buttons we have right now
-  - Explore---opens a new tab `/explore` showing maps on the platform, in a grid layout, ordered by some sensible measure of popularity, votes (yes you have to implement votes, for logged-in users only) and recently edited, with a well-implemented search feature (which will be the same search feature we will use for imports)---there should be a hint in the search box showing `indica user:srajma` as an example of a search, and that should indeed be how the search works. The map thumbnails should ideally show little saved snapshots of the maps (which were generated earlier when the user last edited it), but we can hold that off and keep a sample thumbnail if that's too complicated.
-  - My profile (for logged-in users)---loads a new tab `/<username>` which consists of the user's account info (username, optional full name and profile description, password and login/auth stuff only visible to that user) and some basic stats (number of maps created, views on that user's maps etc.). Below should be a view of the user's maps, with search and pagination if the number of items exceeds 10, and the user can load any one of them. Apart from the login stuff, everything else on the user's profile should be publicly available to all.
-  - New Map... which opens a new tab on the landing page.
-  - Login/Signup (for logged-out users) or Logout (for logged-in users).
-  The user should be able to click on any of the maps in "Explore" which will take him to the editor for that map, available at URL /username/map/mapname (i.e. the username of the user who actually created the map). Obviously, his edits should not be stored in the other user's map, but rather if he clicks the Save button (in the version/save/copy trio that should be next to the map slug) it should save it as a "fork" of the map he was editing (with that forking clearly attributed and linked to the original map) to /hisusername/map/mapname. If he already has a map with that name, it should automatically add an `_n` at the end where `n` is the smallest integer such that a map with that name does not exist among the user's maps.
-  The "Explore" and "My Profile" pages should have a sidebar which kinda looks like the expanded xatra menu, with similar links
-- Re: the breakdown of the code editor
-  - Your implementation should divide the code so that the Python imports:
-    ```python
-    import xatra
-    from xatra.loaders import gadm, naturalearth, polygon, overpass
-    from xatra.icon import Icon
-    from xatra.colorseq import Color, ColorSequence, LinearColorSequence
-    from matplotlib.colors import LinearSegmentedColormap
-    ```
-    should be in the Python imports section (which needs to exist, btw--you haven't created it); xatrahub imports in their section; xatra.CSS(), xatra.BaseOption(), xatra.FlagColorSequence(), xatra.AdminColorSequence(), xatra.DataColormap() elements elements in the Theme section.
-- version/save/copy icons need design improvements.
-  - Instead of showing the version numbering as its own separate thing, the version number and publish version buttons should be integrated, i.e. a little button displaying a tag icon (instead of the save icon) and the version number in a small monospace font (do not add brackets, write it as `v1`, `v2`, `alpha` etc.) that upon clicking publishes a new version. It should only publish a new version if there have actually been any changes (otherwise it should display a little text left of the button saying "No changes"). 
-- The import from database search UI is absolutely terrible. I don't think I need to explain to you why; you should just trash this, think it through and come up with a perfect UI, which could be like a pop-up UI (which, like I said, should look the same and use the same search/browsing functionality as "Explore..."), with which the user can browse through his own as well as public maps/themes/libraries, select from a list of checkboxes which elements get imported (i.e. whatever is unselected gets passed to `filter_not`) and select for each entry that shows up whether to import the map, theme or territories (keyboard shortcuts m, c, t on focused entry) through little buttons stacked underneath each thumbnail. It should also just be called "Import from xatra hub" and should be present in the Builder not the code.
-- You should of course make sure all this extra UI is subject to the light and night mode color schemes
-- It should store the latest unsaved map in the database for both logged-in and logged-out users (using whatever auth/cookies/whatever idk for the latter) so it can be loaded again when the user revisits
-- You do not seem to have made any edits to the original xatra package. ???
-I would like you to fully and thoroughly implement a functioning website as I have asked you to, and iterate until you are sure I will be completely satisfied with your work.
+    - [x] The "Territory library" tab in the GUI, currently there are just two tabs "xatra.territory_library" and "Custom Library" (which is the "Custom territory library" created in this particular map) and they are in the side box. With an arbitrary number of territory libraries imported, they should instead all be listed (alongside "Custom Library") as sub-tabs under the main "Map Preview/Referennce Map/Territory library" tabs, with the sub-tabs updating when the territory library imports are chnaged.
 
 For eventually publishing this as a website
 - [x] Move GUI to a separate repo instead of being part of the main xatra package
