@@ -75,7 +75,7 @@ function App() {
   const [statusNotice, setStatusNotice] = useState('');
   const [authMode, setAuthMode] = useState('login');
   const [authForm, setAuthForm] = useState({ username: '', password: '', full_name: '' });
-  const [currentUser, setCurrentUser] = useState({ is_authenticated: false, user: { username: 'new_user', full_name: '', bio: '' } });
+  const [currentUser, setCurrentUser] = useState({ is_authenticated: false, user: { username: 'guest', full_name: '', bio: '' } });
   const [authReady, setAuthReady] = useState(false);
   const [profileData, setProfileData] = useState(null);
   const [profileEdit, setProfileEdit] = useState({ full_name: '', bio: '' });
@@ -125,7 +125,7 @@ function App() {
   const [themeVersionLabel, setThemeVersionLabel] = useState('alpha');
   const [selectedLibraryVersion, setSelectedLibraryVersion] = useState('alpha');
   const [selectedThemeVersion, setSelectedThemeVersion] = useState('alpha');
-  const [mapOwner, setMapOwner] = useState('new_user');
+  const [mapOwner, setMapOwner] = useState('guest');
   const [sourceMapRef, setSourceMapRef] = useState(null);
   const [mapDescription, setMapDescription] = useState('');
   const [mapDescriptionModalOpen, setMapDescriptionModalOpen] = useState(false);
@@ -307,7 +307,7 @@ xatra.TitleBox("<b>My Map</b>")
   };
 
   const normalizedMapName = String(mapName || '').trim();
-  const normalizedHubUsername = String(currentUser?.user?.username || 'new_user').trim().toLowerCase() || 'new_user';
+  const normalizedHubUsername = String(currentUser?.user?.username || 'guest').trim().toLowerCase() || 'guest';
   const viewedMapVersion = String(route?.version || 'alpha');
   const isMapAuthor = !!(currentUser.is_authenticated && normalizedHubUsername === mapOwner);
   const isReadOnlyMap = !!(route.owner && route.map) && (!isMapAuthor || viewedMapVersion !== 'alpha');

@@ -45,12 +45,12 @@ Bugs
     - [x] When I select and unselect a territory, it becomes black rather than returning to its original color and transparency (like it correctly does for the GADM picker).
     - [x] When I pan or zoom, those blackened territories become white, making them impossible to click again.
   - [x] Flag Territories: Dragging an item *out* of a group doesn't seem to be working (moving something into a group works). Instead, moves the whole group to wherever we tried to move the item.
-  - [ ] Bug fixes with new Add Operation UI
+  - [x] Bug fixes with new Add Operation UI
     - [x] when focusing the input field (upon creating a GADM/Polygon/Territory) it sometimes goes and focuses on some other Flag's territory's input field for some reason? This needs to be fixed.
     - [x] The + - & keys only work when one of the items in the Flag Territory list or the buttons themselves are focused (and that too not child elements of those items) -- instead, it should work when *anything* in that Flag Layer element (any children recursively thereof) is focused. (3) Sometimes (e.g. after going through "Define Territory"
     - [x] clicking the add/subtract/intersection buttons with my mouse rather than keyboard) "gadm" is not immediately focused. Like it shows in blue highlight, but pressing enter doesn't select it, pressing arrow keys doesn't cycle through the options etc. (4) "Esc" should also be cycled through in all cases.
     - [X] keyboard shortcuts (both the + - & shortcuts and the g p t o arrow-keys-cycle tab keyboard shortcuts) conflict in nested groups. All keyboard shortcuts should operate only on the lowest-level element we're focused in, and similarly focus should not shift to somewhere outside that current focused group.
-- [ ] Fixes for project export, code to builder conversion
+- [x] Fixes for project export, code to builder conversion
   - [x] Triple-quoted mulitiline strings need better support in handling. Right now if I put something like this into the code editor:
     ```python
       xatra.Flag(
@@ -95,8 +95,8 @@ Bugs
   - [x] Weird issue with code in the territory library getting duplicated when switching from Code editor to Builder---however don't try to fix this now, I think it will automatically get fixed when you implement the later-detailed changes to the Code editor sections that will prevent the need to mirror code between the Territory library and the Map Code---ok nvm, you fixed it.
   - [x] Code editor: cursor jumps to the bottom of the editor when typing rapidly
     - [x] Fixed, but now it randomly jumps to the end of the line instead
+- [x] Keyboard cycling through the xatra menu is messed-up. Sometimes it doesn't work at all; sometimes even when you cycle through it, pressing Enter selects "Load" instead of whatever I want to select; "Load" appears highlighted no matter what I do etc.
 - [ ] Why does the app consume so much CPU utilization even when the user isn't doing anything?
-- [ ] Keyboard cycling through the xatra menu is messed-up. Sometimes it doesn't work at all; sometimes even when you cycle through it, pressing Enter selects "Load" instead of whatever I want to select; "Load" appears highlighted no matter what I do etc.
 
 Basic extensions
 - [x] Allow adding any feature to the map, not just flags and rivers. Every single method listed under #### Methods in the main README should have an appropriate interface for adding it:
@@ -266,8 +266,8 @@ Minor changes
 - [ ] Don't use the word "GADM" in the Flag territory builder (users won't understand) instead use "Admin unit"
 - [x] Change the button for downloading the Project JSON to a download icon (it's currently a save icon, which suggests just saving the map to the database). And remove the option to download the Map JSON ("Export Map JSON"), it will confuse the user. And maybe change the icon for Export HTML to something that looks like a map and change the hover tip to "Download Map" (rather than "Export HTML"), the user doesn't care that it's in HTML format, just that it's a nice visual map.
 - [ ] There is a default Flag layer that gets loaded when a user loads the GUI for the first time. That's fine, but initialize it with a territory that is GADM IND, rather than None.
-- [ ] Add users list in the sidebar
-- [ ] Make the "Map description" prompt use a dialog within the website's design rather than bizarrely using a browser pop-up for the purpose. Obviously make sure it is keyboard navigable (enter, escape should perform the expected functions)
+- [x] Add users list in the sidebar
+- [x] Make the "Map description" prompt use a dialog within the website's design rather than bizarrely using a browser pop-up for the purpose. Obviously make sure it is keyboard navigable (enter, escape should perform the expected functions)
 
 Design improvements
 - [x] introduce a dark mode

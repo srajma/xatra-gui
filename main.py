@@ -47,6 +47,30 @@ HUB_DB_PATH = Path(__file__).parent / "xatra_hub.db"
 HUB_NAME_PATTERN = re.compile(r"^[a-z0-9_.]+$")
 HUB_USER_PATTERN = re.compile(r"^[a-z0-9_.-]+$")
 HUB_KINDS = {"map", "lib", "css"}
+GUEST_USERNAME = "guest"
+HUB_RESERVED_USERNAMES = {
+    GUEST_USERNAME,
+    "admin",
+    "explore",
+    "users",
+    "login",
+    "logout",
+    "new-map",
+    "new_map",
+    "map",
+    "hub",
+    "auth",
+    "registry",
+    "render",
+    "sync",
+    "health",
+    "stop",
+    "search",
+    "docs",
+    "redoc",
+    "openapi.json",
+    "favicon.ico",
+}
 SESSION_COOKIE = "xatra_session"
 GUEST_COOKIE = "xatra_guest"
 SESSION_TTL_DAYS = 30
@@ -74,10 +98,12 @@ def _normalize_hub_name(name: str) -> str:
     return cleaned
 
 
-def _normalize_hub_user(username: str) -> str:
+def _normalize_hub_user(username: str, allow_reserved: bool = False) -> str:
     cleaned = str(username or "").strip().lower()
     if not HUB_USER_PATTERN.fullmatch(cleaned):
         raise HTTPException(status_code=400, detail="Username must match ^[a-z0-9_.-]+$")
+    if not allow_reserved and cleaned in HUB_RESERVED_USERNAMES:
+        raise HTTPException(status_code=400, detail=f"Username '{cleaned}' is reserved")
     return cleaned
 
 
@@ -116,6 +142,32 @@ def _hash_password(password: str) -> str:
     salt = secrets.token_hex(16)
     dk = hashlib.pbkdf2_hmac("sha256", (password or "").encode("utf-8"), salt.encode("utf-8"), 600000)
     return f"pbkdf2_sha256${salt}${dk.hex()}"
+
+
+def _territory_library_seed_code() -> str:
+    """
+    Load xatra.territory_library source from ../xatra.master and drop import lines.
+    """
+    candidates = [
+        Path(__file__).resolve().parent.parent / "xatra.master" / "src" / "xatra" / "territory_library.py",
+        Path(__file__).resolve().parent / "src" / "xatra" / "territory_library.py",
+    ]
+    raw = ""
+    for p in candidates:
+        if p.exists():
+            try:
+                raw = p.read_text(encoding="utf-8")
+                break
+            except Exception:
+                continue
+    if not raw:
+        return ""
+    out_lines: List[str] = []
+    for line in raw.splitlines():
+        if re.match(r"^\s*(from\s+\S+\s+import\s+|import\s+)", line):
+            continue
+        out_lines.append(line)
+    return ("\n".join(out_lines).strip() + "\n") if out_lines else ""
 
 
 def _verify_password(password: str, password_hash: Optional[str]) -> bool:
@@ -233,6 +285,7 @@ def _init_hub_db():
         # Seed default public territory library.
         user_row = conn.execute("SELECT id FROM hub_users WHERE username = 'srajma'").fetchone()
         if user_row is not None:
+            territory_seed = _territory_library_seed_code()
             seed_content = json.dumps({
                 "predefined_code": "from xatra.territory_library import *\n",
                 "map_name": "indic",
@@ -245,13 +298,74 @@ def _init_hub_db():
                 """,
                 (user_row["id"], seed_content, json.dumps({"description": "Default Indic territory library"}), now, now),
             )
+            # Seed default public map /srajma/map/indic if missing.
+            map_seed_content = json.dumps({
+                "imports_code": 'indic = xatrahub("/srajma/lib/indic/alpha")\n',
+                "theme_code": "",
+                "predefined_code": territory_seed,
+                "map_code": 'import xatra\nxatra.TitleBox("<b>Indic Map</b>")\n',
+                "runtime_code": "",
+                "project": {
+                    "elements": [],
+                    "options": {
+                        "basemaps": [{"url_or_provider": "Esri.WorldTopoMap", "default": True}],
+                        "flag_color_sequences": [{"class_name": "", "colors": "", "step_h": 1.6180339887, "step_s": 0.0, "step_l": 0.0}],
+                        "admin_color_sequences": [{"colors": "", "step_h": 1.6180339887, "step_s": 0.0, "step_l": 0.0}],
+                        "data_colormap": {"type": "LinearSegmented", "colors": "yellow,orange,red"},
+                    },
+                    "predefinedCode": territory_seed,
+                    "importsCode": 'indic = xatrahub("/srajma/lib/indic/alpha")\n',
+                    "themeCode": "",
+                    "runtimeCode": "",
+                },
+            })
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO hub_artifacts(user_id, kind, name, alpha_content, alpha_metadata, created_at, updated_at)
+                VALUES(?, 'map', 'indic', ?, ?, ?, ?)
+                """,
+                (user_row["id"], map_seed_content, json.dumps({"description": "Default Indic map"}), now, now),
+            )
+            # Migration: if existing indic map is still the default seed with empty predefined_code,
+            # refresh it with territory_library body (imports removed).
+            existing_map = conn.execute(
+                """
+                SELECT id, alpha_content, alpha_metadata
+                FROM hub_artifacts
+                WHERE user_id = ? AND kind = 'map' AND name = 'indic'
+                """,
+                (user_row["id"],),
+            ).fetchone()
+            if existing_map is not None:
+                try:
+                    parsed = _json_parse(existing_map["alpha_content"], {})
+                    old_pre = str(parsed.get("predefined_code") or "")
+                    old_project_pre = str((parsed.get("project") or {}).get("predefinedCode") or "")
+                    meta = _json_parse(existing_map["alpha_metadata"], {})
+                    defaultish = (
+                        (not old_pre.strip() and not old_project_pre.strip())
+                        or str(meta.get("description", "")) == "Default Indic map"
+                    )
+                    if defaultish and territory_seed.strip():
+                        parsed["predefined_code"] = territory_seed
+                        project = parsed.get("project")
+                        if not isinstance(project, dict):
+                            project = {}
+                        project["predefinedCode"] = territory_seed
+                        parsed["project"] = project
+                        conn.execute(
+                            "UPDATE hub_artifacts SET alpha_content = ?, updated_at = ? WHERE id = ?",
+                            (json.dumps(parsed, ensure_ascii=False), now, existing_map["id"]),
+                        )
+                except Exception:
+                    pass
         conn.commit()
     finally:
         conn.close()
 
 
 def _hub_ensure_user(conn: sqlite3.Connection, username: str) -> sqlite3.Row:
-    username = _normalize_hub_user(username)
+    username = _normalize_hub_user(username, allow_reserved=(str(username or "").strip().lower() == GUEST_USERNAME))
     now = _utc_now_iso()
     conn.execute(
         "INSERT OR IGNORE INTO hub_users(username, created_at) VALUES(?, ?)",
@@ -267,7 +381,7 @@ def _hub_ensure_user(conn: sqlite3.Connection, username: str) -> sqlite3.Row:
 
 
 def _hub_get_artifact(conn: sqlite3.Connection, username: str, kind: str, name: str) -> Optional[sqlite3.Row]:
-    username = _normalize_hub_user(username)
+    username = _normalize_hub_user(username, allow_reserved=True)
     kind = _normalize_hub_kind(kind)
     name = _normalize_hub_name(name)
     return conn.execute(
@@ -291,7 +405,7 @@ def _hub_upsert_alpha(
     content: str,
     metadata: Any,
 ) -> sqlite3.Row:
-    username = _normalize_hub_user(username)
+    username = _normalize_hub_user(username, allow_reserved=(str(username or "").strip().lower() == GUEST_USERNAME))
     kind = _normalize_hub_kind(kind)
     name = _normalize_hub_name(name)
     user = _hub_ensure_user(conn, username)
@@ -762,11 +876,11 @@ def _request_actor_username(conn: sqlite3.Connection, request: Request, response
     if user is not None:
         return user["username"]
     _ensure_guest_id(request, response=response)
-    return "new_user"
+    return GUEST_USERNAME
 
 
 def _next_available_map_name(conn: sqlite3.Connection, username: str, base_name: str = "new_map") -> str:
-    username = _normalize_hub_user(username)
+    username = _normalize_hub_user(username, allow_reserved=True)
     base = _normalize_hub_name(base_name)
     existing_rows = conn.execute(
         """
@@ -1569,13 +1683,13 @@ def _map_view_count(conn: sqlite3.Connection, artifact_id: int) -> int:
 
 
 def _require_write_identity(conn: sqlite3.Connection, request: Request, username: str) -> Optional[sqlite3.Row]:
-    target = _normalize_hub_user(username)
+    target = _normalize_hub_user(username, allow_reserved=True)
     user = _request_user(conn, request)
     if user is not None:
         if user["username"] != target:
             raise HTTPException(status_code=403, detail="Cannot modify another user's artifact")
         return user
-    if target != "new_user":
+    if target != GUEST_USERNAME:
         raise HTTPException(status_code=401, detail="Login required")
     return None
 
@@ -1659,7 +1773,7 @@ def auth_me(request: Request, response: Response):
             return {
                 "is_authenticated": False,
                 "user": {
-                    "username": "new_user",
+                    "username": GUEST_USERNAME,
                     "full_name": "",
                     "bio": "",
                     "maps_count": 0,
@@ -1725,7 +1839,7 @@ def maps_default_name(request: Request):
     conn = _hub_db_conn()
     try:
         user = _request_user(conn, request)
-        owner = user["username"] if user else "new_user"
+        owner = user["username"] if user else GUEST_USERNAME
         return {"username": owner, "name": _next_available_map_name(conn, owner, "new_map")}
     finally:
         conn.close()
@@ -1736,7 +1850,7 @@ def maps_resolve_name(request: Request, base: str = "new_map"):
     conn = _hub_db_conn()
     try:
         user = _request_user(conn, request)
-        owner = user["username"] if user else "new_user"
+        owner = user["username"] if user else GUEST_USERNAME
         cleaned = _normalize_hub_name(base or "new_map")
         return {"username": owner, "name": _next_available_map_name(conn, owner, cleaned)}
     finally:
