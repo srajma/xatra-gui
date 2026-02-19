@@ -170,7 +170,7 @@ const CodeEditor = ({
 
         <div>
           <div className={headingClass}>
-            <span>Custom Territory Library ({libraryVersionLabel || 'alpha'})</span>
+            <span>Custom Territory Library</span>
             <div className="flex items-center gap-1">
               <button type="button" onClick={onSaveLibrary} className="px-1.5 py-1 rounded border border-slate-600 hover:bg-slate-800 inline-flex items-center gap-1" title="Publish new version">
                 <Tag size={12} /> <span className="font-mono text-[10px]">{libraryVersionLabel === 'alpha' ? 'alpha' : `v${libraryVersionLabel}`}</span>
@@ -195,7 +195,7 @@ const CodeEditor = ({
 
         <div>
           <div className={headingClass}>
-            <span>Custom Theme ({themeVersionLabel || 'alpha'})</span>
+            <span>Custom Theme</span>
             <div className="flex items-center gap-1">
               <button type="button" onClick={onSaveTheme} className="px-1.5 py-1 rounded border border-slate-600 hover:bg-slate-800 inline-flex items-center gap-1" title="Publish new version">
                 <Tag size={12} /> <span className="font-mono text-[10px]">{themeVersionLabel === 'alpha' ? 'alpha' : `v${themeVersionLabel}`}</span>

@@ -15,6 +15,11 @@ from xatra.loaders import gadm, naturalearth, polygon, overpass
 from xatra.icon import Icon
 from xatra.colorseq import Color, ColorSequence, LinearColorSequence
 from matplotlib.colors import LinearSegmentedColormap`;
+const IMPORTABLE_LAYER_TYPES = [
+  'Flag', 'River', 'Path', 'Point', 'Text', 'Admin', 'AdminRivers', 'Dataframe',
+  'TitleBox', 'CSS', 'BaseOption', 'FlagColorSequence', 'AdminColorSequence',
+  'DataColormap', 'zoom', 'focus', 'slider', 'Python',
+];
 
 const apiFetch = (path, options = {}) => {
   const headers = options.headers || {};
@@ -64,6 +69,7 @@ function App() {
   const [authMode, setAuthMode] = useState('login');
   const [authForm, setAuthForm] = useState({ username: '', password: '', full_name: '' });
   const [currentUser, setCurrentUser] = useState({ is_authenticated: false, user: { username: 'new_user', full_name: '', bio: '' } });
+  const [authReady, setAuthReady] = useState(false);
   const [profileData, setProfileData] = useState(null);
   const [profileEdit, setProfileEdit] = useState({ full_name: '', bio: '' });
   const [passwordEdit, setPasswordEdit] = useState({ current_password: '', new_password: '' });
@@ -106,17 +112,15 @@ function App() {
   const [sourceMapRef, setSourceMapRef] = useState(null);
   const [mapVotes, setMapVotes] = useState(0);
   const [mapViews, setMapViews] = useState(0);
-  const [importsCode, setImportsCode] = useState('');
+  const [importsCode, setImportsCode] = useState('indic = xatrahub("/srajma/lib/indic")\n');
+  const [hubImports, setHubImports] = useState([]);
   const [themeCode, setThemeCode] = useState('');
   const [runtimeCode, setRuntimeCode] = useState('');
   const [hubQuery, setHubQuery] = useState('');
-  const [hubKindFilter] = useState('');
   const [hubSearchResults, setHubSearchResults] = useState([]);
-  const [hubFilterNot, setHubFilterNot] = useState({
-    TitleBox: false,
-    CSS: false,
-    BaseOption: false,
-  });
+  const [importLayerSelection, setImportLayerSelection] = useState(() => (
+    IMPORTABLE_LAYER_TYPES.reduce((acc, key) => ({ ...acc, [key]: true }), {})
+  ));
   const [code, setCode] = useState(`import xatra
 from xatra.loaders import gadm, naturalearth
 
@@ -125,9 +129,7 @@ xatra.Flag(label="India", value=gadm("IND"), note="Republic of India")
 xatra.TitleBox("<b>My Map</b>")
 `);
 
-  const [predefinedCode, setPredefinedCode] = useState(`indic = xatrahub("/srajma/lib/indic")
-
-`);
+  const [predefinedCode, setPredefinedCode] = useState(``);
 
   // Picker State
   const [pickerOptions, setPickerOptions] = useState({
@@ -161,6 +163,7 @@ xatra.TitleBox("<b>My Map</b>")
   const iframeRef = useRef(null);
   const pickerIframeRef = useRef(null);
   const territoryLibraryIframeRef = useRef(null);
+  const menuRef = useRef(null);
 
   const injectTerritoryLabelOverlayPatch = (html) => {
     if (!html || typeof html !== 'string') return html;
@@ -305,6 +308,18 @@ xatra.TitleBox("<b>My Map</b>")
     return () => window.removeEventListener('popstate', handlePopState);
   }, []);
 
+  useEffect(() => {
+    const onDocMouseDown = (e) => {
+      if (!menuOpen) return;
+      const root = menuRef.current;
+      if (root && !root.contains(e.target)) {
+        setMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onDocMouseDown);
+    return () => document.removeEventListener('mousedown', onDocMouseDown);
+  }, [menuOpen]);
+
   const navigateTo = (path) => {
     if (window.location.pathname !== path) {
       window.history.pushState({}, '', path);
@@ -321,6 +336,8 @@ xatra.TitleBox("<b>My Map</b>")
       }
     } catch (err) {
       setError(err.message);
+    } finally {
+      setAuthReady(true);
     }
   };
 
@@ -360,6 +377,62 @@ xatra.TitleBox("<b>My Map</b>")
     } catch {
       // ignore
     }
+  };
+
+  const computeFilterNot = () => (
+    IMPORTABLE_LAYER_TYPES.filter((k) => !importLayerSelection[k])
+  );
+
+  const serializeHubImports = (imports) => {
+    const lines = [];
+    (imports || []).forEach((imp) => {
+      const filterNot = Array.isArray(imp.filter_not) ? imp.filter_not : [];
+      const pathExpr = `"${imp.path}"`;
+      if (imp.kind === 'lib') {
+        const alias = (imp.alias || `${imp.name}_lib`).replace(/[^A-Za-z0-9_]/g, '_');
+        lines.push(`${alias} = xatrahub(${pathExpr})`);
+      } else if (filterNot.length) {
+        lines.push(`xatrahub(${pathExpr}, filter_not=${JSON.stringify(filterNot)})`);
+      } else {
+        lines.push(`xatrahub(${pathExpr})`);
+      }
+    });
+    return lines.join('\n') + (lines.length ? '\n' : '');
+  };
+
+  const parseImportsCodeToItems = (raw) => {
+    const items = [];
+    const lines = String(raw || '').split('\n');
+    lines.forEach((line) => {
+      const trimmed = line.trim();
+      if (!trimmed || !trimmed.includes('xatrahub(')) return;
+      const assignMatch = trimmed.match(/^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*xatrahub\(\s*["']([^"']+)["']/);
+      const callMatch = trimmed.match(/^xatrahub\(\s*["']([^"']+)["']/);
+      const path = assignMatch?.[2] || callMatch?.[1];
+      if (!path) return;
+      const parts = path.split('/').filter(Boolean);
+      if (parts.length < 3) return;
+      const kind = parts[1];
+      const filterNotMatch = trimmed.match(/filter_not\s*=\s*(\[[^\]]*\])/);
+      let filterNot = [];
+      if (filterNotMatch?.[1]) {
+        try {
+          const parsed = JSON.parse(filterNotMatch[1].replace(/'/g, '"'));
+          if (Array.isArray(parsed)) filterNot = parsed.map((x) => String(x));
+        } catch {
+          filterNot = [];
+        }
+      }
+      items.push({
+        kind,
+        username: parts[0],
+        name: parts[2],
+        path,
+        alias: assignMatch?.[1] || '',
+        filter_not: filterNot,
+      });
+    });
+    return items;
   };
 
   const buildHubMetadata = (kind) => ({
@@ -404,38 +477,40 @@ xatra.TitleBox("<b>My Map</b>")
     return data;
   };
 
-  const addHubImportLine = (item) => {
+  const addHubImportLine = async (item) => {
     if (!item || !item.username || !item.name || !item.kind) return;
     const path = `/${item.username}/${item.kind}/${item.name}${item.latest_version ? `/${item.latest_version}` : ''}`;
-    const quotedPath = `"${path}"`;
-    const filterNot = Object.keys(hubFilterNot).filter((k) => hubFilterNot[k]);
-    let line = '';
-    if (item.kind === 'lib') {
-      const alias = `${item.name}_lib`.replace(/[^a-zA-Z0-9_]/g, '_');
-      line = `${alias} = xatrahub(${quotedPath})`;
-    } else {
-      if (filterNot.length) {
-        line = `xatrahub(${quotedPath}, filter_not=${JSON.stringify(filterNot)})`;
-      } else {
-        line = `xatrahub(${quotedPath})`;
+    try {
+      const verifyResp = await apiFetch(`/hub/${item.username}/${item.kind}/${item.name}`);
+      if (!verifyResp.ok) {
+        setError(`Cannot import ${item.kind}: /${item.username}/${item.kind}/${item.name} does not exist.`);
+        return;
       }
+    } catch (err) {
+      setError(`Cannot import ${item.kind}: ${err.message}`);
+      return;
     }
-    setImportsCode((prev) => (prev.trim() ? `${prev.trim()}\n${line}\n` : `${line}\n`));
+    const exists = (hubImports || []).some((imp) => imp.path === path && imp.kind === item.kind);
+    if (exists) return;
+    const next = [
+      ...(hubImports || []),
+      {
+        kind: item.kind,
+        username: item.username,
+        name: item.name,
+        path,
+        latest_version: item.latest_version || null,
+        alias: item.kind === 'lib' ? `${item.name}_lib`.replace(/[^a-zA-Z0-9_]/g, '_') : '',
+        filter_not: item.kind === 'lib' ? [] : computeFilterNot(),
+      },
+    ];
+    setHubImports(next);
+    setImportsCode(serializeHubImports(next));
   };
 
   const searchHubRegistry = async () => {
-    try {
-      const params = new URLSearchParams();
-      if (hubKindFilter) params.set('kind', hubKindFilter);
-      if (hubQuery.trim()) params.set('q', hubQuery.trim());
-      params.set('limit', '20');
-      const response = await fetch(`${API_BASE}/hub/registry?${params.toString()}`);
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.detail || 'Failed to search hub registry');
-      setHubSearchResults(Array.isArray(data.items) ? data.items : []);
-    } catch (err) {
-      setError(err.message);
-    }
+    setExploreQuery(hubQuery);
+    await loadExplore(1, hubQuery);
   };
 
   const loadMapFromHub = async (owner, name) => {
@@ -449,6 +524,7 @@ xatra.TitleBox("<b>My Map</b>")
       })();
       if (parsed && typeof parsed === 'object') {
         setImportsCode(parsed.imports_code || '');
+        setHubImports(parseImportsCodeToItems(parsed.imports_code || ''));
         setThemeCode(parsed.theme_code || '');
         setPredefinedCode(parsed.predefined_code || predefinedCode);
         setCode(parsed.map_code || code);
@@ -489,7 +565,10 @@ xatra.TitleBox("<b>My Map</b>")
       }
       if (typeof draft.project?.code === 'string') setCode(draft.project.code);
       if (typeof draft.project?.predefinedCode === 'string') setPredefinedCode(draft.project.predefinedCode);
-      if (typeof draft.project?.importsCode === 'string') setImportsCode(draft.project.importsCode);
+      if (typeof draft.project?.importsCode === 'string') {
+        setImportsCode(draft.project.importsCode);
+        setHubImports(parseImportsCodeToItems(draft.project.importsCode));
+      }
       if (typeof draft.project?.themeCode === 'string') setThemeCode(draft.project.themeCode);
       if (typeof draft.project?.runtimeCode === 'string') setRuntimeCode(draft.project.runtimeCode);
     } catch {
@@ -526,6 +605,7 @@ xatra.TitleBox("<b>My Map</b>")
       const data = await resp.json();
       if (!resp.ok) throw new Error(data.detail || 'Failed to load explore');
       setExploreData(data);
+      setHubSearchResults(Array.isArray(data.items) ? data.items : []);
     } catch (err) {
       setError(err.message);
     }
@@ -1065,8 +1145,12 @@ xatra.TitleBox("<b>My Map</b>")
       const editableTarget = isEditableTarget(e.target);
       const lowerKey = String(e.key || '').toLowerCase();
       const isMeta = e.ctrlKey || e.metaKey;
-      const allowPickerMapShortcutInInput = activeTab === 'builder' && isMeta && e.code === 'Space';
-      if (editableTarget && !allowPickerMapShortcutInInput) return;
+      const allowInputShortcut = (
+        (activeTab === 'builder' && isMeta && e.code === 'Space')
+        || (isMeta && e.key === ';')
+        || (isMeta && e.shiftKey && lowerKey === 'x')
+      );
+      if (editableTarget && !allowInputShortcut) return;
       if (e.key === 'Escape' && activePicker?.context === 'reference-gadm' && referencePickTarget?.kind === 'gadm') {
         e.preventDefault();
         setActivePicker(null);
@@ -1097,6 +1181,16 @@ xatra.TitleBox("<b>My Map</b>")
       } else if (isMeta && e.key === '5') {
         e.preventDefault();
         setActivePreviewTab('library');
+      } else if (isMeta && e.key === ';') {
+        e.preventDefault();
+        setMenuOpen((prev) => !prev);
+      } else if (isMeta && e.shiftKey && lowerKey === 'x') {
+        e.preventDefault();
+        setImportModalOpen((prev) => {
+          const next = !prev;
+          if (next) searchHubRegistry();
+          return next;
+        });
       } else if (isMeta && e.code === 'Space') {
         e.preventDefault();
         if (activePreviewTab === 'picker') {
@@ -1390,7 +1484,10 @@ xatra.TitleBox("<b>My Map</b>")
              setBuilderElements(project.elements);
              setBuilderOptions(project.options);
              if (project.predefinedCode) setPredefinedCode(project.predefinedCode);
-             if (typeof project.importsCode === 'string') setImportsCode(project.importsCode);
+             if (typeof project.importsCode === 'string') {
+               setImportsCode(project.importsCode);
+               setHubImports(parseImportsCodeToItems(project.importsCode));
+             }
              if (typeof project.themeCode === 'string') setThemeCode(project.themeCode);
              if (typeof project.runtimeCode === 'string') setRuntimeCode(project.runtimeCode);
           }
@@ -1696,6 +1793,7 @@ xatra.TitleBox("<b>My Map</b>")
   const handleTabChange = async (nextTab) => {
     if (nextTab === activeTab) return;
     if (nextTab === 'code') {
+      setImportsCode(serializeHubImports(hubImports));
       generatePythonCode();
       setActiveTab('code');
       return;
@@ -1706,6 +1804,7 @@ xatra.TitleBox("<b>My Map</b>")
         if (Array.isArray(parsed.elements)) setBuilderElements(parsed.elements);
         if (parsed.options && typeof parsed.options === 'object') setBuilderOptions(parsed.options);
         if (typeof parsed.predefined_code === 'string') setPredefinedCode(parsed.predefined_code);
+        setHubImports(parseImportsCodeToItems(importsCode));
       } catch (err) {
         setError(`Code → Builder sync failed: ${err.message}`);
         return;
@@ -1775,25 +1874,71 @@ xatra.TitleBox("<b>My Map</b>")
   const shortcutsPanelClass = isDarkMode
     ? 'bg-slate-900/95 border-slate-700 text-slate-200'
     : 'bg-white/95 border-gray-200 text-gray-700';
+  const importedPathSet = new Set((hubImports || []).map((imp) => `${imp.kind}:${imp.path}`));
+  const renderCatalogCard = (item, importMode = false) => {
+    const mapPath = `/${item.username}/map/${item.name}${item.latest_version ? `/${item.latest_version}` : ''}`;
+    const cssPath = `/${item.username}/css/${item.name}${item.latest_version ? `/${item.latest_version}` : ''}`;
+    const libPath = `/${item.username}/lib/${item.name}${item.latest_version ? `/${item.latest_version}` : ''}`;
+    const mapImported = importedPathSet.has(`map:${mapPath}`);
+    const cssImported = importedPathSet.has(`css:${cssPath}`);
+    const libImported = importedPathSet.has(`lib:${libPath}`);
+    return (
+      <div
+        key={`${item.username}-${item.name}`}
+        className="border rounded bg-white overflow-hidden focus-within:ring-2 ring-blue-500 shadow-sm"
+        tabIndex={0}
+        onKeyDown={(e) => {
+          if (!importMode) return;
+          if (e.key.toLowerCase() === 'm') addHubImportLine({ ...item, kind: 'map', latest_version: item.latest_version || undefined });
+          if (e.key.toLowerCase() === 'c') addHubImportLine({ ...item, kind: 'css', latest_version: item.latest_version || undefined });
+          if (e.key.toLowerCase() === 't') addHubImportLine({ ...item, kind: 'lib', latest_version: item.latest_version || undefined });
+        }}
+      >
+        <img src={item.thumbnail || '/vite.svg'} alt="" className="w-full h-24 object-cover bg-gray-100" />
+        <div className="p-2">
+          <a href={`/${item.username}/map/${item.name}`} target="_blank" rel="noreferrer" className="font-mono text-[11px] text-blue-700 hover:underline">{item.username}/{item.name}</a>
+          <div className="text-[10px] text-gray-600 line-clamp-2">{item.description || 'No description'}</div>
+          <div className="text-[10px] text-gray-500 mt-1">votes {item.votes || 0} · views {item.views || 0}</div>
+          {!importMode ? (
+            <button className="mt-2 w-full text-xs px-2 py-1 border rounded hover:bg-blue-50" onClick={() => navigateTo(`/${item.username}/map/${item.name}`)}>Open</button>
+          ) : (
+            <div className="mt-2 space-y-1">
+              <button disabled={mapImported} className={`w-full text-[11px] px-2 py-1 border rounded transition-colors ${mapImported ? 'bg-blue-600 text-white border-blue-600 cursor-not-allowed' : 'hover:bg-blue-50'}`} onClick={() => addHubImportLine({ ...item, kind: 'map', latest_version: item.latest_version || undefined })}>{mapImported ? '✓ Map Imported' : 'm Import Map'}</button>
+              <button disabled={cssImported} className={`w-full text-[11px] px-2 py-1 border rounded transition-colors ${cssImported ? 'bg-blue-600 text-white border-blue-600 cursor-not-allowed' : 'hover:bg-blue-50'}`} onClick={() => addHubImportLine({ ...item, kind: 'css', latest_version: item.latest_version || undefined })}>{cssImported ? '✓ CSS Imported' : 'c Import CSS'}</button>
+              <button disabled={libImported} className={`w-full text-[11px] px-2 py-1 border rounded transition-colors ${libImported ? 'bg-blue-600 text-white border-blue-600 cursor-not-allowed' : 'hover:bg-blue-50'}`} onClick={() => addHubImportLine({ ...item, kind: 'lib', latest_version: item.latest_version || undefined })}>{libImported ? '✓ Territories Imported' : 't Import Territories'}</button>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
 
   if (route.page === 'login') {
     return (
       <div className={`h-screen w-full flex items-center justify-center ${isDarkMode ? 'theme-dark bg-slate-950 text-slate-100' : 'bg-gray-100'}`}>
-        <div className="w-full max-w-md p-6 bg-white border rounded-lg shadow">
-          <h1 className="text-xl font-bold mb-3">{authMode === 'signup' ? 'Create account' : 'Login'}</h1>
-          <div className="space-y-2">
-            <input className="w-full border rounded p-2 text-sm font-mono" placeholder="username" value={authForm.username} onChange={(e) => setAuthForm((p) => ({ ...p, username: e.target.value.toLowerCase().replace(/[^a-z0-9_.-]/g, '') }))} />
-            {authMode === 'signup' && (
-              <input className="w-full border rounded p-2 text-sm" placeholder="full name (optional)" value={authForm.full_name} onChange={(e) => setAuthForm((p) => ({ ...p, full_name: e.target.value }))} />
-            )}
-            <input className="w-full border rounded p-2 text-sm" type="password" placeholder="password" value={authForm.password} onChange={(e) => setAuthForm((p) => ({ ...p, password: e.target.value }))} />
+        <div className="w-full max-w-3xl p-6 bg-white border rounded-lg shadow grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div>
+            <h1 className="text-xl font-bold mb-3">Login</h1>
+            <div className="space-y-2">
+              <input className="w-full border rounded p-2 text-sm font-mono" placeholder="username" value={authForm.username} onChange={(e) => setAuthForm((p) => ({ ...p, username: e.target.value.toLowerCase().replace(/[^a-z0-9_.-]/g, '') }))} />
+              <input className="w-full border rounded p-2 text-sm" type="password" placeholder="password" value={authForm.password} onChange={(e) => setAuthForm((p) => ({ ...p, password: e.target.value }))} />
+            </div>
+            <button className="mt-3 w-full px-3 py-2 bg-blue-600 text-white rounded text-sm hover:bg-blue-700" onClick={async () => { setAuthMode('login'); await handleLogin(); }}>Login</button>
           </div>
-          <div className="flex gap-2 mt-4">
-            <button className="px-3 py-2 bg-blue-600 text-white rounded text-sm" onClick={handleLogin}>{authMode === 'signup' ? 'Sign up' : 'Login'}</button>
-            <button className="px-3 py-2 border rounded text-sm" onClick={() => setAuthMode((m) => (m === 'signup' ? 'login' : 'signup'))}>
-              {authMode === 'signup' ? 'Have account?' : 'Need account?'}
-            </button>
-            <button className="px-3 py-2 border rounded text-sm" onClick={() => navigateTo('/')}>Back</button>
+          <div>
+            <h1 className="text-xl font-bold mb-3">Sign up</h1>
+            <div className="space-y-2">
+              <input className="w-full border rounded p-2 text-sm font-mono" placeholder="username" value={authForm.username} onChange={(e) => setAuthForm((p) => ({ ...p, username: e.target.value.toLowerCase().replace(/[^a-z0-9_.-]/g, '') }))} />
+              <input className="w-full border rounded p-2 text-sm" placeholder="full name (optional)" value={authForm.full_name} onChange={(e) => setAuthForm((p) => ({ ...p, full_name: e.target.value }))} />
+              <input className="w-full border rounded p-2 text-sm" type="password" placeholder="password (min 8)" value={authForm.password} onChange={(e) => setAuthForm((p) => ({ ...p, password: e.target.value }))} />
+            </div>
+            <button className="mt-3 w-full px-3 py-2 bg-slate-900 text-white rounded text-sm hover:bg-slate-800" onClick={async () => { setAuthMode('signup'); await handleLogin(); }}>Create account</button>
+          </div>
+          <div className="md:col-span-2">
+            <button className="px-3 py-2 border rounded text-sm" onClick={() => navigateTo('/')}>Back to editor</button>
+            {error && (
+              <div className="mt-3 p-2 rounded border border-red-200 bg-red-50 text-red-700 text-xs">{error}</div>
+            )}
           </div>
         </div>
       </div>
@@ -1805,9 +1950,16 @@ xatra.TitleBox("<b>My Map</b>")
     return (
       <div className={`h-screen w-full flex ${isDarkMode ? 'theme-dark bg-slate-950 text-slate-100' : 'bg-gray-100'}`}>
         <div className="w-64 border-r p-4 bg-white space-y-2">
-          <button className="w-full text-left px-2 py-1 rounded hover:bg-gray-100" onClick={() => navigateTo('/')}>Editor</button>
-          <button className="w-full text-left px-2 py-1 rounded bg-blue-50 text-blue-700">Explore</button>
-          <button className="w-full text-left px-2 py-1 rounded hover:bg-gray-100" onClick={() => navigateTo(`/${normalizedHubUsername}`)}>My profile</button>
+          <div className="text-lg font-bold lowercase px-2">xatra</div>
+          <button className={`w-full text-left px-2 py-2 rounded inline-flex items-center gap-2 ${isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-gray-100'}`} onClick={() => setIsDarkMode((p) => !p)}>{isDarkMode ? <Sun size={14}/> : <Moon size={14}/>} Night mode</button>
+          <button className={`w-full text-left px-2 py-2 rounded inline-flex items-center gap-2 ${isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-gray-100'} bg-blue-50 text-blue-700`}><Compass size={14}/> Explore</button>
+          <button className={`w-full text-left px-2 py-2 rounded inline-flex items-center gap-2 ${isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-gray-100'}`} onClick={() => navigateTo(`/${normalizedHubUsername}`)}><User size={14}/> My Profile</button>
+          <button className={`w-full text-left px-2 py-2 rounded inline-flex items-center gap-2 ${isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-gray-100'}`} onClick={() => window.open('/', '_blank')}><FilePlus2 size={14}/> New map...</button>
+          {currentUser.is_authenticated ? (
+            <button className={`w-full text-left px-2 py-2 rounded inline-flex items-center gap-2 ${isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-gray-100'}`} onClick={handleLogout}><LogOut size={14}/> Logout</button>
+          ) : (
+            <button className={`w-full text-left px-2 py-2 rounded inline-flex items-center gap-2 ${isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-gray-100'}`} onClick={() => navigateTo('/login')}><LogIn size={14}/> Login/Signup</button>
+          )}
         </div>
         <div className="flex-1 p-4 overflow-y-auto">
           <div className="flex gap-2 mb-3">
@@ -1815,17 +1967,7 @@ xatra.TitleBox("<b>My Map</b>")
             <button className="px-3 py-2 border rounded" onClick={() => { setExplorePage(1); loadExplore(1, exploreQuery); }}>Search</button>
           </div>
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-            {(exploreData.items || []).map((item) => (
-              <div key={item.slug} className="border rounded bg-white overflow-hidden">
-                <img src={item.thumbnail || '/vite.svg'} alt="" className="w-full h-24 object-cover bg-gray-100" />
-                <div className="p-2">
-                  <div className="font-mono text-xs">{item.username}/{item.name}</div>
-                  <div className="text-[11px] text-gray-600 line-clamp-2">{item.description || 'No description'}</div>
-                  <div className="text-[10px] text-gray-500 mt-1">votes {item.votes} · views {item.views}</div>
-                  <button className="mt-2 w-full text-xs px-2 py-1 border rounded hover:bg-blue-50" onClick={() => navigateTo(item.slug)}>Open</button>
-                </div>
-              </div>
-            ))}
+            {(exploreData.items || []).map((item) => renderCatalogCard(item, false))}
           </div>
           <div className="flex gap-2 mt-4">
             <button disabled={explorePage <= 1} className="px-2 py-1 border rounded disabled:opacity-40" onClick={() => { const p = Math.max(1, explorePage - 1); setExplorePage(p); loadExplore(p, exploreQuery); }}>Prev</button>
@@ -1841,13 +1983,28 @@ xatra.TitleBox("<b>My Map</b>")
     const profile = profileData?.profile;
     const maps = profileData?.maps || [];
     const totalPages = Math.max(1, Math.ceil((profileData?.total || 0) / (profileData?.per_page || 10)));
-    const isOwn = profile?.username && profile.username === normalizedHubUsername && currentUser.is_authenticated;
+    const viewingOwnProfilePath = route.username && route.username === normalizedHubUsername;
+    if (viewingOwnProfilePath && !authReady) {
+      return (
+        <div className={`h-screen w-full flex items-center justify-center ${isDarkMode ? 'theme-dark bg-slate-950 text-slate-100' : 'bg-gray-100'}`}>
+          <div className="text-sm text-gray-600">Loading profile…</div>
+        </div>
+      );
+    }
+    const isOwn = authReady && profile?.username && profile.username === normalizedHubUsername && currentUser.is_authenticated;
     return (
       <div className={`h-screen w-full flex ${isDarkMode ? 'theme-dark bg-slate-950 text-slate-100' : 'bg-gray-100'}`}>
         <div className="w-64 border-r p-4 bg-white space-y-2">
-          <button className="w-full text-left px-2 py-1 rounded hover:bg-gray-100" onClick={() => navigateTo('/')}>Editor</button>
-          <button className="w-full text-left px-2 py-1 rounded hover:bg-gray-100" onClick={() => navigateTo('/explore')}>Explore</button>
-          <button className="w-full text-left px-2 py-1 rounded bg-blue-50 text-blue-700">Profile</button>
+          <div className="text-lg font-bold lowercase px-2">xatra</div>
+          <button className={`w-full text-left px-2 py-2 rounded inline-flex items-center gap-2 ${isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-gray-100'}`} onClick={() => setIsDarkMode((p) => !p)}>{isDarkMode ? <Sun size={14}/> : <Moon size={14}/>} Night mode</button>
+          <button className={`w-full text-left px-2 py-2 rounded inline-flex items-center gap-2 ${isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-gray-100'}`} onClick={() => navigateTo('/explore')}><Compass size={14}/> Explore</button>
+          <button className={`w-full text-left px-2 py-2 rounded inline-flex items-center gap-2 ${isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-gray-100'} bg-blue-50 text-blue-700`}><User size={14}/> My Profile</button>
+          <button className={`w-full text-left px-2 py-2 rounded inline-flex items-center gap-2 ${isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-gray-100'}`} onClick={() => window.open('/', '_blank')}><FilePlus2 size={14}/> New map...</button>
+          {currentUser.is_authenticated ? (
+            <button className={`w-full text-left px-2 py-2 rounded inline-flex items-center gap-2 ${isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-gray-100'}`} onClick={handleLogout}><LogOut size={14}/> Logout</button>
+          ) : (
+            <button className={`w-full text-left px-2 py-2 rounded inline-flex items-center gap-2 ${isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-gray-100'}`} onClick={() => navigateTo('/login')}><LogIn size={14}/> Login/Signup</button>
+          )}
         </div>
         <div className="flex-1 p-4 overflow-y-auto">
           <h1 className="text-xl font-bold">{profile?.username || route.username}</h1>
@@ -1898,10 +2055,10 @@ xatra.TitleBox("<b>My Map</b>")
     <div className={`flex h-screen font-sans ${isDarkMode ? 'theme-dark bg-slate-950 text-slate-100' : 'bg-gray-100'}`}>
       {/* Sidebar */}
       <div className="w-1/3 min-w-[350px] max-w-[500px] flex flex-col bg-white border-r border-gray-200 shadow-md z-10">
-        <div className="p-4 border-b border-gray-200 bg-gray-50 flex flex-col gap-3">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2 min-w-0">
-              <div className="relative">
+        <div className="p-4 border-b border-gray-200 bg-gray-50 flex flex-col gap-2">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 min-w-0 flex-wrap">
+              <div className="relative" ref={menuRef}>
                 <button
                   type="button"
                   onClick={() => setMenuOpen((m) => !m)}
@@ -1917,7 +2074,7 @@ xatra.TitleBox("<b>My Map</b>")
                     <button onClick={handleExportHtml} className="w-full flex items-center gap-2 px-3 py-2 hover:bg-gray-50"><Image size={12}/> Export</button>
                     <button onClick={() => setIsDarkMode((prev) => !prev)} className="w-full flex items-center gap-2 px-3 py-2 hover:bg-gray-50">{isDarkMode ? <Sun size={12}/> : <Moon size={12}/>} Night mode</button>
                     <button onClick={() => window.open('/explore', '_blank')} className="w-full flex items-center gap-2 px-3 py-2 hover:bg-gray-50"><Compass size={12}/> Explore</button>
-                    <button onClick={() => window.open(`/${normalizedHubUsername}`, '_blank')} className="w-full flex items-center gap-2 px-3 py-2 hover:bg-gray-50"><User size={12}/> My profile</button>
+                    <button onClick={() => window.open(`/${normalizedHubUsername}`, '_blank')} className="w-full flex items-center gap-2 px-3 py-2 hover:bg-gray-50"><User size={12}/> My Profile</button>
                     <button onClick={() => window.open('/', '_blank')} className="w-full flex items-center gap-2 px-3 py-2 hover:bg-gray-50"><FilePlus2 size={12}/> New map...</button>
                     {currentUser.is_authenticated ? (
                       <button onClick={handleLogout} className="w-full flex items-center gap-2 px-3 py-2 hover:bg-gray-50"><LogOut size={12}/> Logout</button>
@@ -1944,12 +2101,8 @@ xatra.TitleBox("<b>My Map</b>")
               <button onClick={() => copyText(`xatrahub("${mapSlugPath}")`)} className="p-1.5 bg-white border border-gray-300 rounded hover:bg-gray-50" title="Copy map slug">
                 <Copy size={14} className="text-gray-600"/>
               </button>
-              {route.owner && route.map && (
-                <>
-                  <span className="text-[10px] text-gray-500">votes {mapVotes} · views {mapViews}</span>
-                  <button onClick={handleVoteMap} className="px-2 py-1 border rounded text-[11px] hover:bg-gray-50">Vote</button>
-                </>
-              )}
+              <span className="text-[10px] text-gray-500">votes {mapVotes} · views {mapViews}</span>
+              <button onClick={handleVoteMap} disabled={!(route.owner && route.map)} className="px-2 py-1 border rounded text-[11px] hover:bg-gray-50 disabled:opacity-40">Vote</button>
             </div>
             <div className="flex items-center gap-2">
               <div className="flex bg-white rounded-lg border border-gray-300 p-0.5">
@@ -1968,14 +2121,6 @@ xatra.TitleBox("<b>My Map</b>")
               </div>
             </div>
           </div>
-          {activeTab === 'builder' && (
-            <button
-              onClick={() => { setImportModalOpen(true); searchHubRegistry(); }}
-              className="w-full text-xs px-2 py-2 border rounded bg-white hover:bg-gray-50 inline-flex items-center justify-center gap-2"
-            >
-              <Import size={13} /> Import from xatra hub
-            </button>
-          )}
         </div>
 
         <div className="flex-1 overflow-y-auto p-4">
@@ -1996,6 +2141,14 @@ xatra.TitleBox("<b>My Map</b>")
               onStartReferencePick={handleStartReferencePick}
               addLayerSignal={addLayerSignal}
               onConsumeAddLayerSignal={() => setAddLayerSignal(null)}
+              hubImports={hubImports}
+              onOpenImportModal={() => { setImportModalOpen(true); searchHubRegistry(); }}
+              onRemoveHubImport={(idx) => {
+                const next = [...hubImports];
+                next.splice(idx, 1);
+                setHubImports(next);
+                setImportsCode(serializeHubImports(next));
+              }}
             />
           ) : (
             <CodeEditor 
@@ -2231,9 +2384,11 @@ xatra.TitleBox("<b>My Map</b>")
                     <div>`Ctrl/Cmd+3` Map Preview</div>
                     <div>`Ctrl/Cmd+4` Reference Map</div>
                     <div>`Ctrl/Cmd+5` Territory Library</div>
+                    <div>`Ctrl/Cmd+;` Toggle xatra menu</div>
                     <div>`Ctrl/Cmd+Enter` Render map</div>
                     <div>`Ctrl/Cmd+Shift+Enter` Stop active preview generation</div>
                     <div>`Ctrl/Cmd+Space` Update active picker map tab</div>
+                    <div>`Ctrl/Cmd+Shift+X` Import from existing map</div>
                     <div className="mt-2 pt-2 border-t border-gray-200">`Ctrl/Cmd+Shift+F` add Flag</div>
                     <div>`Ctrl/Cmd+Shift+R` add River</div>
                     <div>`Ctrl/Cmd+Shift+P` add Point</div>
@@ -2279,9 +2434,9 @@ xatra.TitleBox("<b>My Map</b>")
       </div>
       {importModalOpen && (
         <div className="fixed inset-0 bg-black/40 z-[100] flex items-center justify-center">
-          <div className="w-[900px] max-w-[95vw] h-[80vh] bg-white rounded-lg border shadow-xl flex flex-col">
+          <div className="w-[980px] max-w-[96vw] h-[84vh] bg-white rounded-lg border shadow-xl flex flex-col">
             <div className="px-4 py-3 border-b flex items-center justify-between">
-              <div className="font-semibold text-sm">Import from xatra hub</div>
+              <div className="font-semibold text-sm">Import from existing map</div>
               <button className="text-xs px-2 py-1 border rounded" onClick={() => setImportModalOpen(false)}>Close</button>
             </div>
             <div className="p-3 flex gap-2 border-b">
@@ -2293,44 +2448,23 @@ xatra.TitleBox("<b>My Map</b>")
               />
               <button className="px-3 py-2 border rounded" onClick={searchHubRegistry}>Search</button>
             </div>
+            <div className="px-3 py-2 border-b bg-gray-50">
+              <div className="text-[11px] font-semibold mb-1 text-gray-700">Imported layers from maps/themes (unchecked layers become filter_not)</div>
+              <div className="flex flex-wrap gap-2">
+                {IMPORTABLE_LAYER_TYPES.map((layer) => (
+                  <label key={layer} className="text-[11px] inline-flex items-center gap-1 px-1.5 py-0.5 border rounded bg-white">
+                    <input
+                      type="checkbox"
+                      checked={!!importLayerSelection[layer]}
+                      onChange={(e) => setImportLayerSelection((prev) => ({ ...prev, [layer]: e.target.checked }))}
+                    />
+                    {layer}
+                  </label>
+                ))}
+              </div>
+            </div>
             <div className="flex-1 overflow-auto p-3 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-              {hubSearchResults.map((item) => (
-                <div
-                  key={`${item.username}-${item.kind}-${item.name}`}
-                  className="border rounded bg-white overflow-hidden focus-within:ring-2 ring-blue-500"
-                  tabIndex={0}
-                  onKeyDown={(e) => {
-                    if (e.key.toLowerCase() === 'm') addHubImportLine({ ...item, kind: 'map' });
-                    if (e.key.toLowerCase() === 'c') addHubImportLine({ ...item, kind: 'css' });
-                    if (e.key.toLowerCase() === 't') addHubImportLine({ ...item, kind: 'lib' });
-                  }}
-                >
-                  <img src={item.thumbnail || '/vite.svg'} alt="" className="w-full h-24 object-cover bg-gray-100" />
-                  <div className="p-2">
-                    <div className="font-mono text-[11px]">{item.username}/{item.name}</div>
-                    <div className="text-[10px] text-gray-600 line-clamp-2">{item.description || 'No description'}</div>
-                    <div className="text-[10px] text-gray-500 mt-1">votes {item.votes || 0} · views {item.views || 0}</div>
-                    <div className="mt-2 space-y-1">
-                      <button className="w-full text-[11px] px-2 py-1 border rounded hover:bg-blue-50" onClick={() => addHubImportLine({ ...item, kind: 'map' })}>m Import map</button>
-                      <button className="w-full text-[11px] px-2 py-1 border rounded hover:bg-blue-50" onClick={() => addHubImportLine({ ...item, kind: 'css' })}>c Import theme</button>
-                      <button className="w-full text-[11px] px-2 py-1 border rounded hover:bg-blue-50" onClick={() => addHubImportLine({ ...item, kind: 'lib' })}>t Import territories</button>
-                    </div>
-                    <div className="mt-2 text-[10px] text-gray-600">filter_not:</div>
-                    <div className="flex gap-2 text-[10px]">
-                      {Object.keys(hubFilterNot).map((k) => (
-                        <label key={k} className="flex items-center gap-1">
-                          <input
-                            type="checkbox"
-                            checked={hubFilterNot[k]}
-                            onChange={(e) => setHubFilterNot((prev) => ({ ...prev, [k]: e.target.checked }))}
-                          />
-                          {k}
-                        </label>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              ))}
+              {(hubSearchResults || []).map((item) => renderCatalogCard(item, true))}
             </div>
           </div>
         </div>

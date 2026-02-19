@@ -122,6 +122,19 @@ html, body, #root {
   background-color: #1e3a8a !important;
 }
 
+.theme-dark .hover\:bg-gray-50:hover {
+  background-color: #1e293b !important;
+}
+
+.theme-dark .hover\:bg-gray-100:hover {
+  background-color: #243041 !important;
+}
+
+.theme-dark .hover\:bg-blue-50:hover {
+  background-color: #1e3a8a !important;
+  color: #e2e8f0 !important;
+}
+
 .theme-dark .xatra-autocomplete-item .text-gray-400 {
   color: #94a3b8 !important;
 }

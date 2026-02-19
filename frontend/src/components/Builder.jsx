@@ -1,12 +1,13 @@
 import React, { useRef, useEffect } from 'react';
-import { Map, Users, MapPin, Type, GitMerge, Table, Heading, Code2 } from 'lucide-react';
+import { Map, Users, MapPin, Type, GitMerge, Table, Heading, Code2, Import, Trash2 } from 'lucide-react';
 import LayerItem from './LayerItem';
 import GlobalOptions from './GlobalOptions';
 
 const Builder = ({ 
   elements, setElements, options, setOptions, onGetCurrentView, 
   lastMapClick, activePicker, setActivePicker, draftPoints, setDraftPoints,
-  onSaveTerritory, predefinedCode, onStartReferencePick, addLayerSignal, onConsumeAddLayerSignal
+  onSaveTerritory, predefinedCode, onStartReferencePick, addLayerSignal, onConsumeAddLayerSignal,
+  hubImports, onOpenImportModal, onRemoveHubImport
 }) => {
   const layersEndRef = useRef(null);
   const prevElementsLengthRef = useRef(elements.length);
@@ -123,6 +124,40 @@ const Builder = ({
 
   return (
     <div className="space-y-6">
+      <section className="bg-white p-4 rounded-lg border border-gray-200 shadow-sm">
+        <div className="flex items-center justify-between mb-2">
+          <h3 className="text-sm font-semibold text-gray-900">Imports</h3>
+          <button
+            type="button"
+            onClick={onOpenImportModal}
+            className="text-xs px-2 py-1 border border-gray-200 rounded bg-gray-50 hover:bg-gray-100 inline-flex items-center gap-1"
+          >
+            <Import size={12} /> Import from existing map
+          </button>
+        </div>
+        {(hubImports || []).length === 0 ? (
+          <div className="text-xs text-gray-500">No imports yet.</div>
+        ) : (
+          <div className="space-y-1">
+            {(hubImports || []).map((imp, idx) => (
+              <div key={`${imp.kind}-${imp.path}-${idx}`} className="flex items-center justify-between px-2 py-1 rounded border border-gray-100 bg-gray-50">
+                <div className="text-[11px] font-mono text-gray-700">
+                  {imp.kind} {imp.path}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => onRemoveHubImport?.(idx)}
+                  className="p-1 rounded hover:bg-red-50 text-red-600"
+                  title="Remove import"
+                >
+                  <Trash2 size={12} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
       {/* Global Options */}
       <GlobalOptions 
         options={options} 

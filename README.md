@@ -95,7 +95,7 @@ Bugs
   - [x] Weird issue with code in the territory library getting duplicated when switching from Code editor to Builder---however don't try to fix this now, I think it will automatically get fixed when you implement the later-detailed changes to the Code editor sections that will prevent the need to mirror code between the Territory library and the Map Code---ok nvm, you fixed it.
   - [x] Code editor: cursor jumps to the bottom of the editor when typing rapidly
     - [x] Fixed, but now it randomly jumps to the end of the line instead
-
+- [ ] Why does the app consume so much CPU utilization even when the user isn't doing anything?
 
 Basic extensions
 - [x] Allow adding any feature to the map, not just flags and rivers. Every single method listed under #### Methods in the main README should have an appropriate interface for adding it:
