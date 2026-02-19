@@ -7,7 +7,7 @@ const Builder = ({
   elements, setElements, options, setOptions, onGetCurrentView, 
   lastMapClick, activePicker, setActivePicker, draftPoints, setDraftPoints,
   onSaveTerritory, predefinedCode, onStartReferencePick, addLayerSignal, onConsumeAddLayerSignal,
-  hubImports, onOpenImportModal, onRemoveHubImport
+  hubImports, onOpenImportModal, onRemoveHubImport, getImportVersionOptions, onSwitchHubImportVersion
 }) => {
   const layersEndRef = useRef(null);
   const prevElementsLengthRef = useRef(elements.length);
@@ -141,8 +141,27 @@ const Builder = ({
           <div className="space-y-1">
             {(hubImports || []).map((imp, idx) => (
               <div key={`${imp.kind}-${imp.path}-${idx}`} className="flex items-center justify-between px-2 py-1 rounded border border-gray-100 bg-gray-50">
-                <div className="text-[11px] font-mono text-gray-700">
-                  {imp.kind} {imp.path}
+                <div className="text-[11px] font-mono text-gray-700 flex-1 min-w-0">
+                  {imp.kind} /{imp.username}/{imp.name}
+                </div>
+                <div className="flex items-center gap-1 mr-2">
+                  <select
+                    value={imp._draft_version || imp.selected_version || 'alpha'}
+                    onChange={(e) => onSwitchHubImportVersion?.(idx, e.target.value, false)}
+                    className="text-[11px] border rounded px-1 py-0.5"
+                  >
+                    {(getImportVersionOptions?.(imp) || [{ value: 'alpha', label: 'alpha' }]).map((opt) => (
+                      <option key={opt.value} value={opt.value}>{opt.label}</option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    onClick={() => onSwitchHubImportVersion?.(idx, imp._draft_version || imp.selected_version || 'alpha', true)}
+                    disabled={!imp._draft_version || imp._draft_version === (imp.selected_version || 'alpha')}
+                    className="text-[11px] px-1.5 py-0.5 border rounded disabled:opacity-40 hover:bg-gray-100"
+                  >
+                    Switch version
+                  </button>
                 </div>
                 <button
                   type="button"

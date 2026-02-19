@@ -1,6 +1,6 @@
 import React, { useRef, useCallback, useState, useEffect } from 'react';
 import Editor from '@monaco-editor/react';
-import { Tag, Copy } from 'lucide-react';
+import { Tag } from 'lucide-react';
 
 const XATRA_COMPLETIONS = {
   globals: [
@@ -50,10 +50,10 @@ const CodeEditor = ({
   setRuntimeCode,
   libraryVersionLabel,
   themeVersionLabel,
+  librarySlugText,
+  themeSlugText,
   onSaveLibrary,
   onSaveTheme,
-  onCopyLibrarySlug,
-  onCopyThemeSlug,
 }) => {
   const editorRef = useRef(null);
   const predefinedEditorRef = useRef(null);
@@ -170,13 +170,10 @@ const CodeEditor = ({
 
         <div>
           <div className={headingClass}>
-            <span>Custom Territory Library</span>
+            <span>Custom Territory Library <span className="font-mono text-[10px] text-slate-300 ml-1">{librarySlugText}</span></span>
             <div className="flex items-center gap-1">
               <button type="button" onClick={onSaveLibrary} className="px-1.5 py-1 rounded border border-slate-600 hover:bg-slate-800 inline-flex items-center gap-1" title="Publish new version">
                 <Tag size={12} /> <span className="font-mono text-[10px]">{libraryVersionLabel === 'alpha' ? 'alpha' : `v${libraryVersionLabel}`}</span>
-              </button>
-              <button type="button" onClick={onCopyLibrarySlug} className="p-1 rounded border border-slate-600 hover:bg-slate-800" title="Copy slug">
-                <Copy size={12} />
               </button>
             </div>
           </div>
@@ -195,13 +192,10 @@ const CodeEditor = ({
 
         <div>
           <div className={headingClass}>
-            <span>Custom Theme</span>
+            <span>Custom Theme <span className="font-mono text-[10px] text-slate-300 ml-1">{themeSlugText}</span></span>
             <div className="flex items-center gap-1">
               <button type="button" onClick={onSaveTheme} className="px-1.5 py-1 rounded border border-slate-600 hover:bg-slate-800 inline-flex items-center gap-1" title="Publish new version">
                 <Tag size={12} /> <span className="font-mono text-[10px]">{themeVersionLabel === 'alpha' ? 'alpha' : `v${themeVersionLabel}`}</span>
-              </button>
-              <button type="button" onClick={onCopyThemeSlug} className="p-1 rounded border border-slate-600 hover:bg-slate-800" title="Copy slug">
-                <Copy size={12} />
               </button>
             </div>
           </div>

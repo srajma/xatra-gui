@@ -103,3 +103,10 @@ b) Instead of "My Profile", display the username (both in the xatra menu and in 
 
 8) Other bugs
 a) The stuff in "Custom territory library" (in the Code editor) should get converted to Imports in the Builder interface---and NOT into "Python" layers.
+
+-----
+
+1) Decrease the width of the text box for the editable map title so that it and the version tag fit on one line. Right now in the Chrome Developr Tools I see a style in "Layer utilities" `.w-56 {width: calc(var(--spacing) * 56);}`; idk where this comes from but changing 56 to 40 helps.
+2) Keyboard cycling through the xatra menu is messed-up. Sometimes it doesn't work at all; sometimes even when you cycle through it, pressing Enter selects "Load" instead of whatever I want to select; "Load" appears highlighted no matter what I do etc.
+3) If logged-out users click the "My Profile" link, they should be redirected to the login page.
+4) We need more indicators to show something is happening. E.g. when the "Explore" or profile screen are loading the list of maps, it should have a banner showing "Loading maps..." When the Login or Sign up buttons are pressed, it should immediately turn into a greyed-out "Logging in ..." or "Signing up ..." 

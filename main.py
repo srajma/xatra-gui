@@ -572,6 +572,7 @@ class TerritoryLibraryRequest(BaseModel):
     predefined_code: Optional[str] = None
     selected_names: Optional[List[str]] = None
     basemaps: Optional[List[Dict[str, Any]]] = None
+    hub_path: Optional[str] = None
 
 class StopRequest(BaseModel):
     task_types: Optional[List[str]] = None
@@ -1457,7 +1458,7 @@ def _extract_assigned_names(code: str) -> List[str]:
                 names.append(target.id)
     return names
 
-def _get_territory_catalog(source: str, predefined_code: str) -> Dict[str, List[str]]:
+def _get_territory_catalog(source: str, predefined_code: str, hub_path: Optional[str] = None) -> Dict[str, List[str]]:
     import xatra.territory_library as territory_library
 
     if source == "custom":
@@ -1511,6 +1512,30 @@ def _get_territory_catalog(source: str, predefined_code: str) -> Dict[str, List[
             "index_names": [n for n in index_names if n in names],
         }
 
+    if source == "hub" and hub_path:
+        try:
+            parsed = _parse_xatrahub_path(hub_path)
+            loaded = _hub_load_content(parsed["username"], parsed["kind"], parsed["name"], parsed["version"])
+            code_text = _extract_python_payload_text(loaded["kind"], loaded.get("content", ""), loaded.get("metadata", {}))
+            names = [n for n in _extract_assigned_names(code_text) if n != "__TERRITORY_INDEX__" and not n.startswith("_")]
+            idx = []
+            try:
+                scope = {
+                    "gadm": xatra.loaders.gadm,
+                    "polygon": xatra.loaders.polygon,
+                    "naturalearth": xatra.loaders.naturalearth,
+                    "overpass": xatra.loaders.overpass,
+                }
+                exec(code_text or "", scope)
+                idx_raw = scope.get("__TERRITORY_INDEX__", [])
+                if isinstance(idx_raw, (list, tuple)):
+                    idx = [str(x) for x in idx_raw if isinstance(x, str)]
+            except Exception:
+                idx = []
+            return {"names": names, "index_names": [n for n in idx if n in names]}
+        except Exception:
+            return {"names": [], "index_names": []}
+
     names = [n for n in dir(territory_library) if not n.startswith("_")]
     idx = getattr(territory_library, "__TERRITORY_INDEX__", [])
     index_names = [str(n) for n in idx if isinstance(n, str)] if isinstance(idx, (list, tuple)) else []
@@ -1523,7 +1548,7 @@ def _get_territory_catalog(source: str, predefined_code: str) -> Dict[str, List[
 def territory_library_catalog(request: TerritoryLibraryRequest):
     try:
         source = (request.source or "builtin").strip().lower()
-        catalog = _get_territory_catalog(source, request.predefined_code or "")
+        catalog = _get_territory_catalog(source, request.predefined_code or "", request.hub_path)
         return catalog
     except Exception as e:
         return {"error": str(e)}
@@ -2409,7 +2434,8 @@ def run_rendering_task(task_type, data, result_queue):
             import xatra.territory_library as territory_library
             source = (getattr(data, "source", "builtin") or "builtin").strip().lower()
             code = getattr(data, "predefined_code", "") or ""
-            catalog = _get_territory_catalog(source, code)
+            hub_path = getattr(data, "hub_path", None)
+            catalog = _get_territory_catalog(source, code, hub_path)
             selected_input = getattr(data, "selected_names", None)
             if isinstance(selected_input, list):
                 selected_names = [str(n) for n in selected_input if isinstance(n, str)]
@@ -2436,6 +2462,27 @@ def run_rendering_task(task_type, data, result_queue):
                             m.Flag(label=n, value=terr)
                         except Exception:
                             continue
+            elif source == "hub" and hub_path:
+                try:
+                    parsed = _parse_xatrahub_path(hub_path)
+                    loaded = _hub_load_content(parsed["username"], parsed["kind"], parsed["name"], parsed["version"])
+                    code_text = _extract_python_payload_text(loaded["kind"], loaded.get("content", ""), loaded.get("metadata", {}))
+                    scope = {
+                        "gadm": xatra.loaders.gadm,
+                        "polygon": xatra.loaders.polygon,
+                        "naturalearth": xatra.loaders.naturalearth,
+                        "overpass": xatra.loaders.overpass,
+                    }
+                    exec(code_text or "", scope)
+                    for n in selected_names:
+                        terr = scope.get(n)
+                        if terr is not None:
+                            try:
+                                m.Flag(label=n, value=terr)
+                            except Exception:
+                                continue
+                except Exception:
+                    pass
             else:
                 for n in selected_names:
                     terr = getattr(territory_library, n, None)
@@ -2820,7 +2867,8 @@ def run_rendering_task(task_type, data, result_queue):
         if task_type == 'territory_library':
             source = (getattr(data, "source", "builtin") or "builtin").strip().lower()
             code = getattr(data, "predefined_code", "") or ""
-            catalog = _get_territory_catalog(source, code)
+            hub_path = getattr(data, "hub_path", None)
+            catalog = _get_territory_catalog(source, code, hub_path)
             result["available_names"] = catalog.get("names", [])
             result["index_names"] = catalog.get("index_names", [])
         result_queue.put(result)

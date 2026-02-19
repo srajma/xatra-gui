@@ -96,6 +96,7 @@ Bugs
   - [x] Code editor: cursor jumps to the bottom of the editor when typing rapidly
     - [x] Fixed, but now it randomly jumps to the end of the line instead
 - [ ] Why does the app consume so much CPU utilization even when the user isn't doing anything?
+- [ ] Keyboard cycling through the xatra menu is messed-up. Sometimes it doesn't work at all; sometimes even when you cycle through it, pressing Enter selects "Load" instead of whatever I want to select; "Load" appears highlighted no matter what I do etc.
 
 Basic extensions
 - [x] Allow adding any feature to the map, not just flags and rivers. Every single method listed under #### Methods in the main README should have an appropriate interface for adding it:
@@ -265,15 +266,18 @@ Minor changes
 - [ ] Don't use the word "GADM" in the Flag territory builder (users won't understand) instead use "Admin unit"
 - [ ] Change the button for downloading the Project JSON to a download icon (it's currently a save icon, which suggests just saving the map to the database). And remove the option to download the Map JSON ("Export Map JSON"), it will confuse the user. And maybe change the icon for Export HTML to something that looks like a map and change the hover tip to "Download Map" (rather than "Export HTML"), the user doesn't care that it's in HTML format, just that it's a nice visual map.
 - [ ] There is a default Flag layer that gets loaded when a user loads the GUI for the first time. That's fine, but initialize it with a territory that is GADM IND, rather than None.
+- [ ] Add users list in the sidebar
+- [ ] Make the "Map description" prompt use a dialog within the website's design rather than bizarrely using a browser pop-up for the purpose. Obviously make sure it is keyboard navigable (enter, escape should perform the expected functions)
 
 Design improvements
 - [x] introduce a dark mode
 - [x] the "Xatra Studio" title is cheesy. Replace it with just xatra (lowercase), and no icon.
 - [ ] allow the user to freely resize the left sidebar
-- [ ] Design
+- [ ] Design consistency and prettiness---the main map editor has nice design; everything else not so much.
 
 Experiments I have to do
 - [x] Make sure my existing maps work in this
+- [ ] Play around as srajma/ to make sure
 - [ ] experiment with some different designs [NOT NOW]
 
 Development difficulties
