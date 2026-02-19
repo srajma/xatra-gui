@@ -127,3 +127,13 @@ v) I am able to click the version button and publish a new version of version of
 2) Why did you move the heart button to the first line? The first line won't fit in the space provided now. Move it back next to the like count. Actually, merge the like button and the like count, like it's a button that shows "[heart icon] 5 likes" then when you click it it changes color.
 3) Also reduce the size of the input field to `{width: calc(var(--spacing) * 30);}` instead of 40.
 4) For a non-logged-in user, the "New Map" UI doesn't need to have "by new_user · 0 likes · 0 views". That whole line could be removed for non logged in users (obviously, they should still see this line on other people's maps). In fact it is worth searching through the codebase for instances of `new_user` to figure out where that is used; we need to start deprecating that it is quite silly.
+
+-----
+Still a number of bugs.
+1) Sometimes, even though I am clearly logged-in, creating a new map creates it as belonging to "guest"---wtf?
+2) The presence of the default/automatic `srajma/lib/indic` import (i.e. `indic = xatrahub("/srajma/lib/indic/alpha")`) is erratic; it is sometimes added automatically when creating a new map, and sometimes not, it's very weird. Can you go through the logic for this and see if there's some overcomplication messing things up?
+3) The Save buttons on the Custom territory library and Custom theme simply don't work.
+4) In the Territory Library tab, the sub-tab for an imported territory library does not work correctly. Its checklist should have all the territories defined in that imported library (and if it has a `__TERRITORY_INDEX__` variable, only those should be checked; if it doesn't have that then everything should be checked)---i.e. exactly the same logic as we use for `xatra.territory_library`. Instead, for `srajma/lib/indic` I just see one checkbox which says "lib" and doesn't do anything.
+5) I actually no longer like the whole "Prompt for description" thing. Descriptions should not be attached to versions but to the whole map, and should be displayed under the "by <author> . likes . views" line with a little edit icon.
+
+In general I don't understand why the code is so buggy. I would like you to not only fix these particular bugs, but go through the code identifying (and where possible, immediately simplifying---otherwise just outlining the problem clearly for a future fix) all technical debt or over-convoluted logic that may be causing confusion.

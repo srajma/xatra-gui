@@ -138,6 +138,23 @@ def _json_parse(value: Any, default: Any) -> Any:
         return default
 
 
+def _artifact_metadata_dict(metadata: Any) -> Dict[str, Any]:
+    if isinstance(metadata, dict):
+        return dict(metadata)
+    if isinstance(metadata, str):
+        parsed = _json_parse(metadata, {})
+        if isinstance(parsed, dict):
+            return dict(parsed)
+    return {}
+
+
+def _sanitize_artifact_metadata(kind: str, metadata: Any) -> Dict[str, Any]:
+    cleaned = _artifact_metadata_dict(metadata)
+    if _normalize_hub_kind(kind) == "map":
+        cleaned.pop("description", None)
+    return cleaned
+
+
 def _hash_password(password: str) -> str:
     salt = secrets.token_hex(16)
     dk = hashlib.pbkdf2_hmac("sha256", (password or "").encode("utf-8"), salt.encode("utf-8"), 600000)
@@ -324,7 +341,7 @@ def _init_hub_db():
                 INSERT OR IGNORE INTO hub_artifacts(user_id, kind, name, alpha_content, alpha_metadata, created_at, updated_at)
                 VALUES(?, 'map', 'indic', ?, ?, ?, ?)
                 """,
-                (user_row["id"], map_seed_content, json.dumps({"description": "Default Indic map"}), now, now),
+                (user_row["id"], map_seed_content, json.dumps({}), now, now),
             )
             # Migration: if existing indic map is still the default seed with empty predefined_code,
             # refresh it with territory_library body (imports removed).
@@ -341,10 +358,8 @@ def _init_hub_db():
                     parsed = _json_parse(existing_map["alpha_content"], {})
                     old_pre = str(parsed.get("predefined_code") or "")
                     old_project_pre = str((parsed.get("project") or {}).get("predefinedCode") or "")
-                    meta = _json_parse(existing_map["alpha_metadata"], {})
                     defaultish = (
                         (not old_pre.strip() and not old_project_pre.strip())
-                        or str(meta.get("description", "")) == "Default Indic map"
                     )
                     if defaultish and territory_seed.strip():
                         parsed["predefined_code"] = territory_seed
@@ -359,6 +374,30 @@ def _init_hub_db():
                         )
                 except Exception:
                     pass
+        # Migration: maps no longer support descriptions; strip description keys from stored metadata.
+        map_rows = conn.execute(
+            "SELECT id, alpha_metadata FROM hub_artifacts WHERE kind = 'map'"
+        ).fetchall()
+        for row in map_rows:
+            meta = _sanitize_artifact_metadata("map", row["alpha_metadata"])
+            conn.execute(
+                "UPDATE hub_artifacts SET alpha_metadata = ? WHERE id = ?",
+                (_json_text(meta), row["id"]),
+            )
+        map_version_rows = conn.execute(
+            """
+            SELECT v.id, v.metadata
+            FROM hub_artifact_versions v
+            JOIN hub_artifacts a ON a.id = v.artifact_id
+            WHERE a.kind = 'map'
+            """
+        ).fetchall()
+        for row in map_version_rows:
+            meta = _sanitize_artifact_metadata("map", row["metadata"])
+            conn.execute(
+                "UPDATE hub_artifact_versions SET metadata = ? WHERE id = ?",
+                (_json_text(meta), row["id"]),
+            )
         conn.commit()
     finally:
         conn.close()
@@ -410,7 +449,7 @@ def _hub_upsert_alpha(
     name = _normalize_hub_name(name)
     user = _hub_ensure_user(conn, username)
     now = _utc_now_iso()
-    metadata_json = _json_text(metadata)
+    metadata_json = _json_text(_sanitize_artifact_metadata(kind, metadata))
     conn.execute(
         """
         INSERT OR IGNORE INTO hub_artifacts(
@@ -447,7 +486,7 @@ def _hub_publish_version(
         (artifact["id"],),
     ).fetchone()["v"]
     now = _utc_now_iso()
-    metadata_json = _json_text(metadata)
+    metadata_json = _json_text(_sanitize_artifact_metadata(kind, metadata))
     conn.execute(
         """
         INSERT INTO hub_artifact_versions(artifact_id, version, content, metadata, created_at)
@@ -758,7 +797,7 @@ def _hub_artifact_response(conn: sqlite3.Connection, artifact: sqlite3.Row) -> D
         ).fetchone()
         if latest_content is not None:
             latest_content_hash = _sha256_text(latest_content["content"] or "")
-    alpha_meta = _json_parse(artifact["alpha_metadata"], {})
+    alpha_meta = _sanitize_artifact_metadata(artifact["kind"], artifact["alpha_metadata"])
     return {
         "id": int(artifact["id"]),
         "username": artifact["username"],
@@ -1574,6 +1613,16 @@ def _extract_assigned_names(code: str) -> List[str]:
 
 def _get_territory_catalog(source: str, predefined_code: str, hub_path: Optional[str] = None) -> Dict[str, List[str]]:
     import xatra.territory_library as territory_library
+    from xatra.territory import Territory
+
+    def _territory_names_from_scope(scope: Dict[str, Any]) -> List[str]:
+        names: List[str] = []
+        for k, v in scope.items():
+            if str(k).startswith("_"):
+                continue
+            if isinstance(v, Territory):
+                names.append(str(k))
+        return names
 
     if source == "custom":
         assigned = [n for n in _extract_assigned_names(predefined_code) if n != "__TERRITORY_INDEX__"]
@@ -1616,6 +1665,8 @@ def _get_territory_catalog(source: str, predefined_code: str, hub_path: Optional
                     return None
                 exec_globals["xatrahub"] = _catalog_xatrahub
                 exec(predefined_code, exec_globals)
+                if not names:
+                    names = _territory_names_from_scope(exec_globals)
                 idx = exec_globals.get("__TERRITORY_INDEX__", [])
                 if isinstance(idx, (list, tuple)):
                     index_names = [str(n) for n in idx if isinstance(n, str)]
@@ -1623,7 +1674,7 @@ def _get_territory_catalog(source: str, predefined_code: str, hub_path: Optional
                 index_names = []
         return {
             "names": names,
-            "index_names": [n for n in index_names if n in names],
+            "index_names": [n for n in index_names if n in names] if index_names else names,
         }
 
     if source == "hub" and hub_path:
@@ -1641,12 +1692,14 @@ def _get_territory_catalog(source: str, predefined_code: str, hub_path: Optional
                     "overpass": xatra.loaders.overpass,
                 }
                 exec(code_text or "", scope)
+                if not names:
+                    names = _territory_names_from_scope(scope)
                 idx_raw = scope.get("__TERRITORY_INDEX__", [])
                 if isinstance(idx_raw, (list, tuple)):
                     idx = [str(x) for x in idx_raw if isinstance(x, str)]
             except Exception:
                 idx = []
-            return {"names": names, "index_names": [n for n in idx if n in names]}
+            return {"names": names, "index_names": [n for n in idx if n in names] if idx else names}
         except Exception:
             return {"names": [], "index_names": []}
 
@@ -1655,7 +1708,7 @@ def _get_territory_catalog(source: str, predefined_code: str, hub_path: Optional
     index_names = [str(n) for n in idx if isinstance(n, str)] if isinstance(idx, (list, tuple)) else []
     return {
         "names": names,
-        "index_names": [n for n in index_names if n in names],
+        "index_names": [n for n in index_names if n in names] if index_names else names,
     }
 
 @app.post("/territory_library/catalog")
@@ -1967,7 +2020,6 @@ def maps_explore(
                 "username": row["username"],
                 "name": row["name"],
                 "slug": f"/{row['username']}/map/{row['name']}",
-                "description": str(meta.get("description", "")),
                 "forked_from": meta.get("forked_from"),
                 "votes": _map_vote_count(conn, row["id"]),
                 "views": _map_view_count(conn, row["id"]),
@@ -2057,7 +2109,6 @@ def user_profile(username: str, q: Optional[str] = None, page: int = 1, per_page
                 "votes": _map_vote_count(conn, row["id"]),
                 "views": _map_view_count(conn, row["id"]),
                 "updated_at": row["updated_at"],
-                "description": str(meta.get("description", "")),
                 "thumbnail": meta.get("thumbnail") or "/vite.svg",
             })
         return {"profile": profile, "maps": maps, "page": safe_page, "per_page": safe_per_page, "total": int(total or 0)}
@@ -2198,7 +2249,7 @@ def hub_get_artifact_version(username: str, kind: str, name: str, version: str):
                 "name": artifact["name"],
                 "version": "alpha",
                 "content": artifact["alpha_content"] or "",
-                "metadata": _json_parse(artifact["alpha_metadata"], {}),
+                "metadata": _sanitize_artifact_metadata(artifact["kind"], artifact["alpha_metadata"]),
                 "updated_at": artifact["updated_at"],
                 "slug": f'/{artifact["username"]}/{_hub_kind_label(artifact["kind"])}/{artifact["name"]}/alpha',
             }
@@ -2220,7 +2271,7 @@ def hub_get_artifact_version(username: str, kind: str, name: str, version: str):
             "name": artifact["name"],
             "version": int(row["version"]),
             "content": row["content"] or "",
-            "metadata": _json_parse(row["metadata"], {}),
+            "metadata": _sanitize_artifact_metadata(artifact["kind"], row["metadata"]),
             "created_at": row["created_at"],
             "slug": f'/{artifact["username"]}/{_hub_kind_label(artifact["kind"])}/{artifact["name"]}/{int(row["version"])}',
         }
@@ -2296,7 +2347,6 @@ def hub_registry(
                 "votes": int(row["votes_count"] or 0),
                 "views": int(row["views_count"] or 0),
                 "thumbnail": meta.get("thumbnail") or "/vite.svg",
-                "description": str(meta.get("description", "")),
             })
         return {"items": items}
     finally:
@@ -2360,7 +2410,7 @@ def _hub_load_content(username: str, kind: str, name: str, version: str = "alpha
                 "name": artifact["name"],
                 "version": "alpha",
                 "content": artifact["alpha_content"] or "",
-                "metadata": _json_parse(artifact["alpha_metadata"], {}),
+                "metadata": _sanitize_artifact_metadata(artifact["kind"], artifact["alpha_metadata"]),
             }
         if not str(version).isdigit():
             raise ValueError("xatrahub version must be integer or alpha")
@@ -2380,7 +2430,7 @@ def _hub_load_content(username: str, kind: str, name: str, version: str = "alpha
             "name": artifact["name"],
             "version": int(row["version"]),
             "content": row["content"] or "",
-            "metadata": _json_parse(row["metadata"], {}),
+            "metadata": _sanitize_artifact_metadata(artifact["kind"], row["metadata"]),
         }
     finally:
         conn.close()

@@ -20,6 +20,17 @@ const IMPORTABLE_LAYER_TYPES = [
   'TitleBox', 'CSS', 'BaseOption', 'FlagColorSequence', 'AdminColorSequence',
   'DataColormap', 'zoom', 'focus', 'slider', 'Python',
 ];
+const DEFAULT_INDIC_IMPORT = {
+  kind: 'lib',
+  username: 'srajma',
+  name: 'indic',
+  path: '/srajma/lib/indic/alpha',
+  selected_version: 'alpha',
+  _draft_version: 'alpha',
+  alias: 'indic',
+  filter_not: [],
+};
+const DEFAULT_INDIC_IMPORT_CODE = 'indic = xatrahub("/srajma/lib/indic/alpha")\n';
 
 const apiFetch = (path, options = {}) => {
   const headers = options.headers || {};
@@ -127,14 +138,10 @@ function App() {
   const [selectedThemeVersion, setSelectedThemeVersion] = useState('alpha');
   const [mapOwner, setMapOwner] = useState('guest');
   const [sourceMapRef, setSourceMapRef] = useState(null);
-  const [mapDescription, setMapDescription] = useState('');
-  const [mapDescriptionModalOpen, setMapDescriptionModalOpen] = useState(false);
-  const [mapDescriptionDraft, setMapDescriptionDraft] = useState('');
-  const [pendingMapPublish, setPendingMapPublish] = useState(null);
   const [mapVotes, setMapVotes] = useState(0);
   const [mapViews, setMapViews] = useState(0);
-  const [importsCode, setImportsCode] = useState('indic = xatrahub("/srajma/lib/indic")\n');
-  const [hubImports, setHubImports] = useState([]);
+  const [importsCode, setImportsCode] = useState(DEFAULT_INDIC_IMPORT_CODE);
+  const [hubImports, setHubImports] = useState([{ ...DEFAULT_INDIC_IMPORT }]);
   const [themeCode, setThemeCode] = useState('');
   const [runtimeCode, setRuntimeCode] = useState('');
   const [hubQuery, setHubQuery] = useState('');
@@ -509,6 +516,13 @@ xatra.TitleBox("<b>My Map</b>")
     return items;
   };
 
+  const ensureDefaultIndicImport = (items) => {
+    const list = Array.isArray(items) ? [...items] : [];
+    const exists = list.some((imp) => imp.kind === 'lib' && imp.username === 'srajma' && imp.name === 'indic');
+    if (!exists) list.unshift({ ...DEFAULT_INDIC_IMPORT });
+    return list;
+  };
+
   const getImportVersionOptions = (imp) => (
     artifactVersionOptions[artifactKey(imp.username, imp.kind, imp.name)] || [{ value: 'alpha', label: 'alpha' }]
   );
@@ -534,7 +548,6 @@ xatra.TitleBox("<b>My Map</b>")
         metadata: {
           ...buildHubMetadata(kind),
           forked_from: sourceMapRef,
-          description: opts.description ?? mapDescription,
         },
       }),
     });
@@ -678,7 +691,6 @@ xatra.TitleBox("<b>My Map</b>")
         setMapVotes(Number(artifactData.votes || 0));
         setMapViews(Number(artifactData.views || 0));
         setMapVersionLabel(version === 'alpha' ? 'alpha' : String(version));
-        setMapDescription(String(artifactData?.alpha?.metadata?.description || ''));
       }
     } catch (err) {
       setError(err.message);
@@ -699,8 +711,10 @@ xatra.TitleBox("<b>My Map</b>")
       if (typeof draft.project?.code === 'string') setCode(draft.project.code);
       if (typeof draft.project?.predefinedCode === 'string') setPredefinedCode(draft.project.predefinedCode);
       if (typeof draft.project?.importsCode === 'string') {
-        setImportsCode(draft.project.importsCode);
-        setHubImports(parseImportsCodeToItems(draft.project.importsCode));
+        const parsedImports = parseImportsCodeToItems(draft.project.importsCode);
+        const safeImports = parsedImports.length ? parsedImports : ensureDefaultIndicImport(parsedImports);
+        setHubImports(safeImports);
+        setImportsCode(serializeHubImports(safeImports));
       }
       if (typeof draft.project?.themeCode === 'string') setThemeCode(draft.project.themeCode);
       if (typeof draft.project?.runtimeCode === 'string') setRuntimeCode(draft.project.runtimeCode);
@@ -820,18 +834,27 @@ xatra.TitleBox("<b>My Map</b>")
         setThemeCode('');
         setRuntimeCode('');
         setPredefinedCode('');
-        setHubImports([]);
-        setImportsCode('indic = xatrahub("/srajma/lib/indic")\n');
+        const defaults = [{ ...DEFAULT_INDIC_IMPORT }];
+        setHubImports(defaults);
+        setImportsCode(serializeHubImports(defaults));
       } else {
         loadDraft();
       }
-      apiFetch('/maps/default-name').then((r) => r.json()).then((d) => {
-        if (d?.name && HUB_NAME_RE.test(d.name)) setMapName((prev) => (prev && prev !== 'new_map' ? prev : d.name));
-      }).catch(() => {});
-      setMapOwner(normalizedHubUsername);
+      if (authReady) {
+        apiFetch('/maps/default-name').then((r) => r.json()).then((d) => {
+          if (d?.name && HUB_NAME_RE.test(d.name)) setMapName((prev) => (prev && prev !== 'new_map' ? prev : d.name));
+        }).catch(() => {});
+      }
+      setMapOwner(currentUser.is_authenticated ? normalizedHubUsername : 'guest');
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [route.page, route.owner, route.map, route.version]);
+  }, [route.page, route.owner, route.map, route.version, authReady, currentUser.is_authenticated]);
+
+  useEffect(() => {
+    if (route.page === 'editor' && !route.owner) {
+      setMapOwner(currentUser.is_authenticated ? normalizedHubUsername : 'guest');
+    }
+  }, [route.page, route.owner, normalizedHubUsername, currentUser.is_authenticated]);
 
   const handleLogin = async (mode = authMode) => {
     setAuthSubmitting(true);
@@ -1358,19 +1381,6 @@ xatra.TitleBox("<b>My Map</b>")
         }
         return;
       }
-      if (mapDescriptionModalOpen) {
-        if (e.key === 'Escape') {
-          e.preventDefault();
-          setMapDescriptionModalOpen(false);
-          setPendingMapPublish(null);
-          return;
-        }
-        if (e.key === 'Enter' && !e.shiftKey) {
-          e.preventDefault();
-          confirmMapPublish();
-          return;
-        }
-      }
       if (e.key === 'Escape' && importModalOpen) {
         e.preventDefault();
         setImportModalOpen(false);
@@ -1448,7 +1458,7 @@ xatra.TitleBox("<b>My Map</b>")
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [activeTab, code, predefinedCode, builderElements, builderOptions, activePreviewTab, territoryLibrarySource, activePicker, referencePickTarget, mapDescriptionModalOpen, pendingMapPublish, mapDescriptionDraft]);
+  }, [activeTab, code, predefinedCode, builderElements, builderOptions, activePreviewTab, territoryLibrarySource, activePicker, referencePickTarget]);
 
   const handleGetCurrentView = () => {
     const ref = activePreviewTab === 'picker' ? pickerIframeRef : activePreviewTab === 'library' ? territoryLibraryIframeRef : iframeRef;
@@ -1677,25 +1687,7 @@ xatra.TitleBox("<b>My Map</b>")
         return;
       }
       const content = await buildMapArtifactContent();
-      setPendingMapPublish({ targetName, content });
-      setMapDescriptionDraft(mapDescription || '');
-      setMapDescriptionModalOpen(true);
-    } catch (err) {
-      setError(`Publish map failed: ${err.message}`);
-    }
-  };
-
-  const confirmMapPublish = async () => {
-    if (!pendingMapPublish) return;
-    try {
-      await publishHubArtifact('map', pendingMapPublish.content, {
-        owner: normalizedHubUsername,
-        name: pendingMapPublish.targetName,
-        description: mapDescriptionDraft,
-      });
-      setMapDescription(mapDescriptionDraft);
-      setMapDescriptionModalOpen(false);
-      setPendingMapPublish(null);
+      await publishHubArtifact('map', content, { owner: normalizedHubUsername, name: targetName });
     } catch (err) {
       setError(`Publish map failed: ${err.message}`);
     }
@@ -1715,7 +1707,6 @@ xatra.TitleBox("<b>My Map</b>")
       await publishHubArtifact('map', content, {
         owner: normalizedHubUsername,
         name: data.name,
-        description: mapDescription,
       });
     } catch (err) {
       setError(`Fork failed: ${err.message}`);
@@ -2279,7 +2270,6 @@ xatra.TitleBox("<b>My Map</b>")
           <div className="text-[10px] text-gray-500 truncate">
             by <a href={`/${item.username}`} target="_blank" rel="noreferrer" className="text-blue-700 hover:underline">{item.username}</a> · {item.votes || 0} votes · {item.views || 0} views
           </div>
-          <div className="text-[10px] text-gray-600 line-clamp-2">{item.description || 'No description'}</div>
           <div className="mt-2 flex gap-1">
             <select
               value={mapVersion}
@@ -2348,7 +2338,6 @@ xatra.TitleBox("<b>My Map</b>")
             </div>
           </div>
           {isCurrentMap && <div className="mt-1 text-[10px] text-gray-500">Current map cannot import itself.</div>}
-          <div className="text-[10px] text-gray-600 mt-1 line-clamp-2">{item.description || 'No description'}</div>
         </div>
       </div>
     );
@@ -2522,7 +2511,6 @@ xatra.TitleBox("<b>My Map</b>")
               <div key={m.slug} className="border rounded bg-white p-2 flex items-center justify-between">
                 <div>
                   <div className="font-mono text-xs">{m.name}</div>
-                  <div className="text-[11px] text-gray-600">{m.description || 'No description'}</div>
                 </div>
                 <button className="text-xs px-2 py-1 border rounded hover:bg-blue-50" onClick={() => navigateTo(m.slug)}>Open</button>
               </div>
@@ -2622,22 +2610,24 @@ xatra.TitleBox("<b>My Map</b>")
             </div>
           </div>
           {showMapMetaLine && (
-            <div className="text-xs text-gray-600 flex items-center gap-2">
-              <span>by</span>
-              <a href={`/${mapOwner}`} className="text-blue-700 hover:underline">{mapOwner}</a>
-              <span>·</span>
-              <button
-                onClick={handleVoteMap}
-                disabled={!(route.owner && route.map)}
-                className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded border ${route.owner && route.map ? 'hover:bg-gray-50' : 'opacity-40'}`}
-                title="Like/unlike"
-              >
-                <Heart size={12} className={mapVotes > 0 ? 'text-rose-600 fill-rose-600' : 'text-gray-500'} />
-                <span>{mapVotes} likes</span>
-              </button>
-              <span>·</span>
-              <span>{mapViews} views</span>
-            </div>
+            <>
+              <div className="text-xs text-gray-600 flex items-center gap-2">
+                <span>by</span>
+                <a href={`/${mapOwner}`} className="text-blue-700 hover:underline">{mapOwner}</a>
+                <span>·</span>
+                <button
+                  onClick={handleVoteMap}
+                  disabled={!(route.owner && route.map)}
+                  className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded border ${route.owner && route.map ? 'hover:bg-gray-50' : 'opacity-40'}`}
+                  title="Like/unlike"
+                >
+                  <Heart size={12} className={mapVotes > 0 ? 'text-rose-600 fill-rose-600' : 'text-gray-500'} />
+                  <span>{mapVotes} likes</span>
+                </button>
+                <span>·</span>
+                <span>{mapViews} views</span>
+              </div>
+            </>
           )}
         </div>
 
@@ -2993,28 +2983,6 @@ xatra.TitleBox("<b>My Map</b>")
             </div>
             <div className="flex-1 overflow-auto p-3 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
               {(hubSearchResults || []).map((item) => renderImportCatalogCard(item))}
-            </div>
-          </div>
-        </div>
-      )}
-      {mapDescriptionModalOpen && (
-        <div className="fixed inset-0 bg-black/40 z-[110] flex items-center justify-center">
-          <div className="w-[520px] max-w-[92vw] bg-white rounded-lg border shadow-xl">
-            <div className="px-4 py-3 border-b">
-              <div className="font-semibold text-sm">Map description</div>
-            </div>
-            <div className="p-4">
-              <textarea
-                autoFocus
-                value={mapDescriptionDraft}
-                onChange={(e) => setMapDescriptionDraft(e.target.value)}
-                className="w-full min-h-[110px] border rounded p-2 text-sm"
-                placeholder="Describe this map..."
-              />
-            </div>
-            <div className="px-4 py-3 border-t flex justify-end gap-2">
-              <button className="px-3 py-1.5 border rounded text-sm" onClick={() => { setMapDescriptionModalOpen(false); setPendingMapPublish(null); }}>Cancel</button>
-              <button className="px-3 py-1.5 bg-blue-600 text-white rounded text-sm hover:bg-blue-700" onClick={confirmMapPublish}>Save map</button>
             </div>
           </div>
         </div>
