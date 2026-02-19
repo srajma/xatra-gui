@@ -1,6 +1,6 @@
 import React, { useRef, useCallback, useState, useEffect } from 'react';
 import Editor from '@monaco-editor/react';
-import { Save, Copy } from 'lucide-react';
+import { Tag, Copy } from 'lucide-react';
 
 const XATRA_COMPLETIONS = {
   globals: [
@@ -37,6 +37,7 @@ const XATRA_COMPLETIONS = {
 const headingClass = 'px-3 py-2 bg-slate-900 text-slate-100 text-xs font-semibold rounded-t border border-slate-700 flex items-center justify-between';
 
 const CodeEditor = ({
+  pythonImports,
   code,
   setCode,
   predefinedCode,
@@ -144,6 +145,18 @@ const CodeEditor = ({
       <div className="flex flex-col min-h-0 space-y-3 overflow-y-auto pr-1">
         <div>
           <div className={headingClass}>
+            <span>Python Imports</span>
+          </div>
+          <textarea
+            className="w-full min-h-[108px] p-2 border border-slate-700 border-t-0 rounded-b bg-slate-950 text-slate-300 font-mono text-xs"
+            value={pythonImports || ''}
+            readOnly
+            spellCheck={false}
+          />
+        </div>
+
+        <div>
+          <div className={headingClass}>
             <span>xatrahub Imports</span>
             <span className="text-[10px] text-slate-300">`xatrahub("/user/map/name")`</span>
           </div>
@@ -159,8 +172,8 @@ const CodeEditor = ({
           <div className={headingClass}>
             <span>Custom Territory Library ({libraryVersionLabel || 'alpha'})</span>
             <div className="flex items-center gap-1">
-              <button type="button" onClick={onSaveLibrary} className="p-1 rounded border border-slate-600 hover:bg-slate-800" title="Publish new version">
-                <Save size={12} />
+              <button type="button" onClick={onSaveLibrary} className="px-1.5 py-1 rounded border border-slate-600 hover:bg-slate-800 inline-flex items-center gap-1" title="Publish new version">
+                <Tag size={12} /> <span className="font-mono text-[10px]">{libraryVersionLabel === 'alpha' ? 'alpha' : `v${libraryVersionLabel}`}</span>
               </button>
               <button type="button" onClick={onCopyLibrarySlug} className="p-1 rounded border border-slate-600 hover:bg-slate-800" title="Copy slug">
                 <Copy size={12} />
@@ -184,8 +197,8 @@ const CodeEditor = ({
           <div className={headingClass}>
             <span>Custom Theme ({themeVersionLabel || 'alpha'})</span>
             <div className="flex items-center gap-1">
-              <button type="button" onClick={onSaveTheme} className="p-1 rounded border border-slate-600 hover:bg-slate-800" title="Publish new version">
-                <Save size={12} />
+              <button type="button" onClick={onSaveTheme} className="px-1.5 py-1 rounded border border-slate-600 hover:bg-slate-800 inline-flex items-center gap-1" title="Publish new version">
+                <Tag size={12} /> <span className="font-mono text-[10px]">{themeVersionLabel === 'alpha' ? 'alpha' : `v${themeVersionLabel}`}</span>
               </button>
               <button type="button" onClick={onCopyThemeSlug} className="p-1 rounded border border-slate-600 hover:bg-slate-800" title="Copy slug">
                 <Copy size={12} />

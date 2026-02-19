@@ -1,5 +1,7 @@
 I have detailed a roadmap for this project in README.md. Go through it, fixing the bugs and implementing the features detailed, and relentlessly iterate until perfection.
 
+-----
+
 Thank you. However there are still lots of issues in this implementation:
 - Why would the username be an editable field? That makes no sense. It should be the user's username (linked to the user's profile page, see below), if logged-in, or just `new_user` if not. The default name of the map should also not be `xatra` but `new_map` (or, if the user is logged-in and already has a map called `new_map` then `new_map_1`, `new_map_2` etc.)
 - There should be proper user accounts and a login flow---and if possible we should have the option to login with Google account, etc. (we can put this off for later if it needs some manual setup from me). Like: right now I don't even know how to login as the admin user (srajma) and create a map with the main territory library. Obviously, don't roll your own auth, implement best practices.
@@ -31,3 +33,34 @@ Thank you. However there are still lots of issues in this implementation:
 - It should store the latest unsaved map in the database for both logged-in and logged-out users (using whatever auth/cookies/whatever idk for the latter) so it can be loaded again when the user revisits
 - You do not seem to have made any edits to the original xatra package. ???
 I would like you to fully and thoroughly implement a functioning website as I have asked you to, and iterate until you are sure I will be completely satisfied with your work.
+
+-----
+
+Thank you; however there are still clearly many avenues for improvement. I'd really like you to think through this thoroughly, thinking **from the perspective of a user**, and deliver a polished, usable product.
+
+1) Importing maps
+- I don't understand why you are so confused with the `filter_not` checkboxes. How would a user understand what `filter_not` means? And why are there only `TitleBox`, `CSS` and `BaseOption`? And why is there a checklist under each and every library item when all of them are synchronized? Again, what I said is: there should be ONE checklist (for all the items) consisting of _all_ the xatra layers (Flag, River, Data, Admin, AdminRivers, TitleBox, CSS, BaseOption, _everything_), all of which are selected at the start, and those which are un-selected are passed to `filter_not`.
+- The import buttons in the Import dialog should show visual feedback when clicked---like, turn it blue and change the text to "✓ Map Imported" or "✓ Territories Imported" or "✓ CSS Imported" and make it unclickable (this should persist when the Import dialog is re-opened, i.e. it should check if that particular item is imported). There are tons of examples of things like this throughout the website, buttons just seemingly doing nothing when a request is invalid, instead of telling the user what's wrong. The buttons also need to better match the style we have in the map editor; your buttons are ugly and it's impossible to tell if it has even been clicked.
+- There should be a nice UI element in the Builder sidebar for xatrahub imports, just like for Flags, Rivers etc. Removing the item should un-import that item, and make it available for import again in the Import dialog. This should also be integrated into the Builder/Code to-and-fro translation.
+- the "Import from xatra hub" button should be within the second div (i.e. right above "Global options") rather than with the slug and Builder/Code toggle. It should also match the design of the map editor and should just say "Import from existing map" instead (users don't know what a "xatra hub" is).
+2) Synchrony
+- The explore/profile UI's sidebar should have all the options present in the xatra menu in the editor (apart from map-related ones): Night mode, Explore, My Profile (not "Profile"), New map... (not "Editor"), Login/Signup (or Logout for logged-in users). And make it look very similar to the xatra menu in style (i.e. icons etc.) It should also have a nice "xatra" title at the top of the sidebar.
+- The "Import from xatra hub" dialog and the Explore page should be using the exact same code, displaying the exact same stuff etc. Right now they do not, because I can see several items in the Import dialog but nothing on the Explore page. I don't know which one is wrong, just make them both use the same thing so we can debug more sensibly.
+- There's also some lack of synchrony between simply clicking "My Profile" versus clicking "Explore" and then "My Profile": the latter loads the page without the "Account settings" box, then loads the "Account settings" box after some time. That's weird and confusing.
+- The maps in both Explore and the Import dialog should link to the maps so the user can open them in a new page. 
+3) Login page
+- There is no need for the "Need account?" "Have account?" creativity. Just have one page, with both the Sign up and Login; and make it look good and pretty.
+- If I try creating an account whose username already exists, it should give me a helpful error message--right now it just doesn't say anything, which makes the user think the website is frozen. Similarly if the password is too short etc. There are tons of examples of things like this throughout the website, buttons just seemingly doing nothing when a request is invalid, instead of telling the user what's wrong. The buttons also need to better match the style we have in the map editor; your buttons are ugly and it's impossible to tell if it has even been clicked.
+4) The clickable version tag + copy button on the maps themselves is (1) only available on already-saved maps, not when creating a New Map (fix this) and (2) hidden under the Builder Code toggle, as are the vote buttons. You need to maybe split all this into two lines, give it all some nicer space and design; you know, figure it out.
+5) I don't know if maps are actually getting saved, because I can choose `/srajmas/map/xatra/2` in the Import dialog but when I actually try to render with that imported I get `Error: xatrahub artifact not found: /srajmas/map/xatra`.
+
+
+Misc:
+- why is there `indic = xatrahub("/srajma/lib/indic")` in "Custom territory library"? This should be in "xatrahub imports". The custom territory library is for custom territories the user defines in the making of _that map_.
+- the style of the stuff you have introduced does not match the design style of the existing contents. Make it match.
+- the xatra menu should close when the user clicks out of it. Also have a keyboard shortcut `Ctrl/Cmd+;` for toggling the menu and mention it in the keyboard shortcuts hint panel.
+- remove the bracket version (like `(alpha)` or `(1)`) from code editor sub section headings
+- Dark theme -- the hover color in dark mode is fully white which makes the white text invisible. Instead the hover color should just be slightly lighter than the default dark background
+- There should be a keyboard shortcut `Ctrl/Cmd+Shift+X` for opening the import menu, and this should be listed in the kb shortcuts hints panel.
+
+These are just some things I noticed off the top of my head, but over all this needs a pretty serious overhaul. I want a really polished, beautiful website---just _think from the persepctive of the user_, keep iterating until you achieve perfection. 

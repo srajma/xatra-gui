@@ -11,6 +11,9 @@ import re
 import io
 import tokenize
 import sqlite3
+import secrets
+import hashlib
+import hmac
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from collections import OrderedDict
@@ -22,7 +25,7 @@ matplotlib.use('Agg')
 # Add src to path so we can import xatra
 sys.path.append(str(Path(__file__).parent.parent / "src"))
 
-from fastapi import FastAPI, HTTPException, Body
+from fastapi import FastAPI, HTTPException, Body, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional, Any, Dict, Union
@@ -30,7 +33,7 @@ from typing import List, Optional, Any, Dict, Union
 import xatra
 from xatra.loaders import gadm, naturalearth, polygon, GADM_DIR
 from xatra.render import export_html_string
-from xatra.colorseq import Color, LinearColorSequence, color_sequences
+from xatra.colorseq import Color, ColorSequence, LinearColorSequence, color_sequences
 from xatra.icon import Icon
 
 # Track one rendering process per task type so independent map generation can be cancelled safely.
@@ -44,6 +47,13 @@ HUB_DB_PATH = Path(__file__).parent / "xatra_hub.db"
 HUB_NAME_PATTERN = re.compile(r"^[a-z0-9_.]+$")
 HUB_USER_PATTERN = re.compile(r"^[a-z0-9_.-]+$")
 HUB_KINDS = {"map", "lib", "css"}
+SESSION_COOKIE = "xatra_session"
+GUEST_COOKIE = "xatra_guest"
+SESSION_TTL_DAYS = 30
+
+
+def _sha256_text(text: str) -> str:
+    return hashlib.sha256((text or "").encode("utf-8")).hexdigest()
 
 
 def _utc_now_iso() -> str:
@@ -102,6 +112,25 @@ def _json_parse(value: Any, default: Any) -> Any:
         return default
 
 
+def _hash_password(password: str) -> str:
+    salt = secrets.token_hex(16)
+    dk = hashlib.pbkdf2_hmac("sha256", (password or "").encode("utf-8"), salt.encode("utf-8"), 600000)
+    return f"pbkdf2_sha256${salt}${dk.hex()}"
+
+
+def _verify_password(password: str, password_hash: Optional[str]) -> bool:
+    if not isinstance(password_hash, str) or "$" not in password_hash:
+        return False
+    try:
+        algo, salt, digest = password_hash.split("$", 2)
+        if algo != "pbkdf2_sha256":
+            return False
+        calc = hashlib.pbkdf2_hmac("sha256", (password or "").encode("utf-8"), salt.encode("utf-8"), 600000).hex()
+        return hmac.compare_digest(calc, digest)
+    except Exception:
+        return False
+
+
 def _init_hub_db():
     conn = _hub_db_conn()
     try:
@@ -110,6 +139,10 @@ def _init_hub_db():
             CREATE TABLE IF NOT EXISTS hub_users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 username TEXT NOT NULL UNIQUE,
+                password_hash TEXT,
+                full_name TEXT NOT NULL DEFAULT '',
+                bio TEXT NOT NULL DEFAULT '',
+                is_admin INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL
             );
 
@@ -135,11 +168,83 @@ def _init_hub_db():
                 UNIQUE(artifact_id, version)
             );
 
+            CREATE TABLE IF NOT EXISTS hub_sessions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL REFERENCES hub_users(id) ON DELETE CASCADE,
+                token_hash TEXT NOT NULL UNIQUE,
+                created_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS hub_votes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                artifact_id INTEGER NOT NULL REFERENCES hub_artifacts(id) ON DELETE CASCADE,
+                user_id INTEGER NOT NULL REFERENCES hub_users(id) ON DELETE CASCADE,
+                created_at TEXT NOT NULL,
+                UNIQUE(artifact_id, user_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS hub_map_views (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                artifact_id INTEGER NOT NULL REFERENCES hub_artifacts(id) ON DELETE CASCADE,
+                viewer_key TEXT NOT NULL,
+                viewed_at TEXT NOT NULL,
+                UNIQUE(artifact_id, viewer_key)
+            );
+
+            CREATE TABLE IF NOT EXISTS hub_drafts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                owner_key TEXT NOT NULL UNIQUE,
+                project_json TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
             CREATE INDEX IF NOT EXISTS idx_hub_artifacts_lookup ON hub_artifacts(user_id, kind, name);
             CREATE INDEX IF NOT EXISTS idx_hub_artifacts_kind_name ON hub_artifacts(kind, name);
             CREATE INDEX IF NOT EXISTS idx_hub_versions_artifact ON hub_artifact_versions(artifact_id, version);
+            CREATE INDEX IF NOT EXISTS idx_hub_sessions_user ON hub_sessions(user_id);
+            CREATE INDEX IF NOT EXISTS idx_hub_votes_artifact ON hub_votes(artifact_id);
+            CREATE INDEX IF NOT EXISTS idx_hub_views_artifact ON hub_map_views(artifact_id);
             """
         )
+        # Lightweight migration for existing DBs.
+        existing_cols = {
+            row["name"]
+            for row in conn.execute("PRAGMA table_info(hub_users)").fetchall()
+        }
+        if "password_hash" not in existing_cols:
+            conn.execute("ALTER TABLE hub_users ADD COLUMN password_hash TEXT")
+        if "full_name" not in existing_cols:
+            conn.execute("ALTER TABLE hub_users ADD COLUMN full_name TEXT NOT NULL DEFAULT ''")
+        if "bio" not in existing_cols:
+            conn.execute("ALTER TABLE hub_users ADD COLUMN bio TEXT NOT NULL DEFAULT ''")
+        if "is_admin" not in existing_cols:
+            conn.execute("ALTER TABLE hub_users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0")
+
+        # Ensure default admin account exists.
+        now = _utc_now_iso()
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO hub_users(username, password_hash, full_name, bio, is_admin, created_at)
+            VALUES(?, ?, ?, ?, ?, ?)
+            """,
+            ("srajma", _hash_password("admin"), "srajma", "", 1, now),
+        )
+        # Seed default public territory library.
+        user_row = conn.execute("SELECT id FROM hub_users WHERE username = 'srajma'").fetchone()
+        if user_row is not None:
+            seed_content = json.dumps({
+                "predefined_code": "from xatra.territory_library import *\n",
+                "map_name": "indic",
+                "description": "Default Indic territory library",
+            })
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO hub_artifacts(user_id, kind, name, alpha_content, alpha_metadata, created_at, updated_at)
+                VALUES(?, 'lib', 'indic', ?, ?, ?, ?)
+                """,
+                (user_row["id"], seed_content, json.dumps({"description": "Default Indic territory library"}), now, now),
+            )
         conn.commit()
     finally:
         conn.close()
@@ -358,7 +463,10 @@ _init_hub_db()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "http://localhost:5188",
+        "http://127.0.0.1:5188",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -478,6 +586,32 @@ class HubArtifactWriteRequest(BaseModel):
     metadata: Dict[str, Any] = {}
 
 
+class AuthSignupRequest(BaseModel):
+    username: str
+    password: str
+    full_name: Optional[str] = ""
+
+
+class AuthLoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class UserProfileUpdateRequest(BaseModel):
+    full_name: Optional[str] = ""
+    bio: Optional[str] = ""
+
+
+class DraftRequest(BaseModel):
+    map_name: str = "new_map"
+    project: Dict[str, Any] = {}
+
+
+class PasswordUpdateRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+
 def _hub_kind_label(kind: str) -> str:
     if kind == "map":
         return "map"
@@ -501,7 +635,17 @@ def _hub_artifact_response(conn: sqlite3.Connection, artifact: sqlite3.Row) -> D
         for row in versions_rows
     ]
     latest_version = versions[0]["version"] if versions else None
+    latest_content_hash = None
+    if latest_version is not None:
+        latest_content = conn.execute(
+            "SELECT content FROM hub_artifact_versions WHERE artifact_id = ? AND version = ?",
+            (artifact["id"], latest_version),
+        ).fetchone()
+        if latest_content is not None:
+            latest_content_hash = _sha256_text(latest_content["content"] or "")
+    alpha_meta = _json_parse(artifact["alpha_metadata"], {})
     return {
+        "id": int(artifact["id"]),
         "username": artifact["username"],
         "kind": _hub_kind_label(artifact["kind"]),
         "name": artifact["name"],
@@ -509,14 +653,136 @@ def _hub_artifact_response(conn: sqlite3.Connection, artifact: sqlite3.Row) -> D
         "alpha": {
             "version": "alpha",
             "content": artifact["alpha_content"] or "",
-            "metadata": _json_parse(artifact["alpha_metadata"], {}),
+            "metadata": alpha_meta,
+            "content_hash": _sha256_text(artifact["alpha_content"] or ""),
             "updated_at": artifact["updated_at"],
         },
         "latest_published_version": latest_version,
+        "latest_published_content_hash": latest_content_hash,
         "published_versions": versions,
         "created_at": artifact["created_at"],
         "updated_at": artifact["updated_at"],
+        "votes": _map_vote_count(conn, artifact["id"]) if artifact["kind"] == "map" else 0,
+        "views": _map_view_count(conn, artifact["id"]) if artifact["kind"] == "map" else 0,
     }
+
+
+def _session_expiry_iso() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
+def _parse_iso(ts: str) -> datetime:
+    try:
+        return datetime.fromisoformat(str(ts))
+    except Exception:
+        return datetime.fromtimestamp(0, tz=timezone.utc)
+
+
+def _user_public_profile(conn: sqlite3.Connection, user_row: sqlite3.Row) -> Dict[str, Any]:
+    maps_count = conn.execute(
+        """
+        SELECT COUNT(*) AS c
+        FROM hub_artifacts
+        WHERE user_id = ? AND kind = 'map'
+        """,
+        (user_row["id"],),
+    ).fetchone()["c"]
+    views_count = conn.execute(
+        """
+        SELECT COUNT(*) AS c
+        FROM hub_map_views mv
+        JOIN hub_artifacts a ON a.id = mv.artifact_id
+        WHERE a.user_id = ? AND a.kind = 'map'
+        """,
+        (user_row["id"],),
+    ).fetchone()["c"]
+    return {
+        "username": user_row["username"],
+        "full_name": user_row["full_name"] if "full_name" in user_row.keys() else "",
+        "bio": user_row["bio"] if "bio" in user_row.keys() else "",
+        "maps_count": int(maps_count or 0),
+        "views_count": int(views_count or 0),
+        "created_at": user_row["created_at"],
+    }
+
+
+def _session_user_from_token(conn: sqlite3.Connection, token: Optional[str]) -> Optional[sqlite3.Row]:
+    if not token:
+        return None
+    token_hash = _sha256_text(token)
+    row = conn.execute(
+        """
+        SELECT u.*
+        FROM hub_sessions s
+        JOIN hub_users u ON u.id = s.user_id
+        WHERE s.token_hash = ?
+        """,
+        (token_hash,),
+    ).fetchone()
+    if row is None:
+        return None
+    expiry_row = conn.execute(
+        "SELECT expires_at FROM hub_sessions WHERE token_hash = ?",
+        (token_hash,),
+    ).fetchone()
+    if expiry_row is None:
+        return None
+    expires_at = _parse_iso(expiry_row["expires_at"])
+    if expires_at <= datetime.now(timezone.utc):
+        conn.execute("DELETE FROM hub_sessions WHERE token_hash = ?", (token_hash,))
+        conn.commit()
+        return None
+    return row
+
+
+def _request_user(conn: sqlite3.Connection, request: Request) -> Optional[sqlite3.Row]:
+    token = request.cookies.get(SESSION_COOKIE)
+    return _session_user_from_token(conn, token)
+
+
+def _ensure_guest_id(request: Request, response: Optional[Response] = None) -> str:
+    gid = request.cookies.get(GUEST_COOKIE)
+    if gid and gid.strip():
+        return gid
+    gid = secrets.token_hex(12)
+    if response is not None:
+        response.set_cookie(
+            GUEST_COOKIE,
+            gid,
+            httponly=True,
+            samesite="lax",
+            max_age=60 * 60 * 24 * 365,
+        )
+    return gid
+
+
+def _request_actor_username(conn: sqlite3.Connection, request: Request, response: Optional[Response] = None) -> str:
+    user = _request_user(conn, request)
+    if user is not None:
+        return user["username"]
+    _ensure_guest_id(request, response=response)
+    return "new_user"
+
+
+def _next_available_map_name(conn: sqlite3.Connection, username: str, base_name: str = "new_map") -> str:
+    username = _normalize_hub_user(username)
+    base = _normalize_hub_name(base_name)
+    existing_rows = conn.execute(
+        """
+        SELECT a.name
+        FROM hub_artifacts a
+        JOIN hub_users u ON u.id = a.user_id
+        WHERE u.username = ? AND a.kind = 'map'
+        """,
+        (username,),
+    ).fetchall()
+    existing = {row["name"] for row in existing_rows}
+    if base not in existing:
+        return base
+    i = 1
+    while f"{base}_{i}" in existing:
+        i += 1
+    return f"{base}_{i}"
 
 def _python_value(node: ast.AST):
     if isinstance(node, ast.Constant):
@@ -1215,6 +1481,25 @@ def _get_territory_catalog(source: str, predefined_code: str) -> Dict[str, List[
                 for name in dir(territory_library):
                     if not name.startswith("_"):
                         exec_globals[name] = getattr(territory_library, name)
+                def _catalog_xatrahub(path, filter_only=None, filter_not=None):
+                    parsed = _parse_xatrahub_path(str(path))
+                    loaded = _hub_load_content(parsed["username"], parsed["kind"], parsed["name"], parsed["version"])
+                    kind = loaded.get("kind")
+                    content = loaded.get("content", "")
+                    if kind == "lib":
+                        scope = {
+                            "gadm": xatra.loaders.gadm,
+                            "polygon": xatra.loaders.polygon,
+                            "naturalearth": xatra.loaders.naturalearth,
+                            "overpass": xatra.loaders.overpass,
+                        }
+                        exec(str(content or ""), scope)
+                        return SimpleNamespace(**{k: v for k, v in scope.items() if not k.startswith("_")})
+                    if kind in {"map", "css"}:
+                        exec(str(content or ""), exec_globals)
+                        return None
+                    return None
+                exec_globals["xatrahub"] = _catalog_xatrahub
                 exec(predefined_code, exec_globals)
                 idx = exec_globals.get("__TERRITORY_INDEX__", [])
                 if isinstance(idx, (list, tuple)):
@@ -1248,6 +1533,407 @@ def health():
     return {"status": "ok"}
 
 
+def _map_vote_count(conn: sqlite3.Connection, artifact_id: int) -> int:
+    row = conn.execute("SELECT COUNT(*) AS c FROM hub_votes WHERE artifact_id = ?", (artifact_id,)).fetchone()
+    return int(row["c"] if row else 0)
+
+
+def _map_view_count(conn: sqlite3.Connection, artifact_id: int) -> int:
+    row = conn.execute("SELECT COUNT(*) AS c FROM hub_map_views WHERE artifact_id = ?", (artifact_id,)).fetchone()
+    return int(row["c"] if row else 0)
+
+
+def _require_write_identity(conn: sqlite3.Connection, request: Request, username: str) -> Optional[sqlite3.Row]:
+    target = _normalize_hub_user(username)
+    user = _request_user(conn, request)
+    if user is not None:
+        if user["username"] != target:
+            raise HTTPException(status_code=403, detail="Cannot modify another user's artifact")
+        return user
+    if target != "new_user":
+        raise HTTPException(status_code=401, detail="Login required")
+    return None
+
+
+@app.post("/auth/signup")
+def auth_signup(request: AuthSignupRequest, response: Response):
+    username = _normalize_hub_user(request.username)
+    password = str(request.password or "")
+    if len(password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+    conn = _hub_db_conn()
+    try:
+        exists = conn.execute("SELECT id FROM hub_users WHERE username = ?", (username,)).fetchone()
+        if exists is not None:
+            raise HTTPException(status_code=409, detail="Username already exists")
+        now = _utc_now_iso()
+        conn.execute(
+            """
+            INSERT INTO hub_users(username, password_hash, full_name, bio, is_admin, created_at)
+            VALUES(?, ?, ?, '', 0, ?)
+            """,
+            (username, _hash_password(password), str(request.full_name or "").strip(), now),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return auth_login(AuthLoginRequest(username=username, password=password), response)
+
+
+@app.post("/auth/login")
+def auth_login(request: AuthLoginRequest, response: Response):
+    conn = _hub_db_conn()
+    try:
+        username = _normalize_hub_user(request.username)
+        row = conn.execute("SELECT * FROM hub_users WHERE username = ?", (username,)).fetchone()
+        if row is None or not _verify_password(str(request.password or ""), row["password_hash"]):
+            raise HTTPException(status_code=401, detail="Invalid username or password")
+        token = secrets.token_urlsafe(32)
+        token_hash = _sha256_text(token)
+        now = datetime.now(timezone.utc)
+        exp = datetime.fromtimestamp(now.timestamp() + 60 * 60 * 24 * SESSION_TTL_DAYS, tz=timezone.utc).replace(microsecond=0)
+        conn.execute("DELETE FROM hub_sessions WHERE user_id = ?", (row["id"],))
+        conn.execute(
+            "INSERT INTO hub_sessions(user_id, token_hash, created_at, expires_at) VALUES(?, ?, ?, ?)",
+            (row["id"], token_hash, _utc_now_iso(), exp.isoformat()),
+        )
+        conn.commit()
+        response.set_cookie(
+            SESSION_COOKIE,
+            token,
+            httponly=True,
+            samesite="lax",
+            max_age=60 * 60 * 24 * SESSION_TTL_DAYS,
+        )
+        return {"user": _user_public_profile(conn, row), "is_authenticated": True}
+    finally:
+        conn.close()
+
+
+@app.post("/auth/logout")
+def auth_logout(request: Request, response: Response):
+    token = request.cookies.get(SESSION_COOKIE)
+    conn = _hub_db_conn()
+    try:
+        if token:
+            conn.execute("DELETE FROM hub_sessions WHERE token_hash = ?", (_sha256_text(token),))
+            conn.commit()
+    finally:
+        conn.close()
+    response.delete_cookie(SESSION_COOKIE)
+    return {"ok": True}
+
+
+@app.get("/auth/me")
+def auth_me(request: Request, response: Response):
+    conn = _hub_db_conn()
+    try:
+        user = _request_user(conn, request)
+        guest_id = _ensure_guest_id(request, response=response)
+        if user is None:
+            return {
+                "is_authenticated": False,
+                "user": {
+                    "username": "new_user",
+                    "full_name": "",
+                    "bio": "",
+                    "maps_count": 0,
+                    "views_count": 0,
+                },
+                "guest_id": guest_id,
+            }
+        return {
+            "is_authenticated": True,
+            "user": _user_public_profile(conn, user),
+            "guest_id": guest_id,
+        }
+    finally:
+        conn.close()
+
+
+@app.post("/auth/google")
+def auth_google_placeholder():
+    return {
+        "configured": False,
+        "message": "Google OAuth is not configured yet. Add OIDC provider config to enable it.",
+    }
+
+
+@app.put("/auth/me/profile")
+def auth_update_profile(request: Request, payload: UserProfileUpdateRequest):
+    conn = _hub_db_conn()
+    try:
+        user = _request_user(conn, request)
+        if user is None:
+            raise HTTPException(status_code=401, detail="Login required")
+        conn.execute(
+            "UPDATE hub_users SET full_name = ?, bio = ? WHERE id = ?",
+            (str(payload.full_name or "").strip(), str(payload.bio or "").strip(), user["id"]),
+        )
+        conn.commit()
+        updated = conn.execute("SELECT * FROM hub_users WHERE id = ?", (user["id"],)).fetchone()
+        return {"user": _user_public_profile(conn, updated)}
+    finally:
+        conn.close()
+
+
+@app.put("/auth/me/password")
+def auth_update_password(request: Request, payload: PasswordUpdateRequest):
+    conn = _hub_db_conn()
+    try:
+        user = _request_user(conn, request)
+        if user is None:
+            raise HTTPException(status_code=401, detail="Login required")
+        if not _verify_password(payload.current_password or "", user["password_hash"]):
+            raise HTTPException(status_code=400, detail="Current password is incorrect")
+        if len(payload.new_password or "") < 8:
+            raise HTTPException(status_code=400, detail="New password must be at least 8 characters")
+        conn.execute("UPDATE hub_users SET password_hash = ? WHERE id = ?", (_hash_password(payload.new_password), user["id"]))
+        conn.commit()
+        return {"ok": True}
+    finally:
+        conn.close()
+
+
+@app.get("/maps/default-name")
+def maps_default_name(request: Request):
+    conn = _hub_db_conn()
+    try:
+        user = _request_user(conn, request)
+        owner = user["username"] if user else "new_user"
+        return {"username": owner, "name": _next_available_map_name(conn, owner, "new_map")}
+    finally:
+        conn.close()
+
+
+@app.get("/maps/resolve-name")
+def maps_resolve_name(request: Request, base: str = "new_map"):
+    conn = _hub_db_conn()
+    try:
+        user = _request_user(conn, request)
+        owner = user["username"] if user else "new_user"
+        cleaned = _normalize_hub_name(base or "new_map")
+        return {"username": owner, "name": _next_available_map_name(conn, owner, cleaned)}
+    finally:
+        conn.close()
+
+
+@app.get("/maps/{username}/{map_name}")
+def maps_get(username: str, map_name: str, version: str = "alpha"):
+    return hub_get_artifact_version(username=username, kind="map", name=map_name, version=version)
+
+
+@app.post("/maps/{username}/{map_name}/view")
+def maps_record_view(username: str, map_name: str, request: Request, response: Response):
+    conn = _hub_db_conn()
+    try:
+        artifact = _hub_get_artifact(conn, username, "map", map_name)
+        if artifact is None:
+            raise HTTPException(status_code=404, detail="Map not found")
+        user = _request_user(conn, request)
+        if user is not None:
+            viewer_key = f"user:{user['id']}"
+        else:
+            viewer_key = f"guest:{_ensure_guest_id(request, response=response)}"
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO hub_map_views(artifact_id, viewer_key, viewed_at)
+            VALUES(?, ?, ?)
+            """,
+            (artifact["id"], viewer_key, _utc_now_iso()),
+        )
+        conn.commit()
+        return {"views": _map_view_count(conn, artifact["id"])}
+    finally:
+        conn.close()
+
+
+@app.post("/maps/{username}/{map_name}/vote")
+def maps_vote(username: str, map_name: str, request: Request):
+    conn = _hub_db_conn()
+    try:
+        user = _request_user(conn, request)
+        if user is None:
+            raise HTTPException(status_code=401, detail="Login required to vote")
+        artifact = _hub_get_artifact(conn, username, "map", map_name)
+        if artifact is None:
+            raise HTTPException(status_code=404, detail="Map not found")
+        existing = conn.execute(
+            "SELECT id FROM hub_votes WHERE artifact_id = ? AND user_id = ?",
+            (artifact["id"], user["id"]),
+        ).fetchone()
+        if existing:
+            conn.execute("DELETE FROM hub_votes WHERE id = ?", (existing["id"],))
+            voted = False
+        else:
+            conn.execute(
+                "INSERT INTO hub_votes(artifact_id, user_id, created_at) VALUES(?, ?, ?)",
+                (artifact["id"], user["id"], _utc_now_iso()),
+            )
+            voted = True
+        conn.commit()
+        return {"voted": voted, "votes": _map_vote_count(conn, artifact["id"])}
+    finally:
+        conn.close()
+
+
+@app.get("/explore")
+def maps_explore(
+    q: Optional[str] = None,
+    page: int = 1,
+    per_page: int = 12,
+):
+    query = str(q or "").strip().lower()
+    user_filter = None
+    text_terms: List[str] = []
+    for token in query.split():
+        if token.startswith("user:") and len(token) > 5:
+            user_filter = token[5:]
+        elif token:
+            text_terms.append(token)
+    safe_page = max(1, int(page or 1))
+    safe_per_page = max(1, min(int(per_page or 12), 30))
+    offset = (safe_page - 1) * safe_per_page
+    conn = _hub_db_conn()
+    try:
+        where = ["a.kind = 'map'"]
+        params: List[Any] = []
+        if user_filter:
+            where.append("LOWER(u.username) = ?")
+            params.append(user_filter)
+        for term in text_terms:
+            where.append("(LOWER(a.name) LIKE ? OR LOWER(a.alpha_metadata) LIKE ? OR LOWER(u.username) LIKE ?)")
+            like = f"%{term}%"
+            params.extend([like, like, like])
+        where_sql = "WHERE " + " AND ".join(where)
+        total = conn.execute(
+            f"SELECT COUNT(*) AS c FROM hub_artifacts a JOIN hub_users u ON u.id = a.user_id {where_sql}",
+            tuple(params),
+        ).fetchone()["c"]
+        rows = conn.execute(
+            f"""
+            SELECT a.id, a.name, a.updated_at, a.alpha_metadata, u.username
+            FROM hub_artifacts a
+            JOIN hub_users u ON u.id = a.user_id
+            {where_sql}
+            ORDER BY a.updated_at DESC
+            LIMIT ? OFFSET ?
+            """,
+            (*params, safe_per_page, offset),
+        ).fetchall()
+        items = []
+        for row in rows:
+            meta = _json_parse(row["alpha_metadata"], {})
+            items.append({
+                "username": row["username"],
+                "name": row["name"],
+                "slug": f"/{row['username']}/map/{row['name']}",
+                "description": str(meta.get("description", "")),
+                "forked_from": meta.get("forked_from"),
+                "votes": _map_vote_count(conn, row["id"]),
+                "views": _map_view_count(conn, row["id"]),
+                "updated_at": row["updated_at"],
+                "thumbnail": meta.get("thumbnail") or "/vite.svg",
+            })
+        return {"items": items, "page": safe_page, "per_page": safe_per_page, "total": int(total or 0)}
+    finally:
+        conn.close()
+
+
+@app.get("/users/{username}")
+def user_profile(username: str, q: Optional[str] = None, page: int = 1, per_page: int = 10):
+    uname = _normalize_hub_user(username)
+    conn = _hub_db_conn()
+    try:
+        user = conn.execute("SELECT * FROM hub_users WHERE username = ?", (uname,)).fetchone()
+        if user is None:
+            raise HTTPException(status_code=404, detail="User not found")
+        profile = _user_public_profile(conn, user)
+        safe_page = max(1, int(page or 1))
+        safe_per_page = max(1, min(int(per_page or 10), 30))
+        offset = (safe_page - 1) * safe_per_page
+        query = str(q or "").strip().lower()
+        where = "WHERE a.user_id = ? AND a.kind = 'map'"
+        params: List[Any] = [user["id"]]
+        if query:
+            where += " AND (LOWER(a.name) LIKE ? OR LOWER(a.alpha_metadata) LIKE ?)"
+            like = f"%{query}%"
+            params.extend([like, like])
+        total = conn.execute(f"SELECT COUNT(*) AS c FROM hub_artifacts a {where}", tuple(params)).fetchone()["c"]
+        rows = conn.execute(
+            f"""
+            SELECT a.id, a.name, a.updated_at, a.alpha_metadata
+            FROM hub_artifacts a
+            {where}
+            ORDER BY a.updated_at DESC
+            LIMIT ? OFFSET ?
+            """,
+            (*params, safe_per_page, offset),
+        ).fetchall()
+        maps = []
+        for row in rows:
+            meta = _json_parse(row["alpha_metadata"], {})
+            maps.append({
+                "name": row["name"],
+                "slug": f"/{uname}/map/{row['name']}",
+                "votes": _map_vote_count(conn, row["id"]),
+                "views": _map_view_count(conn, row["id"]),
+                "updated_at": row["updated_at"],
+                "description": str(meta.get("description", "")),
+                "thumbnail": meta.get("thumbnail") or "/vite.svg",
+            })
+        return {"profile": profile, "maps": maps, "page": safe_page, "per_page": safe_per_page, "total": int(total or 0)}
+    finally:
+        conn.close()
+
+
+@app.put("/draft/current")
+def draft_save(request: Request, response: Response, payload: DraftRequest):
+    conn = _hub_db_conn()
+    try:
+        user = _request_user(conn, request)
+        if user is not None:
+            owner_key = f"user:{user['id']}"
+        else:
+            owner_key = f"guest:{_ensure_guest_id(request, response=response)}"
+        now = _utc_now_iso()
+        draft_json = json.dumps({
+            "map_name": _normalize_hub_name(payload.map_name or "new_map"),
+            "project": payload.project or {},
+        }, ensure_ascii=False)
+        conn.execute(
+            """
+            INSERT INTO hub_drafts(owner_key, project_json, updated_at)
+            VALUES(?, ?, ?)
+            ON CONFLICT(owner_key) DO UPDATE SET
+                project_json = excluded.project_json,
+                updated_at = excluded.updated_at
+            """,
+            (owner_key, draft_json, now),
+        )
+        conn.commit()
+        return {"ok": True, "updated_at": now}
+    finally:
+        conn.close()
+
+
+@app.get("/draft/current")
+def draft_get(request: Request, response: Response):
+    conn = _hub_db_conn()
+    try:
+        user = _request_user(conn, request)
+        if user is not None:
+            owner_key = f"user:{user['id']}"
+        else:
+            owner_key = f"guest:{_ensure_guest_id(request, response=response)}"
+        row = conn.execute("SELECT project_json, updated_at FROM hub_drafts WHERE owner_key = ?", (owner_key,)).fetchone()
+        if row is None:
+            return {"exists": False}
+        return {"exists": True, "updated_at": row["updated_at"], "draft": _json_parse(row["project_json"], {})}
+    finally:
+        conn.close()
+
+
 @app.post("/hub/users/ensure")
 def hub_ensure_user(request: HubEnsureUserRequest):
     conn = _hub_db_conn()
@@ -1260,10 +1946,15 @@ def hub_ensure_user(request: HubEnsureUserRequest):
 
 
 @app.put("/hub/{username}/{kind}/{name}/alpha")
-def hub_save_alpha(username: str, kind: str, name: str, request: HubArtifactWriteRequest):
+def hub_save_alpha(username: str, kind: str, name: str, request: HubArtifactWriteRequest, http_request: Request, response: Response):
     conn = _hub_db_conn()
     try:
-        artifact = _hub_upsert_alpha(conn, username, kind, name, request.content or "", request.metadata or {})
+        _require_write_identity(conn, http_request, username)
+        # For map metadata, automatically preserve owner and updated_at.
+        md = dict(request.metadata or {})
+        md["owner"] = _normalize_hub_user(username)
+        md["updated_at"] = _utc_now_iso()
+        artifact = _hub_upsert_alpha(conn, username, kind, name, request.content or "", md)
         conn.commit()
         return _hub_artifact_response(conn, artifact)
     finally:
@@ -1271,15 +1962,33 @@ def hub_save_alpha(username: str, kind: str, name: str, request: HubArtifactWrit
 
 
 @app.post("/hub/{username}/{kind}/{name}/publish")
-def hub_publish(username: str, kind: str, name: str, request: HubArtifactWriteRequest):
+def hub_publish(username: str, kind: str, name: str, request: HubArtifactWriteRequest, http_request: Request):
     conn = _hub_db_conn()
     try:
-        publish_result = _hub_publish_version(conn, username, kind, name, request.content or "", request.metadata or {})
+        _require_write_identity(conn, http_request, username)
+        content = request.content or ""
+        md = dict(request.metadata or {})
+        md["owner"] = _normalize_hub_user(username)
+        md["updated_at"] = _utc_now_iso()
+        current = _hub_get_artifact(conn, username, kind, name)
+        if current is not None:
+            latest_row = conn.execute(
+                "SELECT content FROM hub_artifact_versions WHERE artifact_id = ? ORDER BY version DESC LIMIT 1",
+                (current["id"],),
+            ).fetchone()
+            latest_content = latest_row["content"] if latest_row else ""
+            if latest_content == content:
+                resp = _hub_artifact_response(conn, current)
+                resp["published"] = None
+                resp["no_changes"] = True
+                return resp
+        publish_result = _hub_publish_version(conn, username, kind, name, content, md)
         artifact = _hub_get_artifact(conn, username, kind, name)
         if artifact is None:
             raise HTTPException(status_code=500, detail="Artifact missing after publish")
         response = _hub_artifact_response(conn, artifact)
         response["published"] = publish_result
+        response["no_changes"] = False
         return response
     finally:
         conn.close()
@@ -1350,7 +2059,14 @@ def hub_registry(
     normalized_kind = None
     if kind is not None and str(kind).strip():
         normalized_kind = _normalize_hub_kind(kind)
-    search_text = str(q or "").strip().lower()
+    raw_query = str(q or "").strip().lower()
+    user_filter = None
+    terms: List[str] = []
+    for token in raw_query.split():
+        if token.startswith("user:") and len(token) > 5:
+            user_filter = token[5:]
+        elif token:
+            terms.append(token)
     safe_limit = max(1, min(int(limit or 50), 200))
     conn = _hub_db_conn()
     try:
@@ -1359,9 +2075,12 @@ def hub_registry(
         if normalized_kind:
             where.append("a.kind = ?")
             params.append(normalized_kind)
-        if search_text:
+        if user_filter:
+            where.append("LOWER(u.username) = ?")
+            params.append(user_filter)
+        for term in terms:
             where.append("(LOWER(a.name) LIKE ? OR LOWER(u.username) LIKE ? OR LOWER(a.alpha_metadata) LIKE ?)")
-            like = f"%{search_text}%"
+            like = f"%{term}%"
             params.extend([like, like, like])
         where_sql = ("WHERE " + " AND ".join(where)) if where else ""
         rows = conn.execute(
@@ -1369,13 +2088,17 @@ def hub_registry(
             SELECT
                 a.id, a.kind, a.name, a.updated_at,
                 u.username,
-                COALESCE(MAX(v.version), 0) AS latest_version
+                COALESCE(MAX(v.version), 0) AS latest_version,
+                COUNT(DISTINCT vv.id) AS votes_count,
+                COUNT(DISTINCT mv.id) AS views_count
             FROM hub_artifacts a
             JOIN hub_users u ON u.id = a.user_id
             LEFT JOIN hub_artifact_versions v ON v.artifact_id = a.id
+            LEFT JOIN hub_votes vv ON vv.artifact_id = a.id
+            LEFT JOIN hub_map_views mv ON mv.artifact_id = a.id
             {where_sql}
             GROUP BY a.id, a.kind, a.name, a.updated_at, u.username
-            ORDER BY a.updated_at DESC
+            ORDER BY votes_count DESC, views_count DESC, a.updated_at DESC
             LIMIT ?
             """,
             (*params, safe_limit),
@@ -1384,6 +2107,7 @@ def hub_registry(
         for row in rows:
             kind_label = _hub_kind_label(row["kind"])
             latest = int(row["latest_version"]) if int(row["latest_version"]) > 0 else None
+            meta = _json_parse(conn.execute("SELECT alpha_metadata FROM hub_artifacts WHERE id = ?", (row["id"],)).fetchone()["alpha_metadata"], {})
             items.append({
                 "username": row["username"],
                 "kind": kind_label,
@@ -1391,6 +2115,10 @@ def hub_registry(
                 "slug": f'/{row["username"]}/{kind_label}/{row["name"]}',
                 "latest_version": latest,
                 "updated_at": row["updated_at"],
+                "votes": int(row["votes_count"] or 0),
+                "views": int(row["views_count"] or 0),
+                "thumbnail": meta.get("thumbnail") or "/vite.svg",
+                "description": str(meta.get("description", "")),
             })
         return {"items": items}
     finally:
@@ -1645,14 +2373,17 @@ def run_rendering_task(task_type, data, result_queue):
                     "overpass": xatra.loaders.overpass,
                     "Icon": Icon,
                     "Color": Color,
+                    "ColorSequence": ColorSequence,
                     "LinearColorSequence": LinearColorSequence,
+                    "LinearSegmentedColormap": __import__("matplotlib.colors", fromlist=["LinearSegmentedColormap"]).LinearSegmentedColormap,
+                    "plt": __import__("matplotlib.pyplot", fromlist=["pyplot"]),
                 }
                 if "xatrahub" in exec_globals:
                     lib_globals["xatrahub"] = exec_globals["xatrahub"]
                 exec(code_text or "", lib_globals)
                 names = [
                     name for name in lib_globals.keys()
-                    if not name.startswith("_") and name not in {"xatra", "gadm", "naturalearth", "polygon", "overpass", "Icon", "Color", "LinearColorSequence", "xatrahub"}
+                    if not name.startswith("_") and name not in {"xatra", "gadm", "naturalearth", "polygon", "overpass", "Icon", "Color", "ColorSequence", "LinearColorSequence", "xatrahub"}
                 ]
                 payload = {name: lib_globals[name] for name in names}
                 return SimpleNamespace(**payload)
@@ -1724,7 +2455,10 @@ def run_rendering_task(task_type, data, result_queue):
                 "map": m,
                 "Icon": Icon,
                 "Color": Color,
+                "ColorSequence": ColorSequence,
                 "LinearColorSequence": LinearColorSequence,
+                "LinearSegmentedColormap": __import__("matplotlib.colors", fromlist=["LinearSegmentedColormap"]).LinearSegmentedColormap,
+                "plt": __import__("matplotlib.pyplot", fromlist=["pyplot"]),
             }
             register_xatrahub(exec_globals)
             imports_code = getattr(data, "imports_code", "") or ""
@@ -1852,7 +2586,15 @@ def run_rendering_task(task_type, data, result_queue):
                         "polygon": xatra.loaders.polygon,
                         "naturalearth": xatra.loaders.naturalearth,
                         "overpass": xatra.loaders.overpass,
+                        "xatra": xatra,
+                        "Icon": Icon,
+                        "Color": Color,
+                        "ColorSequence": ColorSequence,
+                        "LinearColorSequence": LinearColorSequence,
+                        "LinearSegmentedColormap": __import__("matplotlib.colors", fromlist=["LinearSegmentedColormap"]).LinearSegmentedColormap,
+                        "plt": __import__("matplotlib.pyplot", fromlist=["pyplot"]),
                     }
+                    register_xatrahub(exec_globals)
                     for name in dir(territory_library):
                         if not name.startswith("_"):
                             exec_globals[name] = getattr(territory_library, name)
@@ -1869,7 +2611,10 @@ def run_rendering_task(task_type, data, result_queue):
                 "overpass": xatra.loaders.overpass,
                 "Icon": Icon,
                 "Color": Color,
+                "ColorSequence": ColorSequence,
                 "LinearColorSequence": LinearColorSequence,
+                "LinearSegmentedColormap": __import__("matplotlib.colors", fromlist=["LinearSegmentedColormap"]).LinearSegmentedColormap,
+                "plt": __import__("matplotlib.pyplot", fromlist=["pyplot"]),
                 "map": m,
             }
             if predefined_namespace:
