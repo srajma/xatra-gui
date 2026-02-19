@@ -2449,7 +2449,7 @@ xatra.TitleBox("<b>My Map</b>")
               <button className="px-3 py-2 border rounded" onClick={searchHubRegistry}>Search</button>
             </div>
             <div className="px-3 py-2 border-b bg-gray-50">
-              <div className="text-[11px] font-semibold mb-1 text-gray-700">Imported layers from maps/themes (unchecked layers become filter_not)</div>
+              <div className="text-[11px] font-semibold mb-1 text-gray-700">Imported layers from maps/themes</div>
               <div className="flex flex-wrap gap-2">
                 {IMPORTABLE_LAYER_TYPES.map((layer) => (
                   <label key={layer} className="text-[11px] inline-flex items-center gap-1 px-1.5 py-0.5 border rounded bg-white">

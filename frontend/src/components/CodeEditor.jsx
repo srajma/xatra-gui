@@ -158,7 +158,7 @@ const CodeEditor = ({
         <div>
           <div className={headingClass}>
             <span>xatrahub Imports</span>
-            <span className="text-[10px] text-slate-300">`xatrahub("/user/map/name")`</span>
+            {/* <span className="text-[10px] text-slate-300">`xatrahub("/user/map/name")`</span> */}
           </div>
           <textarea
             className="w-full min-h-[92px] p-2 border border-slate-700 border-t-0 rounded-b bg-slate-950 text-slate-100 font-mono text-xs focus:outline-none"

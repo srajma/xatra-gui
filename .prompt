@@ -64,3 +64,42 @@ Misc:
 - There should be a keyboard shortcut `Ctrl/Cmd+Shift+X` for opening the import menu, and this should be listed in the kb shortcuts hints panel.
 
 These are just some things I noticed off the top of my head, but over all this needs a pretty serious overhaul. I want a really polished, beautiful website---just _think from the persepctive of the user_, keep iterating until you achieve perfection. 
+
+----------
+
+1) Explore and Imports
+a) The import panel should grey out the current map, since its contents cannot be imported into itself, obviously.
+b) The system should store every published version of a map, as well as every published version of a territory library and every published version of a theme including the alpha builds which are the latest versions that may not have been saved (this should hopefully already be how it works)---in the importer, next to each "Import map" "Import CSS" "Import Territories", there should be a dropdown listing all the versions of the map (including alpha), initialized to the latest non-alpha version (or to alpha if there is no such version), and clicking the Import button should import that version. Similarly the Imports list in the Builder UI should show the version dropdown set to the selected version, and a button "Switch version" which is initally greyed out---the user can change the version in the dropdown, activating the button and click it to switch it. Both these things will require some significant changes to the UI, so do it carefully and make sure not to mess it up.
+c) The version dropdown should also be available on /explore (though only the map versions, not the territory library and theme versions here) and selecting the version and clicking "Open" should take you to that version of the map, i.e. `<username>/map/<mapname>/v<n>`.
+
+2) Creating maps, map names
+a) Creating a new map seems to initialize with the user's latest map (or even just edit the existing map?). This makes no sense; it should create a fresh new map.
+b) Trying to create a map (or editing an existing map's name) with the same name as an existing map should cause an error.
+c) The default names for maps shouldn't be `xatra, xatra_1, xatra_2...` but rather `new_map, new_map_1, new_map_2, ...`
+d) There is some really weird behaviour where the slug etc. don't load properly until the map has rendered. This is very confusing, and there's no reason for it to be that way.
+
+3) Keyboard shortcuts
+a) When the import menu is focused, it should focus the search bar within it. Also, Escape should close the Import Menu (like Ctrl/Cmd+Shift+X already does)
+b) Add keyboard shortcuts to the xatra menu: when it's open, pressing arrow keys should let you cycle through the elements in the menu (and pressing Escape should close it, just like Ctrl/Cmd+; already does)
+
+4) Slug design
+I don't really like all the slashes in displaying map names everywhere. That may be the slugs for `xatrahub(...)` commands, but it is ugly for a user interface. Instead:
+a) The map title should simply be the name of the map (as an editable field), with the version button and copy button next to it, and the Builder Code toggle on the same line aligned to the right. _Below it_ on the next line, it should say "by {user who made the map, with a link to their profile} . 5 likes [heart] . 20 views" (where the heart button likes or unlikes the tweet, and shows it visually by changing color) (BTW, bizarrely it currently displays the username of the logged-in user in the title instead of that of the user who made the map being viewed---you should make sure not to repeat this mistake in your changes.)
+b) In the Explore page (and thus also Import page), it should display the map name
+
+5) Territory library tab
+You did not implement the changes to the Territory library tab (in the map editor) that I requested at the very start. To recall:
+a) The "Territory library" tab in the GUI, currently there are just two tabs "xatra.territory_library" and "Custom Library" (which is the "Custom territory library" created in this particular map) and they are in the side box. With an arbitrary number of territory libraries imported, they should instead all be listed (alongside "Custom Library") as sub-tabs under the main "Map Preview/Referennce Map/Territory library" tabs, with the sub-tabs updating when the territory library imports are chnaged.
+
+6) Saving, descriptions and likes
+a) I actually decided I no longer believe in the "copy" button for copying the `xatrahub()` slugs. Remove that button---both from next to the main map title, from the "Custom Territory library" section and from the "Custom Theme" section of the code editor. Instead, next to the heading "Custom Territory library" (of that section) place in monospaced font the slug for that territory library (e.g. `<username of the map author>/lib/<name of the map>`) and respectively for the "Custom Theme" section next to its heading place `<username of the map author>/css/<name of the map>`.
+b) Change the label button icon to a standard Save icon.
+c) Prompt for description when saving map (not when saving territory libraries or themes).
+
+7) Overall site design
+a) In dark mode, in the Explore/My Profile pages, the current page's item in the sidebar appears with a very light background, which causes flashing when one hovers over it. Fix that.
+b) Instead of "My Profile", display the username (both in the xatra menu and in the Explore/My Profile sidebar).
+
+
+8) Other bugs
+a) The stuff in "Custom territory library" (in the Code editor) should get converted to Imports in the Builder interface---and NOT into "Python" layers.

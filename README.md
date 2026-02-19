@@ -220,6 +220,7 @@ Features
   - [x] This will allow a better way to use the GADM picker and the Territory picker. Instead of selecting some number of territories and choosing whether to add/subtract/intersect them in sequence from the territory---it should simply insert whatever is selected with the respective Territory picker as a comma-separated list into that field.
   - [x] Again, make sure it flows properly with the code conversion (both to-and-fro)
   - [x] Upon entering the GADM or Territory library picker, a blaring message (same design as the one for Paths/Points/Texts) should appear saying "Click regions to toggle selection. Hold `Ctrl/Cmd` and move to paint-select, hold `Alt` and move to paint-unselect."
+- [ ] Auto-save
 
 
 Minor changes
@@ -269,6 +270,7 @@ Design improvements
 - [x] introduce a dark mode
 - [x] the "Xatra Studio" title is cheesy. Replace it with just xatra (lowercase), and no icon.
 - [ ] allow the user to freely resize the left sidebar
+- [ ] Design
 
 Experiments I have to do
 - [x] Make sure my existing maps work in this
