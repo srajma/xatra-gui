@@ -7,6 +7,12 @@ import CodeEditor from './components/CodeEditor';
 import MapPreview from './components/MapPreview';
 import AutocompleteInput from './components/AutocompleteInput';
 import { isPythonValue, getPythonExpr } from './utils/pythonValue';
+import {
+  DEFAULT_INDIC_IMPORT,
+  DEFAULT_INDIC_IMPORT_CODE,
+  createDefaultBuilderOptions,
+  createDefaultBuilderElements,
+} from './lib/editorDefaults';
 
 const API_BASE = 'http://localhost:8088';
 const HUB_NAME_RE = /^[a-z0-9_.]+$/;
@@ -20,17 +26,6 @@ const IMPORTABLE_LAYER_TYPES = [
   'TitleBox', 'CSS', 'BaseOption', 'FlagColorSequence', 'AdminColorSequence',
   'DataColormap', 'zoom', 'focus', 'slider', 'Python',
 ];
-const DEFAULT_INDIC_IMPORT = {
-  kind: 'lib',
-  username: 'srajma',
-  name: 'indic',
-  path: '/srajma/lib/indic/alpha',
-  selected_version: 'alpha',
-  _draft_version: 'alpha',
-  alias: 'indic',
-  filter_not: [],
-};
-const DEFAULT_INDIC_IMPORT_CODE = 'indic = xatrahub("/srajma/lib/indic/alpha")\n';
 
 const apiFetch = (path, options = {}) => {
   const headers = options.headers || {};
@@ -107,14 +102,9 @@ function App() {
 
   // Builder State
   const [builderElements, setBuilderElements] = useState([
-    { type: 'flag', label: 'India', value: [], args: { note: 'Republic of India' } }
+    ...createDefaultBuilderElements()
   ]);
-  const [builderOptions, setBuilderOptions] = useState({
-    basemaps: [{ url_or_provider: 'Esri.WorldTopoMap', default: true }],
-    flag_color_sequences: [{ class_name: '', colors: '', step_h: 1.6180339887, step_s: 0.0, step_l: 0.0 }],
-    admin_color_sequences: [{ colors: '', step_h: 1.6180339887, step_s: 0.0, step_l: 0.0 }],
-    data_colormap: { type: 'LinearSegmented', colors: 'yellow,orange,red' },
-  });
+  const [builderOptions, setBuilderOptions] = useState(createDefaultBuilderOptions);
   const [isDarkMode, setIsDarkMode] = useState(() => {
     try {
       return localStorage.getItem('xatra-theme') === 'dark';
@@ -197,6 +187,7 @@ xatra.TitleBox("<b>My Map</b>")
   const importSearchRef = useRef(null);
   const menuOpenRef = useRef(false);
   const menuFocusIndexRef = useRef(0);
+  const editorInitKeyRef = useRef('');
 
   const injectTerritoryLabelOverlayPatch = (html) => {
     if (!html || typeof html !== 'string') return html;
@@ -319,6 +310,7 @@ xatra.TitleBox("<b>My Map</b>")
   const isMapAuthor = !!(currentUser.is_authenticated && normalizedHubUsername === mapOwner);
   const isReadOnlyMap = !!(route.owner && route.map) && (!isMapAuthor || viewedMapVersion !== 'alpha');
   const showMapMetaLine = !!(route.owner && route.map) || currentUser.is_authenticated;
+  const editorContextReady = route.page !== 'editor' || !!route.owner || authReady;
 
   useEffect(() => {
     try {
@@ -793,6 +785,19 @@ xatra.TitleBox("<b>My Map</b>")
     }
   };
 
+  const applyNewMapDefaults = () => {
+    setMapName('new_map');
+    setBuilderElements(createDefaultBuilderElements());
+    setBuilderOptions(createDefaultBuilderOptions());
+    setCode('');
+    setThemeCode('');
+    setRuntimeCode('');
+    setPredefinedCode('');
+    const defaults = [{ ...DEFAULT_INDIC_IMPORT }];
+    setHubImports(defaults);
+    setImportsCode(serializeHubImports(defaults));
+  };
+
   const switchHubImportVersion = (idx, version, applyNow = false) => {
     const next = [...(hubImports || [])];
     if (!next[idx]) return;
@@ -817,44 +822,29 @@ xatra.TitleBox("<b>My Map</b>")
     if (route.page === 'users') loadUsers(usersPage, usersQuery);
     if (route.page === 'profile') loadProfile(route.username, profilePage, profileSearch);
     if (route.page === 'editor' && route.owner && route.map) {
+      editorInitKeyRef.current = '';
       setMapOwner(route.owner);
       loadMapFromHub(route.owner, route.map, route.version || 'alpha');
+      return;
     }
     if (route.page === 'editor' && !route.owner) {
+      if (!authReady) return;
+      const owner = currentUser.is_authenticated ? normalizedHubUsername : 'guest';
+      const initKey = `${route.newMap ? 'new' : 'draft'}:${owner}`;
+      if (editorInitKeyRef.current === initKey) return;
+      editorInitKeyRef.current = initKey;
+      setMapOwner(owner);
       if (route.newMap) {
-        setMapName('new_map');
-        setBuilderElements([{ type: 'flag', label: 'India', value: [], args: { note: 'Republic of India' } }]);
-        setBuilderOptions({
-          basemaps: [{ url_or_provider: 'Esri.WorldTopoMap', default: true }],
-          flag_color_sequences: [{ class_name: '', colors: '', step_h: 1.6180339887, step_s: 0.0, step_l: 0.0 }],
-          admin_color_sequences: [{ colors: '', step_h: 1.6180339887, step_s: 0.0, step_l: 0.0 }],
-          data_colormap: { type: 'LinearSegmented', colors: 'yellow,orange,red' },
-        });
-        setCode('');
-        setThemeCode('');
-        setRuntimeCode('');
-        setPredefinedCode('');
-        const defaults = [{ ...DEFAULT_INDIC_IMPORT }];
-        setHubImports(defaults);
-        setImportsCode(serializeHubImports(defaults));
+        applyNewMapDefaults();
       } else {
         loadDraft();
       }
-      if (authReady) {
-        apiFetch('/maps/default-name').then((r) => r.json()).then((d) => {
-          if (d?.name && HUB_NAME_RE.test(d.name)) setMapName((prev) => (prev && prev !== 'new_map' ? prev : d.name));
-        }).catch(() => {});
-      }
-      setMapOwner(currentUser.is_authenticated ? normalizedHubUsername : 'guest');
+      apiFetch('/maps/default-name').then((r) => r.json()).then((d) => {
+        if (d?.name && HUB_NAME_RE.test(d.name)) setMapName(d.name);
+      }).catch(() => {});
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [route.page, route.owner, route.map, route.version, authReady, currentUser.is_authenticated]);
-
-  useEffect(() => {
-    if (route.page === 'editor' && !route.owner) {
-      setMapOwner(currentUser.is_authenticated ? normalizedHubUsername : 'guest');
-    }
-  }, [route.page, route.owner, normalizedHubUsername, currentUser.is_authenticated]);
+  }, [route.page, route.owner, route.map, route.version, route.newMap, authReady, currentUser.is_authenticated, normalizedHubUsername]);
 
   const handleLogin = async (mode = authMode) => {
     setAuthSubmitting(true);
@@ -2175,23 +2165,29 @@ xatra.TitleBox("<b>My Map</b>")
 
   // Initial render
   useEffect(() => {
+    if (!editorContextReady) return;
     renderMap();
-  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editorContextReady]);
 
   useEffect(() => {
+    if (!editorContextReady) return;
     if (didPrefetchReferenceRef.current || !mapHtml) return;
     didPrefetchReferenceRef.current = true;
     renderPickerMap({ background: true, showLoading: true });
-  }, [mapHtml]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mapHtml, editorContextReady]);
 
   useEffect(() => {
+    if (!editorContextReady) return;
     if (didPrefetchTerritoryRef.current || !mapHtml) return;
     didPrefetchTerritoryRef.current = true;
     (async () => {
       await loadTerritoryLibraryCatalog('builtin');
       await renderTerritoryLibrary('builtin', { background: true, useDefaultSelection: true, showLoading: true });
     })();
-  }, [mapHtml]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mapHtml, editorContextReady]);
 
   useEffect(() => {
     if (activePreviewTab !== 'library') return;
@@ -2522,6 +2518,14 @@ xatra.TitleBox("<b>My Map</b>")
             <button disabled={profilePage >= totalPages} className="px-2 py-1 border rounded disabled:opacity-40" onClick={() => { const p = Math.min(totalPages, profilePage + 1); setProfilePage(p); loadProfile(route.username, p, profileSearch); }}>Next</button>
           </div>
         </div>
+      </div>
+    );
+  }
+
+  if (route.page === 'editor' && !editorContextReady) {
+    return (
+      <div className={`h-screen w-full flex items-center justify-center ${isDarkMode ? 'theme-dark bg-slate-950 text-slate-100' : 'bg-gray-100'}`}>
+        <div className="text-sm text-gray-600">Loading editor context...</div>
       </div>
     );
   }

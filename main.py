@@ -304,7 +304,7 @@ def _init_hub_db():
         if user_row is not None:
             territory_seed = _territory_library_seed_code()
             seed_content = json.dumps({
-                "predefined_code": "from xatra.territory_library import *\n",
+                "predefined_code": territory_seed or "from xatra.territory_library import *\n",
                 "map_name": "indic",
                 "description": "Default Indic territory library",
             })
@@ -315,6 +315,34 @@ def _init_hub_db():
                 """,
                 (user_row["id"], seed_content, json.dumps({"description": "Default Indic territory library"}), now, now),
             )
+            # Migration: normalize /srajma/lib/indic if it still has placeholder/import-only content.
+            existing_lib = conn.execute(
+                """
+                SELECT id, alpha_content, alpha_metadata
+                FROM hub_artifacts
+                WHERE user_id = ? AND kind = 'lib' AND name = 'indic'
+                """,
+                (user_row["id"],),
+            ).fetchone()
+            if existing_lib is not None and territory_seed.strip():
+                try:
+                    parsed_lib = _json_parse(existing_lib["alpha_content"], {})
+                    old_pre = str(parsed_lib.get("predefined_code") or "")
+                    meta = _json_parse(existing_lib["alpha_metadata"], {})
+                    placeholderish = (
+                        ('xatrahub("/srajma/lib/indic"' in old_pre)
+                        or old_pre.strip() in {"", "from xatra.territory_library import *"}
+                        or str(meta.get("description", "")) == "Default Indic territory library"
+                    )
+                    if placeholderish:
+                        parsed_lib["predefined_code"] = territory_seed
+                        parsed_lib["map_name"] = "indic"
+                        conn.execute(
+                            "UPDATE hub_artifacts SET alpha_content = ?, updated_at = ? WHERE id = ?",
+                            (json.dumps(parsed_lib, ensure_ascii=False), now, existing_lib["id"]),
+                        )
+                except Exception:
+                    pass
             # Seed default public map /srajma/map/indic if missing.
             map_seed_content = json.dumps({
                 "imports_code": 'indic = xatrahub("/srajma/lib/indic/alpha")\n',

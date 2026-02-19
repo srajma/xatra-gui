@@ -137,3 +137,8 @@ Still a number of bugs.
 5) I actually no longer like the whole "Prompt for description" thing. Descriptions should not be attached to versions but to the whole map, and should be displayed under the "by <author> . likes . views" line with a little edit icon.
 
 In general I don't understand why the code is so buggy. I would like you to not only fix these particular bugs, but go through the code identifying (and where possible, immediately simplifying---otherwise just outlining the problem clearly for a future fix) all technical debt or over-convoluted logic that may be causing confusion.
+
+
+------
+Bugs:
+1) xatrahub imports (e.g. `indic = xatrahub("/srajma/lib/indic/alpha")`) still getting converted into "Python" layers when translating from Code to Builder when they should _only_ get converted into imports.

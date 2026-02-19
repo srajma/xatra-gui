@@ -269,6 +269,10 @@ Minor changes
 - [x] Add users list in the sidebar
 - [x] Make the "Map description" prompt use a dialog within the website's design rather than bizarrely using a browser pop-up for the purpose. Obviously make sure it is keyboard navigable (enter, escape should perform the expected functions)
 
+Keyboard navigation
+- [ ] Should be something to navigate the sub-tabs in the "Territory library" tab: let's say---Ctrl/Cmd+0 should focus those sub-tabs, allowing us to use arrow key or tab/shift+tab to cycle through the sub-tabs. This should be documented in the keyboard shortcuts hint panel as "`Ctrl/Cmd+0` Focus Territory library sub-tabs" (under the `Ctrl/Cmd+5` hint).
+- [ ] Enter to submit on Login/signup page (make sure it submits the correct form)
+
 Design improvements
 - [x] introduce a dark mode
 - [x] the "Xatra Studio" title is cheesy. Replace it with just xatra (lowercase), and no icon.
