@@ -125,4 +125,5 @@ v) I am able to click the version button and publish a new version of version of
 -----
 1) Please make the Save button just an icon (no "Save" text). Same for the "Fork" button. Otherwise it won't fit in the space provided.
 2) Why did you move the heart button to the first line? The first line won't fit in the space provided now. Move it back next to the like count. Actually, merge the like button and the like count, like it's a button that shows "[heart icon] 5 likes" then when you click it it changes color.
-3) 
+3) Also reduce the size of the input field to `{width: calc(var(--spacing) * 30);}` instead of 40.
+4) For a non-logged-in user, the "New Map" UI doesn't need to have "by new_user · 0 likes · 0 views". That whole line could be removed for non logged in users (obviously, they should still see this line on other people's maps). In fact it is worth searching through the codebase for instances of `new_user` to figure out where that is used; we need to start deprecating that it is quite silly.

@@ -311,6 +311,7 @@ xatra.TitleBox("<b>My Map</b>")
   const viewedMapVersion = String(route?.version || 'alpha');
   const isMapAuthor = !!(currentUser.is_authenticated && normalizedHubUsername === mapOwner);
   const isReadOnlyMap = !!(route.owner && route.map) && (!isMapAuthor || viewedMapVersion !== 'alpha');
+  const showMapMetaLine = !!(route.owner && route.map) || currentUser.is_authenticated;
 
   useEffect(() => {
     try {
@@ -2580,18 +2581,18 @@ xatra.TitleBox("<b>My Map</b>")
                 value={mapName}
                 onChange={(e) => setMapName(e.target.value.toLowerCase().replace(/[^a-z0-9_.]/g, ''))}
                 disabled={isReadOnlyMap}
-                className={`w-40 text-sm p-1.5 border rounded bg-white font-mono disabled:bg-gray-100 disabled:text-gray-500 ${HUB_NAME_RE.test(normalizedMapName) ? 'border-gray-300' : 'border-red-400'}`}
+                className={`w-30 text-sm p-1.5 border rounded bg-white font-mono disabled:bg-gray-100 disabled:text-gray-500 ${HUB_NAME_RE.test(normalizedMapName) ? 'border-gray-300' : 'border-red-400'}`}
                 title="Map title"
                 placeholder="map_name"
               />
               {statusNotice && <span className="text-[10px] text-amber-700">{statusNotice}</span>}
               {isReadOnlyMap ? (
-                <button onClick={handleForkMap} className="px-2 py-1 bg-white border border-gray-300 rounded hover:bg-gray-50 inline-flex items-center gap-1" title="Fork map">
-                  <GitFork size={12} className="text-gray-700"/> <span className="font-mono text-[11px]">Fork</span>
+                <button onClick={handleForkMap} className="p-1.5 bg-white border border-gray-300 rounded hover:bg-gray-50 inline-flex items-center justify-center" title="Fork map">
+                  <GitFork size={13} className="text-gray-700"/>
                 </button>
               ) : (
-                <button onClick={handlePublishMap} className="px-2 py-1 bg-white border border-gray-300 rounded hover:bg-gray-50 inline-flex items-center gap-1" title="Save alpha">
-                  <Save size={12} className="text-gray-700"/> <span className="font-mono text-[11px]">Save</span>
+                <button onClick={handlePublishMap} className="p-1.5 bg-white border border-gray-300 rounded hover:bg-gray-50 inline-flex items-center justify-center" title="Save alpha">
+                  <Save size={13} className="text-gray-700"/>
                 </button>
               )}
               <select
@@ -2602,14 +2603,6 @@ xatra.TitleBox("<b>My Map</b>")
               >
                 {currentMapVersionOptions.map((opt) => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
               </select>
-              <button
-                onClick={handleVoteMap}
-                disabled={!(route.owner && route.map)}
-                className={`p-1 rounded border ${route.owner && route.map ? 'hover:bg-gray-50' : 'opacity-40'}`}
-                title="Like/unlike"
-              >
-                <Heart size={12} className={mapVotes > 0 ? 'text-rose-600 fill-rose-600' : 'text-gray-500'} />
-              </button>
             </div>
             <div className="flex items-center gap-2">
               <div className="flex bg-white rounded-lg border border-gray-300 p-0.5">
@@ -2628,14 +2621,24 @@ xatra.TitleBox("<b>My Map</b>")
               </div>
             </div>
           </div>
-          <div className="text-xs text-gray-600 flex items-center gap-2">
-            <span>by</span>
-            <a href={`/${mapOwner}`} className="text-blue-700 hover:underline">{mapOwner}</a>
-            <span>·</span>
-            <span>{mapVotes} likes</span>
-            <span>·</span>
-            <span>{mapViews} views</span>
-          </div>
+          {showMapMetaLine && (
+            <div className="text-xs text-gray-600 flex items-center gap-2">
+              <span>by</span>
+              <a href={`/${mapOwner}`} className="text-blue-700 hover:underline">{mapOwner}</a>
+              <span>·</span>
+              <button
+                onClick={handleVoteMap}
+                disabled={!(route.owner && route.map)}
+                className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded border ${route.owner && route.map ? 'hover:bg-gray-50' : 'opacity-40'}`}
+                title="Like/unlike"
+              >
+                <Heart size={12} className={mapVotes > 0 ? 'text-rose-600 fill-rose-600' : 'text-gray-500'} />
+                <span>{mapVotes} likes</span>
+              </button>
+              <span>·</span>
+              <span>{mapViews} views</span>
+            </div>
+          )}
         </div>
 
         <div className={`flex-1 overflow-y-auto p-4 ${isReadOnlyMap ? 'opacity-60' : ''}`}>
