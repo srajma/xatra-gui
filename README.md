@@ -7,6 +7,12 @@ To start the full application (backend + frontend):
 ./start_gui.sh
 ```
 
+To start in production:
+```bash
+./start_gui_prod.sh
+```
+
+
 To restart if the page is blank or not responding:
 1. Stop the current process (usually `Ctrl+C` in the terminal where you ran the script).
 2. If it doesn't stop cleanly, kill any remaining processes:
