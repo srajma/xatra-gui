@@ -11,18 +11,6 @@ Xatra Studio GUI — a full-stack web app for creating interactive historical/ad
 ```bash
 # Start everything (backend on :8088, frontend on :5188)
 ./start_gui.sh
-
-# Backend only
-uv run python -m uvicorn main:app --reload --host 0.0.0.0 --port 8088
-
-# Frontend only
-cd frontend && npm run dev
-
-# Frontend lint
-cd frontend && npm run lint
-
-# Frontend build
-cd frontend && npm run build
 ```
 
 ## Architecture
