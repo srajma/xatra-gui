@@ -1194,6 +1194,9 @@ def _parse_territory_operand(node: ast.AST) -> Optional[Dict[str, Any]]:
                 return {"type": "polygon", "value": json.dumps(coords)}
     elif isinstance(node, ast.Name):
         return {"type": "predefined", "value": node.id}
+    elif isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
+        # Handle dotted attribute access like `indic.KURU`
+        return {"type": "predefined", "value": f"{node.value.id}.{node.attr}"}
     elif isinstance(node, ast.BinOp) and isinstance(node.op, (ast.BitOr, ast.Sub, ast.BitAnd)):
         group_parts = _parse_territory_expr(node)
         compressed = _compress_multi_value_parts(group_parts)
@@ -2943,9 +2946,18 @@ def run_rendering_task(task_type, data, result_queue):
                             vals = val if isinstance(val, list) else [val]
                             out = None
                             for item in vals:
-                                if not item or not predefined_namespace:
+                                if not item:
                                     continue
-                                t = predefined_namespace.get(item)
+                                # Support dotted attribute access like "indic.KURU".
+                                # Use builder_exec_globals so hub lib namespaces (added by
+                                # imports_code) are also accessible, not just predefined_namespace.
+                                parts_list = str(item).split('.')
+                                obj = builder_exec_globals.get(parts_list[0])
+                                for attr in parts_list[1:]:
+                                    if obj is None:
+                                        break
+                                    obj = getattr(obj, attr, None)
+                                t = obj
                                 if t is not None:
                                     out = t if out is None else (out | t)
                             return out
@@ -2975,8 +2987,11 @@ def run_rendering_task(task_type, data, result_queue):
                         territory = xatra.loaders.gadm(el.value)
                     elif isinstance(el.value, list):
                         territory = _eval_parts(el.value) if (len(el.value) > 0 and isinstance(el.value[0], dict)) else None
-                        if territory is None:
+                        if territory is None and el.value and not isinstance(el.value[0], dict):
+                            # Fallback: treat bare string list as GADM codes
                             for code in el.value:
+                                if not isinstance(code, str):
+                                    continue
                                 t = xatra.loaders.gadm(code)
                                 territory = t if territory is None else (territory | t)
                     else:

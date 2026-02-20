@@ -97,6 +97,7 @@ Bugs
     - [x] Fixed, but now it randomly jumps to the end of the line instead
 - [x] Keyboard cycling through the xatra menu is messed-up. Sometimes it doesn't work at all; sometimes even when you cycle through it, pressing Enter selects "Load" instead of whatever I want to select; "Load" appears highlighted no matter what I do etc.
 - [ ] xatrahub imports (e.g. `indic = xatrahub("/srajma/lib/indic/alpha")`) still getting converted into "Python" layers when translating from Code to Builder when they should _only_ get converted into imports.
+- [ ]  After some changes I have made in this project, the Flag Territory builder in the Builder UI is unable to properly handle the "Territory" option (i.e. using pre-defined territories from imported territory libraries or custom territories). I believe this is because after my changes, the territories are no longer referred to just by their names but rather `<libraryname>.<name>`, e.g. not "KURU" but "indic.KURU" (since we have imported indic = xatrahub("/srajma/lib/indic/alpha")). Check  ../xatra.master/src/xatra/hub.py to see exactly how it works. The Territory search needs to be updated to understand this and list territories as indic.KURU etc. for imported libraries and just KURU etc. for custom territories defined in that very map. This might be a bit complicated---you need to think this through, make sure it works with the territory search/autocomplete, the Territory library visualization tab and the Territory  picker, builder to code conversion and reverse. Really make sure you understand the code and know how to do this. You can verify your work by using the browser to navigate to  http://localhost:5188/.
 - [ ] Why does the app consume so much CPU utilization even when the user isn't doing anything?
 
 Basic extensions
@@ -270,7 +271,7 @@ Minor changes
 - [x] Make the "Map description" prompt use a dialog within the website's design rather than bizarrely using a browser pop-up for the purpose. Obviously make sure it is keyboard navigable (enter, escape should perform the expected functions)
 - [ ] There is a default Flag layer that gets loaded when a user loads the GUI for the first time. That's fine, but initialize it with a territory that is GADM IND, rather than None.
 - [ ] The "Explore" page should not show the version dropdown and Open buttons. It's too complicated; the user can already open the map by clicking its name, that's enough.
-- When the Territory picker is active, the blaring orange banner ("Click regions to toggle selection...") should appear at the bottom of the map frame, not at the top (where it covers the sub-tabs).
+- [ ] When the Territory picker is active, the blaring orange banner ("Click regions to toggle selection...") should appear at the bottom of the map frame, not at the top (where it covers the sub-tabs).
 
 Keyboard navigation
 - [ ] Should be something to navigate the sub-tabs in the "Territory library" tab: let's say---Ctrl/Cmd+0 should focus those sub-tabs, allowing us to use arrow key or tab/shift+tab to cycle through the sub-tabs. This should be documented in the keyboard shortcuts hint panel as "`Ctrl/Cmd+0` Focus Territory library sub-tabs" (under the `Ctrl/Cmd+5` hint).

@@ -1125,7 +1125,11 @@ xatra.TitleBox("<b>My Map</b>")
               setReferencePickTarget(null);
               setActivePreviewTab('main');
           } else if (data.featureType === 'territory' && data.name && activePicker?.context === 'territory-library' && referencePickTarget?.kind === 'territory') {
-              const name = String(data.name);
+              const rawName = String(data.name);
+              // Prefix with the library alias when picking from a hub library tab
+              const libConfig = activeLibraryConfigRef.current;
+              const libAlias = libConfig?.source === 'hub' ? (libConfig?.alias || '') : '';
+              const name = libAlias ? `${libAlias}.${rawName}` : rawName;
               if (data.hoverMode === 'add' || data.hoverMode === 'remove') {
                 const sig = `${data.hoverMode}:territory:${name}`;
                 if (hoverPickRef.current === sig) return;
@@ -1200,8 +1204,13 @@ xatra.TitleBox("<b>My Map</b>")
   useEffect(() => {
     const ref = territoryLibraryIframeRef.current;
     if (!ref || !ref.contentWindow) return;
+    // Strip any library prefix (e.g. "indic.KURU" → "KURU") so the map can match by raw name
+    const rawNames = pickedTerritorySelection.map((n) => {
+      const dotIdx = n.indexOf('.');
+      return dotIdx >= 0 ? n.slice(dotIdx + 1) : n;
+    });
     const groups = [
-      ...(pickedTerritorySelection.length ? [{ op: 'pending', names: pickedTerritorySelection }] : []),
+      ...(rawNames.length ? [{ op: 'pending', names: rawNames }] : []),
     ];
     ref.contentWindow.postMessage({ type: 'setLabelSelectionOverlayFixed', groups }, '*');
   }, [pickedTerritorySelection, territoryLibraryHtml]);
@@ -2213,6 +2222,7 @@ xatra.TitleBox("<b>My Map</b>")
       label: `${imp.name}`,
       source: 'hub',
       hub_path: buildImportPath(imp),
+      alias: imp.alias || imp.name,
     }));
   const libraryTabs = [
     { id: 'builtin', label: 'xatra.territory_library', source: 'builtin' },
@@ -2220,6 +2230,9 @@ xatra.TitleBox("<b>My Map</b>")
     ...importedLibraryTabs,
   ];
   const activeLibraryConfig = libraryTabs.find((t) => t.id === activeLibraryTab) || libraryTabs[0];
+  // Keep a ref so the message handler closure always has the latest value
+  const activeLibraryConfigRef = useRef(activeLibraryConfig);
+  activeLibraryConfigRef.current = activeLibraryConfig;
   const mapTabBarClass = isDarkMode
     ? 'bg-slate-900/90 border-slate-700'
     : 'bg-white/90 border-gray-200';

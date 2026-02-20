@@ -355,7 +355,7 @@ const findScrollableParent = (el) => {
 };
 
 const TerritoryBuilder = ({
-  value, onChange, lastMapClick, activePicker, setActivePicker, draftPoints, setDraftPoints, parentId, predefinedCode, onStartReferencePick, onStartTerritoryLibraryPick, pathPrefix = [], onMovePartByPath = null, selectedPath: selectedPathProp = null, setSelectedPath: setSelectedPathProp = null
+  value, onChange, lastMapClick, activePicker, setActivePicker, draftPoints, setDraftPoints, parentId, predefinedCode, onStartReferencePick, onStartTerritoryLibraryPick, pathPrefix = [], onMovePartByPath = null, selectedPath: selectedPathProp = null, setSelectedPath: setSelectedPathProp = null, hubImports = []
 }) => {
   const builderRootRef = useRef(null);
   const parts = normalizeParts(value);
@@ -782,22 +782,59 @@ const TerritoryBuilder = ({
       .catch(() => setTerritoryLibraryNames([]));
   }, []);
 
+  // Hub library imports with kind='lib'
+  const hubLibImports = useMemo(
+    () => (hubImports || []).filter((imp) => imp.kind === 'lib' && imp.alias),
+    [hubImports],
+  );
+
+  const [hubLibraryTerritories, setHubLibraryTerritories] = useState([]);
+  useEffect(() => {
+    if (!hubLibImports.length) {
+      setHubLibraryTerritories([]);
+      return;
+    }
+    Promise.all(
+      hubLibImports.map(async (imp) => {
+        const hub_path = `/${imp.username}/${imp.kind}/${imp.name}/${imp.selected_version || 'alpha'}`;
+        try {
+          const res = await fetch('http://localhost:8088/territory_library/catalog', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ source: 'hub', hub_path }),
+          });
+          const data = await res.json();
+          const names = Array.isArray(data.names) ? data.names : [];
+          return names.map((n) => `${imp.alias}.${n}`);
+        } catch {
+          return [];
+        }
+      }),
+    ).then((results) => setHubLibraryTerritories(results.flat()));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hubLibImports.map((imp) => `${imp.username}:${imp.name}:${imp.selected_version || 'alpha'}:${imp.alias}`).join(',')]);
+
   const predefinedVariables = useMemo(() => {
     if (!predefinedCode) return [];
     const regex = /^(\w+)\s*=/gm;
     const matches = [];
     let match;
+    // Exclude variables that are hub lib import aliases (they're namespaces, not territories)
+    const hubAliases = new Set(hubLibImports.map((imp) => imp.alias).filter(Boolean));
     while ((match = regex.exec(predefinedCode)) !== null) {
-      matches.push(match[1]);
+      if (!hubAliases.has(match[1])) matches.push(match[1]);
     }
     return matches;
-  }, [predefinedCode]);
+  }, [predefinedCode, hubLibImports]);
 
   const allPredefinedOptions = useMemo(() => {
     const fromCode = predefinedVariables;
-    const fromLib = territoryLibraryNames.filter((n) => !fromCode.includes(n));
-    return [...fromCode, ...fromLib];
-  }, [predefinedVariables, territoryLibraryNames]);
+    // Only show raw built-in library names if no hub lib imports override them
+    const fromBuiltin = hubLibImports.length > 0
+      ? []
+      : territoryLibraryNames.filter((n) => !fromCode.includes(n));
+    return [...fromCode, ...fromBuiltin, ...hubLibraryTerritories];
+  }, [predefinedVariables, territoryLibraryNames, hubLibraryTerritories, hubLibImports]);
 
   if (parts.length === 0) {
     const focusedType = operationPrompt?.focusedType || 'gadm';
@@ -951,6 +988,7 @@ const TerritoryBuilder = ({
                     onMovePartByPath={movePartByPath}
                     selectedPath={selectedPath}
                     setSelectedPath={setSelectedPath}
+                    hubImports={hubImports}
                   />
                 </div>
               </div>

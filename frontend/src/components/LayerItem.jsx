@@ -7,10 +7,10 @@ import { isPythonValue } from '../utils/pythonValue';
 
 const BUILTIN_ICON_SHAPES = ['circle', 'square', 'triangle', 'diamond', 'cross', 'plus', 'star', 'hexagon', 'pentagon', 'octagon'];
 
-const LayerItem = ({ 
-  element, index, elements, updateElement, updateArg, replaceElement, removeElement, 
+const LayerItem = ({
+  element, index, elements, updateElement, updateArg, replaceElement, removeElement,
   lastMapClick, activePicker, setActivePicker, draftPoints, setDraftPoints,
-  onSaveTerritory, predefinedCode, onStartReferencePick
+  onSaveTerritory, predefinedCode, onStartReferencePick, hubImports = []
 }) => {
   const [showMore, setShowMore] = useState(false);
   const [builtinIconsList, setBuiltinIconsList] = useState([]);
@@ -155,6 +155,7 @@ const LayerItem = ({
                 predefinedCode={predefinedCode}
                 onStartReferencePick={onStartReferencePick}
                 onStartTerritoryLibraryPick={onStartReferencePick}
+                hubImports={hubImports}
               />
             </div>
           </div>
