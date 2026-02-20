@@ -4,7 +4,7 @@ import { Plus, Trash2, MousePointer2, GripVertical, X } from 'lucide-react';
 const DRAG_PATH_MIME = 'application/x-xatra-territory-path';
 const TERRITORY_TYPES = ['gadm', 'polygon', 'predefined', 'group'];
 const PROMPT_OPTIONS = ['gadm', 'polygon', 'predefined', 'group', 'esc'];
-const TYPE_SHORTCUTS = { g: 'gadm', p: 'polygon', t: 'predefined', o: 'group' };
+const TYPE_SHORTCUTS = { a: 'gadm', p: 'polygon', t: 'predefined', o: 'group' };
 
 const toList = (raw) => {
   if (Array.isArray(raw)) return raw.map((x) => String(x || '').trim()).filter(Boolean);
@@ -869,7 +869,7 @@ const TerritoryBuilder = ({
                   data-territory-prompt-option={`${promptScopeId}:${type}`}
                   className={`px-1.5 py-0.5 border rounded ${focusedType === type ? 'border-blue-500 text-blue-700 bg-blue-50' : 'border-gray-300 bg-white hover:bg-gray-100'}`}
                 >
-                  {type === 'gadm' ? 'admin unit [g]' : type === 'polygon' ? 'polygon [p]' : type === 'predefined' ? 'territory [t]' : type === 'group' ? 'group [o]' : 'Esc'}
+                  {type === 'gadm' ? 'admin unit [a]' : type === 'polygon' ? 'polygon [p]' : type === 'predefined' ? 'territory [t]' : type === 'group' ? 'group [o]' : 'Esc'}
                 </button>
               ))}
             </div>
@@ -1188,7 +1188,7 @@ const TerritoryBuilder = ({
                 data-territory-prompt-option={`${promptScopeId}:${type}`}
                 className={`px-1.5 py-0.5 border rounded ${operationPrompt.focusedType === type ? 'border-blue-500 text-blue-700 bg-blue-50' : 'border-gray-300 bg-white hover:bg-gray-100'}`}
               >
-                {type === 'gadm' ? 'gadm [g]' : type === 'polygon' ? 'polygon [p]' : type === 'predefined' ? 'territory [t]' : type === 'group' ? 'group [o]' : 'Esc'}
+                {type === 'gadm' ? 'admin unit [a]' : type === 'polygon' ? 'polygon [p]' : type === 'predefined' ? 'territory [t]' : type === 'group' ? 'group [o]' : 'Esc'}
               </button>
             ))}
           </div>
