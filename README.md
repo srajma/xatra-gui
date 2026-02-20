@@ -300,6 +300,7 @@ Design improvements
 Experiments I have to do
 - [x] Make sure my existing maps work in this
 - [ ] Play around as srajma/ to make sure
+  - [ ] 
 - [ ] experiment with some different designs [NOT NOW]
 
 Development difficulties

@@ -489,6 +489,16 @@ const TerritoryBuilder = ({
   const [dragInsertionIndex, setDragInsertionIndex] = useState(null);
   const [dragOverGroupInsideIndex, setDragOverGroupInsideIndex] = useState(null);
 
+  useEffect(() => {
+    const onDragEnd = () => {
+      setDraggedPath(null);
+      setDragInsertionIndex(null);
+      setDragOverGroupInsideIndex(null);
+    };
+    window.addEventListener('dragend', onDragEnd);
+    return () => window.removeEventListener('dragend', onDragEnd);
+  }, []);
+
   const movePartByPathLocal = (fromPath, toParentPath, toIndex) => {
     if (!Array.isArray(fromPath) || fromPath.length === 0 || !Array.isArray(toParentPath)) return null;
     if (isPrefixPath(fromPath, toParentPath)) return null;
