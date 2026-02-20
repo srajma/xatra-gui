@@ -1053,7 +1053,7 @@ const TerritoryBuilder = ({
                 }}
                 className="text-xs p-1 border rounded bg-white w-24 flex-shrink-0"
               >
-                <option value="gadm">GADM</option>
+                <option value="gadm">Admin unit</option>
                 <option value="polygon">Polygon</option>
                 <option value="predefined">Territory</option>
                 <option value="group">Group...</option>

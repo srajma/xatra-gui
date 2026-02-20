@@ -108,10 +108,11 @@ function App() {
   const [themePublishStatus, setThemePublishStatus] = useState(null);
 
   // Sidebar resize state
-  const [sidebarWidth, setSidebarWidth] = useState(380);
+  const [sidebarWidth, setSidebarWidth] = useState(500);
+  const [sidebarDragging, setSidebarDragging] = useState(false);
   const sidebarResizingRef = useRef(false);
   const sidebarStartXRef = useRef(0);
-  const sidebarStartWidthRef = useRef(380);
+  const sidebarStartWidthRef = useRef(500);
 
   // Builder State
   const [builderElements, setBuilderElements] = useState([
@@ -1721,11 +1722,12 @@ xatra.TitleBox("<b>My Map</b>")
     if (!HUB_NAME_RE.test(normalizedMapName)) return;
     setAutoSaveStatus('saving');
     try {
-      // Check if this map name is someone else's map (conflict)
-      const check = await apiFetch(`/hub/${normalizedHubUsername}/map/${normalizedMapName}`);
-      if (check.ok) {
-        const isSameCurrent = !!(route.owner === normalizedHubUsername && route.map === normalizedMapName);
-        if (!isSameCurrent) {
+      // Only flag conflict when the user has renamed the map to something that already exists
+      // (i.e. route.map is set — an existing map was loaded — but mapName was changed to something different)
+      const isRename = !!(route.map && route.map !== normalizedMapName);
+      if (isRename) {
+        const check = await apiFetch(`/hub/${normalizedHubUsername}/map/${normalizedMapName}`);
+        if (check.ok) {
           setAutoSaveStatus('conflict');
           return;
         }
@@ -2297,9 +2299,9 @@ xatra.TitleBox("<b>My Map</b>")
       if (!sidebarResizingRef.current) return;
       const clientX = e.touches ? e.touches[0].clientX : e.clientX;
       const delta = clientX - sidebarStartXRef.current;
-      setSidebarWidth(Math.max(280, Math.min(700, sidebarStartWidthRef.current + delta)));
+      setSidebarWidth(Math.max(0, Math.min(900, sidebarStartWidthRef.current + delta)));
     };
-    const onUp = () => { sidebarResizingRef.current = false; document.body.style.cursor = ''; document.body.style.userSelect = ''; };
+    const onUp = () => { sidebarResizingRef.current = false; setSidebarDragging(false); document.body.style.cursor = ''; document.body.style.userSelect = ''; };
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
     return () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
@@ -2706,20 +2708,10 @@ xatra.TitleBox("<b>My Map</b>")
 
   return (
     <div className={`flex h-screen font-sans ${isDarkMode ? 'theme-dark bg-slate-950 text-slate-100' : 'bg-gray-100'}`}>
+      {/* Full-screen overlay during sidebar drag to prevent iframe capturing mouse events */}
+      {sidebarDragging && <div className="fixed inset-0 z-50 cursor-col-resize" style={{ userSelect: 'none' }} />}
       {/* Sidebar */}
-      <div className="flex flex-col bg-white border-r border-gray-200 shadow-md z-10 relative flex-shrink-0" style={{ width: sidebarWidth }}>
-        {/* Resize handle */}
-        <div
-          className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize z-20 hover:bg-blue-400 hover:opacity-50 transition-colors"
-          onMouseDown={(e) => {
-            sidebarResizingRef.current = true;
-            sidebarStartXRef.current = e.clientX;
-            sidebarStartWidthRef.current = sidebarWidth;
-            document.body.style.cursor = 'col-resize';
-            document.body.style.userSelect = 'none';
-            e.preventDefault();
-          }}
-        />
+      <div className="flex flex-col bg-white border-gray-200 shadow-md z-10 flex-shrink-0 overflow-hidden" style={{ width: sidebarWidth }}>
         <div className="p-4 border-b border-gray-200 bg-gray-50 flex flex-col gap-2">
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2 min-w-0 flex-wrap">
@@ -2828,7 +2820,7 @@ xatra.TitleBox("<b>My Map</b>")
                     )}
                     {autoSaveStatus === 'saving' && <span className="text-xs text-gray-500">Saving…</span>}
                     {autoSaveStatus === 'saved' && <span className="text-xs text-green-600">All changes saved</span>}
-                    {autoSaveStatus === 'conflict' && <span className="text-xs text-red-600" title={`Map name '${normalizedMapName}' conflicts with another map`}>Save failed: name conflict</span>}
+                    {autoSaveStatus === 'conflict' && <span className="text-xs text-red-600"><button onClick={async () => { const c = await buildMapArtifactContent().catch(() => null); if (c) performAutoSave(c); }} className="underline hover:no-underline" title="Retry save">Save</button> failed: name conflict</span>}
                   </>
                 )}
               </div>
@@ -2908,6 +2900,19 @@ xatra.TitleBox("<b>My Map</b>")
           )}
         </div>
       </div>
+      {/* Sidebar resize handle — sibling so it stays visible even at width 0 */}
+      <div
+        className="w-1.5 flex-shrink-0 cursor-col-resize z-20 hover:bg-blue-400 hover:opacity-50 transition-colors border-r border-gray-200 bg-transparent"
+        onMouseDown={(e) => {
+          sidebarResizingRef.current = true;
+          setSidebarDragging(true);
+          sidebarStartXRef.current = e.clientX;
+          sidebarStartWidthRef.current = sidebarWidth;
+          document.body.style.cursor = 'col-resize';
+          document.body.style.userSelect = 'none';
+          e.preventDefault();
+        }}
+      />
 
       {/* Main Preview Area */}
       <div className={`flex-1 flex flex-col relative ${isDarkMode ? 'bg-slate-900' : 'bg-gray-200'}`}>
