@@ -137,3 +137,13 @@ Still a number of bugs.
 5) I actually no longer like the whole "Prompt for description" thing. Descriptions should not be attached to versions but to the whole map, and should be displayed under the "by <author> . likes . views" line with a little edit icon.
 
 In general I don't understand why the code is so buggy. I would like you to not only fix these particular bugs, but go through the code identifying (and where possible, immediately simplifying---otherwise just outlining the problem clearly for a future fix) all technical debt or over-convoluted logic that may be causing confusion.
+
+----
+1) Resizing the left sidebar
+a) Resizing runs into an issue when I try to increase the width of the left sidebar, because my cursor ends up on the map and gets captured by it, which stops the resizing.
+b) The default width of the sidebar is now too small--the width it was earlier (about 33% larger than now if I estimate correctly) was perfect.
+c) It should be possible to resize all the way to width 0, or all the way to the max (though the line itself should remain available for resizing).
+2) "Save failed: name conflict" is overzealous---it occurs even when the name "conflict" is with itself (which, of course, is always the case)! No, this should only occur if the name of the map has been edited to something that matches _another_ map in the user's library---this is to prevent overwriting that other map by accident. Also when this does occur, the "Save" in "Save failed" should be clickable, to allow the user to manually retry.
+a) Custom Territory library and Custom theme sections of the Code editor---I still need to test this, the above bug is blocking.
+b) "The Reference Map selections (which countries/GADMs, which admin levels, whether to show Admin Rivers or not) should be stored as part of the map state, kept in the database (so that is selected again, instead of the default, the next time the particular map is open) and in the savable JSON." --- I still need to test this, the above bug is blocking.
+3) "Don't use the word "GADM" in the Flag territory builder (users won't understand) instead use "Admin unit"" --- this TODO seems unresolved? Why have you marked it as done?

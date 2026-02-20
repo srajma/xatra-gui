@@ -1,6 +1,6 @@
 import React, { useRef, useCallback, useState, useEffect } from 'react';
 import Editor from '@monaco-editor/react';
-import { Save } from 'lucide-react';
+import { CloudUpload } from 'lucide-react';
 
 const XATRA_COMPLETIONS = {
   globals: [
@@ -58,6 +58,8 @@ const CodeEditor = ({
   onSelectThemeVersion,
   libraryVersionOptions = [{ value: 'alpha', label: 'alpha' }],
   themeVersionOptions = [{ value: 'alpha', label: 'alpha' }],
+  libraryPublishStatus = null,
+  themePublishStatus = null,
   readOnlyMap = false,
   readOnlyLibrary = false,
   readOnlyTheme = false,
@@ -180,8 +182,13 @@ const CodeEditor = ({
           <div className={headingClass}>
             <span>Custom Territory Library <span className="font-mono text-[10px] text-slate-300 ml-1">{librarySlugText}</span></span>
             <div className="flex items-center gap-1">
-              <button type="button" onClick={onSaveLibrary} disabled={readOnlyLibrary} className="px-1.5 py-1 rounded border border-slate-600 hover:bg-slate-800 inline-flex items-center gap-1 disabled:opacity-40" title="Save library alpha">
-                <Save size={12} /> {/* <span className="font-mono text-[10px]">Save</span> */}
+              {libraryPublishStatus && (
+                <span className={`text-[10px] font-mono ${libraryPublishStatus === 'no_changes' ? 'text-slate-400' : libraryPublishStatus === 'publishing' ? 'text-slate-300' : 'text-green-400'}`}>
+                  {libraryPublishStatus === 'no_changes' ? 'No changes' : libraryPublishStatus === 'publishing' ? 'Publishing…' : libraryPublishStatus.replace('published:', '')}
+                </span>
+              )}
+              <button type="button" onClick={onSaveLibrary} disabled={readOnlyLibrary} className="px-1.5 py-1 rounded border border-slate-600 hover:bg-slate-800 inline-flex items-center gap-1 disabled:opacity-40" title="Publish new library version">
+                <CloudUpload size={12} />
               </button>
               <select value={libraryVersionLabel} onChange={(e) => onSelectLibraryVersion?.(e.target.value)} className="px-1 py-1 rounded border border-slate-600 bg-slate-900 text-slate-100 text-[10px] font-mono">
                 {libraryVersionOptions.map((opt) => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
@@ -205,8 +212,13 @@ const CodeEditor = ({
           <div className={headingClass}>
             <span>Custom Theme <span className="font-mono text-[10px] text-slate-300 ml-1">{themeSlugText}</span></span>
             <div className="flex items-center gap-1">
-              <button type="button" onClick={onSaveTheme} disabled={readOnlyTheme} className="px-1.5 py-1 rounded border border-slate-600 hover:bg-slate-800 inline-flex items-center gap-1 disabled:opacity-40" title="Save theme alpha">
-                <Save size={12} />{/* <span className="font-mono text-[10px]">Save</span> */}
+              {themePublishStatus && (
+                <span className={`text-[10px] font-mono ${themePublishStatus === 'no_changes' ? 'text-slate-400' : themePublishStatus === 'publishing' ? 'text-slate-300' : 'text-green-400'}`}>
+                  {themePublishStatus === 'no_changes' ? 'No changes' : themePublishStatus === 'publishing' ? 'Publishing…' : themePublishStatus.replace('published:', '')}
+                </span>
+              )}
+              <button type="button" onClick={onSaveTheme} disabled={readOnlyTheme} className="px-1.5 py-1 rounded border border-slate-600 hover:bg-slate-800 inline-flex items-center gap-1 disabled:opacity-40" title="Publish new theme version">
+                <CloudUpload size={12} />
               </button>
               <select value={themeVersionLabel} onChange={(e) => onSelectThemeVersion?.(e.target.value)} className="px-1 py-1 rounded border border-slate-600 bg-slate-900 text-slate-100 text-[10px] font-mono">
                 {themeVersionOptions.map((opt) => <option key={opt.value} value={opt.value}>{opt.label}</option>)}

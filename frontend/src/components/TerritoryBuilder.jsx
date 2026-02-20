@@ -869,7 +869,7 @@ const TerritoryBuilder = ({
                   data-territory-prompt-option={`${promptScopeId}:${type}`}
                   className={`px-1.5 py-0.5 border rounded ${focusedType === type ? 'border-blue-500 text-blue-700 bg-blue-50' : 'border-gray-300 bg-white hover:bg-gray-100'}`}
                 >
-                  {type === 'gadm' ? 'gadm [g]' : type === 'polygon' ? 'polygon [p]' : type === 'predefined' ? 'territory [t]' : type === 'group' ? 'group [o]' : 'Esc'}
+                  {type === 'gadm' ? 'admin unit [g]' : type === 'polygon' ? 'polygon [p]' : type === 'predefined' ? 'territory [t]' : type === 'group' ? 'group [o]' : 'Esc'}
                 </button>
               ))}
             </div>
@@ -949,7 +949,7 @@ const TerritoryBuilder = ({
                     }}
                     className="text-xs p-1 border rounded bg-white w-24 flex-shrink-0"
                   >
-                    <option value="gadm">GADM</option>
+                    <option value="gadm">Admin unit</option>
                     <option value="polygon">Polygon</option>
                     <option value="predefined">Territory</option>
                     <option value="group">Group...</option>
@@ -1066,7 +1066,7 @@ const TerritoryBuilder = ({
                       <TokenInput
                         tokens={toList(part.value)}
                         onChange={(vals) => updatePart(idx, { value: toStored(vals) })}
-                        placeholder="Search GADM..."
+                        placeholder="Search admin units..."
                         mode="remote"
                         endpoint="http://localhost:8088/search/gadm"
                         inputPath={rowPathId}
@@ -1082,7 +1082,7 @@ const TerritoryBuilder = ({
                         onStartReferencePick({ kind: 'gadm', flagIndex: parentId, partIndex: idx, partPath: rowPath });
                       }}
                       className={`p-1 border rounded flex-shrink-0 transition-colors ${isReferencePickingThisPart ? 'bg-blue-100 text-blue-700 border-blue-300 ring-2 ring-blue-200' : 'bg-gray-50 text-gray-600 hover:bg-gray-100 border-gray-200'}`}
-                      title={isReferencePickingThisPart ? 'Cancel GADM picking' : 'Pick GADM from Reference Map'}
+                      title={isReferencePickingThisPart ? 'Cancel admin unit picking' : 'Pick admin unit from Reference Map'}
                     >
                       <MousePointer2 size={12}/>
                     </button>

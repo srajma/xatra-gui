@@ -1311,6 +1311,14 @@ def sync_code_to_builder(request: CodeSyncRequest):
 
         if isinstance(stmt, (ast.Import, ast.ImportFrom)):
             continue
+        # Skip xatrahub import statements (assignments like `indic = xatrahub(...)` or bare `xatrahub(...)`)
+        if isinstance(stmt, ast.Assign):
+            rhs_name = _call_name(stmt.value.func) if isinstance(stmt.value, ast.Call) else None
+            if rhs_name == "xatrahub":
+                continue
+        if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call):
+            if _call_name(stmt.value.func) == "xatrahub":
+                continue
         if not isinstance(stmt, ast.Expr) or not isinstance(stmt.value, ast.Call):
             append_python_layer(stmt=stmt)
             continue
@@ -3109,6 +3117,7 @@ def run_rendering_task(task_type, data, result_queue):
             if runtime_code.strip():
                 exec(runtime_code, builder_exec_globals)
 
+        m.TitleBox("<i>made with <a href='https://github.com/srajma/xatra'>xatra</a></i>")
         payload = m._export_json()
         html = export_html_string(payload)
         result = {"html": html, "payload": payload}
