@@ -22,7 +22,7 @@ To restart if the page is blank or not responding:
    ```
 3. Run `./start_gui.sh` again.
 
-Backend at `localhost:8088`, frontend at `localhost:5188`.
+Backend at `localhost:8088`, frontend at `localhost:5188` (production production at `localhost:4173`).
 
 ## TODO
 
@@ -104,7 +104,9 @@ Bugs
 - [x] Keyboard cycling through the xatra menu is messed-up. Sometimes it doesn't work at all; sometimes even when you cycle through it, pressing Enter selects "Load" instead of whatever I want to select; "Load" appears highlighted no matter what I do etc.
 - [ ] xatrahub imports (e.g. `indic = xatrahub("/srajma/lib/indic/alpha")`) still getting converted into "Python" layers when translating from Code to Builder when they should _only_ get converted into imports.
 - [x]  After some changes I have made in this project, the Flag Territory builder in the Builder UI is unable to properly handle the "Territory" option (i.e. using pre-defined territories from imported territory libraries or custom territories). I believe this is because after my changes, the territories are no longer referred to just by their names but rather `<libraryname>.<name>`, e.g. not "KURU" but "indic.KURU" (since we have imported indic = xatrahub("/srajma/lib/indic/alpha")). Check  ../xatra.master/src/xatra/hub.py to see exactly how it works. The Territory search needs to be updated to understand this and list territories as indic.KURU etc. for imported libraries and just KURU etc. for custom territories defined in that very map. This might be a bit complicated---you need to think this through, make sure it works with the territory search/autocomplete, the Territory library visualization tab and the Territory  picker, builder to code conversion and reverse. Really make sure you understand the code and know how to do this. You can verify your work by using the browser to navigate to  http://localhost:5188/.
-- [ ] Why does the app consume so much CPU utilization even when the user isn't doing anything?
+- [x] Why does the app consume so much CPU utilization even when the user isn't doing anything?
+- [ ] Why doesn't the `<i>made with <a href="https://github.com/srajma/xatra">xatra</a></i>` attribution appear in the title box? It's hardcoded in the xatra package to appear no matter what, even if the user doesn't add any `xatra.TitleBox()` layers, yet it doesn't seem to be appearing in the maps made with the GUI?
+- [ ] The Custom Territory library and Custom theme sections of the Code editor are bugged. The alpha version of the code (which should be latest) often does not reflect the latest version, but clicking on the latest version and coming back to it fixes it to the latest version. Go through this logic and fix it.
 
 Basic extensions
 - [x] Allow adding any feature to the map, not just flags and rivers. Every single method listed under #### Methods in the main README should have an appropriate interface for adding it:
@@ -229,7 +231,9 @@ Features
   - [x] This will allow a better way to use the GADM picker and the Territory picker. Instead of selecting some number of territories and choosing whether to add/subtract/intersect them in sequence from the territory---it should simply insert whatever is selected with the respective Territory picker as a comma-separated list into that field.
   - [x] Again, make sure it flows properly with the code conversion (both to-and-fro)
   - [x] Upon entering the GADM or Territory library picker, a blaring message (same design as the one for Paths/Points/Texts) should appear saying "Click regions to toggle selection. Hold `Ctrl/Cmd` and move to paint-select, hold `Alt` and move to paint-unselect."
-- [ ] Auto-save
+- [ ] Auto-save feature --- edits made in the alpha version of a map (which is the only version you can make edits in), whether in the Builder or the Code editor, should get periodically saved (not as a new version, just in the alpha version) (unless the entered map name conflicts with the name of one of the user's existing maps, in which case it should _not_ save it) and display a little indicator at the end of the second line (i.e. after the author username, like count and view count) that says things like "Unsaved changes" "Saving..." "All changes saved" "Save failed: map with name {map name} already exists".
+  - [ ] In fact, instead of "Unsaved changes" it can show an actual clickable "Save" when in that state. 
+  - [ ] To avoid confusion, we should stop calling our current version-publishing feature "Save". Its icon should be changed from the Save icon to something that looks more like a "Publish" icon. This applies both to the version-publishing button on the main map (next to the title) and for Custom territory library and Custom theme in the Code editor.
 
 
 Minor changes
@@ -278,6 +282,10 @@ Minor changes
 - [ ] There is a default Flag layer that gets loaded when a user loads the GUI for the first time. That's fine, but initialize it with a territory that is GADM IND, rather than None.
 - [ ] The "Explore" page should not show the version dropdown and Open buttons. It's too complicated; the user can already open the map by clicking its name, that's enough.
 - [ ] When the Territory picker is active, the blaring orange banner ("Click regions to toggle selection...") should appear at the bottom of the map frame, not at the top (where it covers the sub-tabs).
+- [ ] The version-publishing buttons in the Custom territory library and Custom theme sections of the Code editor should show visual indications just like the version-publishing button for the map itself. Like: display you when a new version was successfully published; when "No changes" etc., actually update the version list dropdown... This whole thing is quite bugged; fix it.
+- [ ] In the xatra menu change "Load" to "Load JSON"; "Save" to "Save JSON", "Export" to "Export HTML".
+- Forking
+- [ ] The Reference Map selections (which countries/GADMs, which admin levels, whether to show Admin Rivers or not) should be stored as part of the map state, kept in the database (so that is selected again, instead of the default, the next time the particular map is open) and in the savable JSON. 
 
 Keyboard navigation
 - [ ] Should be something to navigate the sub-tabs in the "Territory library" tab: let's say---Ctrl/Cmd+0 should focus those sub-tabs, allowing us to use arrow key or tab/shift+tab to cycle through the sub-tabs. This should be documented in the keyboard shortcuts hint panel as "`Ctrl/Cmd+0` Focus Territory library sub-tabs" (under the `Ctrl/Cmd+5` hint).
