@@ -292,3 +292,66 @@ This is a flat subset of the builder state (no top-level code fields, no picker 
    - For Format A stored in the database, add a one-time data migration in `_init_hub_db()` to rewrite existing rows.
 3. **Structural changes**: Treat like a rename — add a version field (`"format_version": 2`) to the JSON and branch on it in all loaders.
 4. **Keep this section updated**: After any format change, update the field listing above and bump the version label.
+
+## Drafts & Map Access — How It Works
+
+### Are drafts distinguished from alpha versions of maps?
+
+Yes, they are completely separate concepts:
+
+- **Draft** (`hub_drafts` table): A single auto-saved workspace state — whatever is currently open in the editor (code, builder layers, options, predefined code, imports, theme, etc.). It has no name, no version history, and is not a publishable artifact. Think of it as "what's in my editor right now."
+
+- **Alpha version** (`hub_artifacts.alpha_content`): The mutable working tip of a *named, owned map artifact* (e.g. `/srajma/map/indic`). When you publish, a snapshot of alpha is frozen into `hub_artifact_versions` (v1, v2, …) and alpha continues to be editable. Alpha is a named artifact belonging to a specific user; it participates in the publish/version history system.
+
+When you're editing a named map you own, both are updated: alpha is saved continuously to the hub (named artifact), and the draft is also auto-saved (workspace state). They are independent saves and are not formally linked.
+
+### Can a user have more than one draft?
+
+No. Each identity has exactly one draft. The `hub_drafts` table has a `UNIQUE` constraint on `owner_key`, and saves always upsert — so saving overwrites the previous draft rather than creating a new one.
+
+### Can a non-logged-in user have drafts, and if so, how many?
+
+Yes. Guests get exactly one draft, same as logged-in users. The guest's identity is a random token stored in the `xatra_guest` browser cookie (httponly, 1-year max-age), and their draft is stored in the database keyed by `guest:{token}`.
+
+### Where are draft contents stored?
+
+**In the database**, not in the browser. The `xatra_guest` cookie for guests is only a lookup key — the actual content lives server-side in `hub_drafts`. This applies to both logged-in users (`owner_key = user:{id}`) and guests (`owner_key = guest:{token}`).
+
+Guest drafts are automatically purged after 90 days of inactivity (on server startup).
+
+### Are drafts cleared when they are saved?
+
+No. Saving a draft upserts it — the row is updated in place. The draft persists indefinitely (subject to the 90-day guest cleanup) and is never deleted as part of normal use. The draft is restored on the next visit to the editor.
+
+### When does auto-save trigger?
+
+On every edit, debounced by 800ms. A `useEffect` watches all editor state fields (`builderElements`, `builderOptions`, `code`, `predefinedCode`, `importsCode`, `themeCode`, `runtimeCode`, `mapName`) and fires a `PUT /draft/current` 800ms after the last change. There is no "first save" or timer-based trigger — it responds to edits.
+
+For logged-in users editing a named map they own, alpha is also continuously saved to the hub via a separate auto-save path, triggered by the same state changes.
+
+### Are all maps (versioned and alpha) publicly visible?
+
+Yes, all versions including alpha are publicly readable. There is no private state for named map artifacts — if a map exists in the hub, anyone can read it at any version. The `/explore` page lists all maps regardless of whether they have any published versions.
+
+### Are drafts publicly visible?
+
+No. `GET /draft/current` returns only the calling user's own draft (identified by their session cookie or guest cookie). There are no endpoints to read another user's draft.
+
+### Is editing clearly authenticated?
+
+Yes:
+
+- **Backend**: `PUT /hub/{username}/{kind}/{name}/alpha` and `POST .../publish` both call `_require_write_identity`, which enforces that a logged-in user can only write to their own username (403 otherwise), and that unauthenticated requests cannot create named artifacts at all (401).
+- **Frontend**: `isReadOnlyMap` is true whenever you're viewing someone else's map or a published (non-alpha) version. In read-only mode, editing controls are disabled and a Fork button is shown instead.
+- **Fork flow**: A fork reads the current map content and publishes it as a new artifact under the viewer's own username. Login is required to fork.
+
+Guests can use the editor and auto-save their draft, but cannot create named hub artifacts or publish — those actions require login.
+
+### Does the system make sense / follow best practices?
+
+Mostly yes. A few notes:
+
+- The one-draft-per-user model is simple and sufficient for a tool like this, where users work on one map at a time. It's analogous to how many IDEs restore your last open session.
+- Storing draft content server-side (rather than in `localStorage`) is the right call: it survives browser clears, works across devices, and keeps the server as the single source of truth.
+- The distinction between "draft" (workspace scratchpad) and "alpha" (named working version) is clean, if slightly surprising at first. Alpha is analogous to an autosaved file on disk; the draft is more like an unsaved editor buffer.
+- One genuine rough edge: there is no explicit link between a draft and the named map it corresponds to. If you're editing `/srajma/map/indic` and navigate away to the scratch editor, the draft is restored — but if you navigate directly back to `/srajma/map/indic`, the draft is ignored and alpha is loaded instead. This is correct behavior but could be confusing in edge cases.

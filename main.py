@@ -451,6 +451,14 @@ def _init_hub_db():
                 "UPDATE hub_artifact_versions SET metadata = ? WHERE id = ?",
                 (_json_text(meta), row["id"]),
             )
+        # Purge stale guest drafts (older than 90 days).
+        conn.execute(
+            """
+            DELETE FROM hub_drafts
+            WHERE owner_key LIKE 'guest:%'
+              AND updated_at < datetime('now', '-90 days')
+            """
+        )
         conn.commit()
     finally:
         conn.close()
@@ -2299,10 +2307,6 @@ def hub_get_artifact_version(username: str, kind: str, name: str, version: str, 
         if artifact is None:
             raise HTTPException(status_code=404, detail="Artifact not found")
         if str(version).strip().lower() == "alpha":
-            # Alpha (draft) content is only accessible by the owner.
-            caller = _request_user(conn, http_request)
-            if caller is None or caller["username"] != artifact["username"]:
-                raise HTTPException(status_code=403, detail="Alpha content is only accessible by the owner")
             return {
                 "username": artifact["username"],
                 "kind": _hub_kind_label(artifact["kind"]),
