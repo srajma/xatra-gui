@@ -296,6 +296,7 @@ Design improvements
 - [x] the "Xatra Studio" title is cheesy. Replace it with just xatra (lowercase), and no icon.
 - [x] allow the user to freely resize the left sidebar
 - [x] Design consistency and prettiness---the main map editor has nice design; everything else (i.e. the Explore, profile and Login pages) have jarringly boring UIs.
+- [ ] Use screenshot of map from last save as thumbnail (in Explore and Import from xatrahub interfaces)
 
 Experiments I have to do
 - [x] Make sure my existing maps work in this
