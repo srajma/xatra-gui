@@ -300,7 +300,8 @@ Design improvements
 Experiments I have to do
 - [x] Make sure my existing maps work in this
 - [ ] Play around as srajma/ to make sure
-  - [ ] 
+  - [ ] Split "indic" territory library into separate territory libraries
+  - [ ] Add all the maps
 - [ ] experiment with some different designs [NOT NOW]
 
 Development difficulties
