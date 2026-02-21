@@ -973,7 +973,7 @@ xatra.TitleBox("<b>My Map</b>")
         ? pickerIframeRef
         : (activePreviewTab === 'library' ? territoryLibraryIframeRef : iframeRef);
       if (ref.current && ref.current.contentWindow) {
-          ref.current.contentWindow.postMessage({ type: 'setDraft', points, shapeType }, '*');
+          ref.current.contentWindow.postMessage({ type: 'setDraft', points, shapeType }, 'null');
       }
   };
 
@@ -1242,7 +1242,7 @@ xatra.TitleBox("<b>My Map</b>")
     const groups = [
       ...(pickedGadmSelection.length ? [{ op: 'pending', gids: pickedGadmSelection.map((x) => x.gid) }] : []),
     ];
-    ref.contentWindow.postMessage({ type: 'setSelectionOverlay', groups }, '*');
+    ref.contentWindow.postMessage({ type: 'setSelectionOverlay', groups }, 'null');
   }, [pickedGadmSelection, pickerHtml]);
 
   useEffect(() => {
@@ -1256,7 +1256,7 @@ xatra.TitleBox("<b>My Map</b>")
     const groups = [
       ...(rawNames.length ? [{ op: 'pending', names: rawNames }] : []),
     ];
-    ref.contentWindow.postMessage({ type: 'setLabelSelectionOverlayFixed', groups }, '*');
+    ref.contentWindow.postMessage({ type: 'setLabelSelectionOverlayFixed', groups }, 'null');
   }, [pickedTerritorySelection, territoryLibraryHtml]);
 
   const handleStartReferencePick = (target) => {
@@ -1513,7 +1513,7 @@ xatra.TitleBox("<b>My Map</b>")
   const handleGetCurrentView = () => {
     const ref = activePreviewTab === 'picker' ? pickerIframeRef : activePreviewTab === 'library' ? territoryLibraryIframeRef : iframeRef;
     if (ref.current && ref.current.contentWindow) {
-      ref.current.contentWindow.postMessage('getCurrentView', '*');
+      ref.current.contentWindow.postMessage('getCurrentView', 'null');
     }
   };
 
@@ -1653,9 +1653,11 @@ xatra.TitleBox("<b>My Map</b>")
   const downloadFile = (content, filename, contentType) => {
     const a = document.createElement("a");
     const file = new Blob([content], {type: contentType});
-    a.href = URL.createObjectURL(file);
+    const url = URL.createObjectURL(file);
+    a.href = url;
     a.download = filename;
     a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 0);
   };
 
   const handleExportHtml = () => {
@@ -1964,7 +1966,21 @@ xatra.TitleBox("<b>My Map</b>")
         }
         if (part.type === 'polygon') {
           if (part.value == null || String(part.value).trim() === '') return '';
-          return `polygon(${part.value})`;
+          try {
+            const parsed = JSON.parse(part.value);
+            if (!Array.isArray(parsed)) return '';
+            const sanitized = parsed.map((coord) => {
+              if (!Array.isArray(coord) || coord.length < 2) return null;
+              const lat = Number(coord[0]);
+              const lng = Number(coord[1]);
+              if (!isFinite(lat) || !isFinite(lng)) return null;
+              return [lat, lng];
+            }).filter(Boolean);
+            if (!sanitized.length) return '';
+            return `polygon(${JSON.stringify(sanitized)})`;
+          } catch {
+            return '';
+          }
         }
         if (part.type === 'gadm') {
           const values = normalizeValues(part.value);
@@ -2340,7 +2356,7 @@ xatra.TitleBox("<b>My Map</b>")
     }, 3000);
     return () => { if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [builderElements, builderOptions, code, predefinedCode, importsCode, themeCode, runtimeCode]);
+  }, [builderElements, builderOptions, code, predefinedCode, importsCode, themeCode, runtimeCode, mapName]);
 
   // Initial render
   useEffect(() => {

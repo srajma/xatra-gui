@@ -649,7 +649,8 @@ def build_gadm_index():
         with _gadm_lock:
             GADM_INDEX = index
             rebuild_country_indexes()
-        with open("gadm_index.json", "w") as f:
+        _GADM_INDEX_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gadm_index.json")
+        with open(_GADM_INDEX_PATH, "w") as f:
             json.dump(index, f)
         print(f"GADM index built: {len(index)} entries")
 
@@ -659,9 +660,10 @@ def build_gadm_index():
         with _gadm_lock:
             INDEX_BUILDING = False
 
-if os.path.exists("gadm_index.json"):
+_GADM_INDEX_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gadm_index.json")
+if os.path.exists(_GADM_INDEX_PATH):
     try:
-        with open("gadm_index.json", "r") as f:
+        with open(_GADM_INDEX_PATH, "r") as f:
             _loaded_index = json.load(f)
         with _gadm_lock:
             GADM_INDEX = _loaded_index
@@ -754,6 +756,7 @@ class CodeRequest(BaseModel):
     imports_code: Optional[str] = None
     theme_code: Optional[str] = None
     runtime_code: Optional[str] = None
+    caller_username: Optional[str] = None  # Always overwritten server-side; not trusted from client
 
 class CodeSyncRequest(BaseModel):
     code: str
@@ -772,6 +775,7 @@ class BuilderRequest(BaseModel):
     imports_code: Optional[str] = None
     theme_code: Optional[str] = None
     runtime_code: Optional[str] = None
+    caller_username: Optional[str] = None  # Always overwritten server-side; not trusted from client
 
 class PickerEntry(BaseModel):
     country: str
@@ -788,6 +792,7 @@ class TerritoryLibraryRequest(BaseModel):
     selected_names: Optional[List[str]] = None
     basemaps: Optional[List[Dict[str, Any]]] = None
     hub_path: Optional[str] = None
+    caller_username: Optional[str] = None  # Always overwritten server-side; not trusted from client
 
 class StopRequest(BaseModel):
     task_types: Optional[List[str]] = None
@@ -1706,7 +1711,7 @@ def _extract_territory_index(code: str) -> List[str]:
                         pass
     return []
 
-def _get_territory_catalog(source: str, predefined_code: str, hub_path: Optional[str] = None) -> Dict[str, List[str]]:
+def _get_territory_catalog(source: str, predefined_code: str, hub_path: Optional[str] = None, caller_username: Optional[str] = None) -> Dict[str, List[str]]:
     """Return territory names using AST analysis only — no exec() in the main process."""
     import xatra.territory_library as territory_library
 
@@ -1728,7 +1733,7 @@ def _get_territory_catalog(source: str, predefined_code: str, hub_path: Optional
     if source == "hub" and hub_path:
         try:
             parsed = _parse_xatrahub_path(hub_path)
-            loaded = _hub_load_content(parsed["username"], parsed["kind"], parsed["name"], parsed["version"])
+            loaded = _hub_load_content(parsed["username"], parsed["kind"], parsed["name"], parsed["version"], caller_username=caller_username)
             code_text = _extract_python_payload_text(loaded["kind"], loaded.get("content", ""), loaded.get("metadata", {}))
             names = [n for n in _extract_assigned_names(code_text) if n != "__TERRITORY_INDEX__" and not n.startswith("_")]
             idx = _extract_territory_index(code_text)
@@ -1745,10 +1750,16 @@ def _get_territory_catalog(source: str, predefined_code: str, hub_path: Optional
     }
 
 @app.post("/territory_library/catalog")
-def territory_library_catalog(request: TerritoryLibraryRequest):
+def territory_library_catalog(request: TerritoryLibraryRequest, http_request: Request):
     try:
+        conn = _hub_db_conn()
+        try:
+            caller = _request_user(conn, http_request)
+            caller_username = caller["username"] if caller else None
+        finally:
+            conn.close()
         source = (request.source or "builtin").strip().lower()
-        catalog = _get_territory_catalog(source, request.predefined_code or "", request.hub_path)
+        catalog = _get_territory_catalog(source, request.predefined_code or "", request.hub_path, caller_username=caller_username)
         return catalog
     except Exception as e:
         return {"error": str(e)}
@@ -2097,8 +2108,9 @@ def users_list(
         where = []
         params: List[Any] = []
         if query:
-            like = f"%{query}%"
-            where.append("(LOWER(u.username) LIKE ? OR LOWER(u.full_name) LIKE ? OR LOWER(u.bio) LIKE ?)")
+            escaped = query.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
+            like = f"%{escaped}%"
+            where.append("(LOWER(u.username) LIKE ? ESCAPE '\\' OR LOWER(u.full_name) LIKE ? ESCAPE '\\' OR LOWER(u.bio) LIKE ? ESCAPE '\\')")
             params.extend([like, like, like])
         where_sql = ("WHERE " + " AND ".join(where)) if where else ""
         total = conn.execute(
@@ -2137,8 +2149,9 @@ def user_profile(username: str, q: Optional[str] = None, page: int = 1, per_page
         where = "WHERE a.user_id = ? AND a.kind = 'map'"
         params: List[Any] = [user["id"]]
         if query:
-            where += " AND (LOWER(a.name) LIKE ? OR LOWER(a.alpha_metadata) LIKE ?)"
-            like = f"%{query}%"
+            escaped = query.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
+            like = f"%{escaped}%"
+            where += " AND (LOWER(a.name) LIKE ? ESCAPE '\\' OR LOWER(a.alpha_metadata) LIKE ? ESCAPE '\\')"
             params.extend([like, like])
         total = conn.execute(f"SELECT COUNT(*) AS c FROM hub_artifacts a {where}", tuple(params)).fetchone()["c"]
         rows = conn.execute(
@@ -2181,6 +2194,8 @@ def draft_save(request: Request, response: Response, payload: DraftRequest):
             "map_name": _normalize_hub_name(payload.map_name or "new_map"),
             "project": payload.project or {},
         }, ensure_ascii=False)
+        if len(draft_json.encode("utf-8")) > MAX_ARTIFACT_BYTES:
+            raise HTTPException(status_code=413, detail="Draft content too large (max 10 MB)")
         conn.execute(
             """
             INSERT INTO hub_drafts(owner_key, project_json, updated_at)
@@ -2215,9 +2230,14 @@ def draft_get(request: Request, response: Response):
 
 
 @app.post("/hub/users/ensure")
-def hub_ensure_user(request: HubEnsureUserRequest):
+def hub_ensure_user(request: HubEnsureUserRequest, http_request: Request):
+    client_ip = http_request.client.host if http_request.client else "unknown"
+    _check_rate_limit(f"ensure_user:{client_ip}", 10, 3600)
     conn = _hub_db_conn()
     try:
+        session_user = _request_user(conn, http_request)
+        if session_user is None and not http_request.cookies.get(GUEST_COOKIE):
+            raise HTTPException(status_code=401, detail="Authentication required")
         user = _hub_ensure_user(conn, request.username)
         conn.commit()
         return {"username": user["username"], "created_at": user["created_at"]}
@@ -2280,13 +2300,19 @@ def hub_publish(username: str, kind: str, name: str, request: HubArtifactWriteRe
 
 
 @app.get("/hub/{username}/{kind}/{name}")
-def hub_get_artifact(username: str, kind: str, name: str):
+def hub_get_artifact(username: str, kind: str, name: str, http_request: Request):
     conn = _hub_db_conn()
     try:
         artifact = _hub_get_artifact(conn, username, kind, name)
         if artifact is None:
             raise HTTPException(status_code=404, detail="Artifact not found")
-        return _hub_artifact_response(conn, artifact)
+        response = _hub_artifact_response(conn, artifact)
+        caller = _request_user(conn, http_request)
+        if caller is None or caller["username"] != artifact["username"]:
+            # Strip alpha (draft) content from non-owners.
+            if isinstance(response.get("alpha"), dict):
+                response["alpha"] = {k: (v if k != "content" else "") for k, v in response["alpha"].items()}
+        return response
     finally:
         conn.close()
 
@@ -2368,8 +2394,9 @@ def hub_registry(
             where.append("LOWER(u.username) = ?")
             params.append(user_filter)
         for term in terms:
-            where.append("(LOWER(a.name) LIKE ? OR LOWER(u.username) LIKE ? OR LOWER(a.alpha_metadata) LIKE ?)")
-            like = f"%{term}%"
+            escaped = term.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
+            like = f"%{escaped}%"
+            where.append("(LOWER(a.name) LIKE ? ESCAPE '\\' OR LOWER(u.username) LIKE ? ESCAPE '\\' OR LOWER(a.alpha_metadata) LIKE ? ESCAPE '\\')")
             params.extend([like, like, like])
         where_sql = ("WHERE " + " AND ".join(where)) if where else ""
         rows = conn.execute(
@@ -2467,13 +2494,15 @@ def _parse_xatrahub_path(path: str) -> Dict[str, Any]:
     return {"username": username, "kind": kind, "name": name, "version": version}
 
 
-def _hub_load_content(username: str, kind: str, name: str, version: str = "alpha") -> Dict[str, Any]:
+def _hub_load_content(username: str, kind: str, name: str, version: str = "alpha", caller_username: Optional[str] = None) -> Dict[str, Any]:
     conn = _hub_db_conn()
     try:
         artifact = _hub_get_artifact(conn, username, kind, name)
         if artifact is None:
             raise ValueError(f"xatrahub artifact not found: /{username}/{kind}/{name}")
         if str(version).lower() == "alpha":
+            if caller_username is None or caller_username != artifact["username"]:
+                raise ValueError(f"Alpha content of /{username}/{kind}/{name} is only accessible by the owner")
             return {
                 "username": artifact["username"],
                 "kind": _hub_kind_label(artifact["kind"]),
@@ -2641,6 +2670,7 @@ def run_rendering_task(task_type, data, result_queue):
         return value
 
     def register_xatrahub(exec_globals):
+        _subprocess_caller_username = getattr(data, "caller_username", None)
         def xatrahub(path, filter_only=None, filter_not=None):
             parsed = _parse_xatrahub_path(str(path))
             loaded = _hub_load_content(
@@ -2648,6 +2678,7 @@ def run_rendering_task(task_type, data, result_queue):
                 parsed["kind"],
                 parsed["name"],
                 parsed["version"],
+                caller_username=_subprocess_caller_username,
             )
             code_text = _extract_python_payload_text(
                 loaded["kind"],
@@ -2708,7 +2739,7 @@ def run_rendering_task(task_type, data, result_queue):
             source = (getattr(data, "source", "builtin") or "builtin").strip().lower()
             code = getattr(data, "predefined_code", "") or ""
             hub_path = getattr(data, "hub_path", None)
-            catalog = _get_territory_catalog(source, code, hub_path)
+            catalog = _get_territory_catalog(source, code, hub_path, caller_username=getattr(data, "caller_username", None))
             selected_input = getattr(data, "selected_names", None)
             if isinstance(selected_input, list):
                 selected_names = [str(n) for n in selected_input if isinstance(n, str)]
@@ -2738,7 +2769,7 @@ def run_rendering_task(task_type, data, result_queue):
             elif source == "hub" and hub_path:
                 try:
                     parsed = _parse_xatrahub_path(hub_path)
-                    loaded = _hub_load_content(parsed["username"], parsed["kind"], parsed["name"], parsed["version"])
+                    loaded = _hub_load_content(parsed["username"], parsed["kind"], parsed["name"], parsed["version"], caller_username=getattr(data, "caller_username", None))
                     code_text = _extract_python_payload_text(loaded["kind"], loaded.get("content", ""), loaded.get("metadata", {}))
                     scope = {
                         "gadm": xatra.loaders.gadm,
@@ -2889,10 +2920,9 @@ def run_rendering_task(task_type, data, result_queue):
                         cmap = LinearSegmentedColormap.from_list("custom_cmap", colors)
                         m.DataColormap(cmap)
                     elif cmap_type:
-                        import matplotlib.pyplot as plt
-                        cmap = getattr(plt.cm, cmap_type, None)
-                        if cmap is not None:
-                            m.DataColormap(cmap)
+                        import matplotlib
+                        if cmap_type in matplotlib.colormaps:
+                            m.DataColormap(matplotlib.colormaps[cmap_type])
                 elif isinstance(dc, str):
                     m.DataColormap(dc)
 
@@ -3153,7 +3183,7 @@ def run_rendering_task(task_type, data, result_queue):
             source = (getattr(data, "source", "builtin") or "builtin").strip().lower()
             code = getattr(data, "predefined_code", "") or ""
             hub_path = getattr(data, "hub_path", None)
-            catalog = _get_territory_catalog(source, code, hub_path)
+            catalog = _get_territory_catalog(source, code, hub_path, caller_username=getattr(data, "caller_username", None))
             result["available_names"] = catalog.get("names", [])
             result["index_names"] = catalog.get("index_names", [])
         result_queue.put(result)
@@ -3225,21 +3255,42 @@ def render_picker(request: PickerRequest):
     return result
 
 @app.post("/render/territory-library")
-def render_territory_library(request: TerritoryLibraryRequest):
+def render_territory_library(request: TerritoryLibraryRequest, http_request: Request):
+    conn = _hub_db_conn()
+    try:
+        caller = _request_user(conn, http_request)
+        caller_username = caller["username"] if caller else None
+    finally:
+        conn.close()
+    request = request.model_copy(update={"caller_username": caller_username})
     result = run_in_process('territory_library', request)
     if "error" in result:
         return result
     return result
 
 @app.post("/render/code")
-def render_code(request: CodeRequest):
+def render_code(request: CodeRequest, http_request: Request):
+    conn = _hub_db_conn()
+    try:
+        caller = _request_user(conn, http_request)
+        caller_username = caller["username"] if caller else None
+    finally:
+        conn.close()
+    request = request.model_copy(update={"caller_username": caller_username})
     result = run_in_process('code', request)
     if "error" in result:
         return result
     return result
 
 @app.post("/render/builder")
-def render_builder(request: BuilderRequest):
+def render_builder(request: BuilderRequest, http_request: Request):
+    conn = _hub_db_conn()
+    try:
+        caller = _request_user(conn, http_request)
+        caller_username = caller["username"] if caller else None
+    finally:
+        conn.close()
+    request = request.model_copy(update={"caller_username": caller_username})
     result = run_in_process('builder', request)
     if "error" in result:
         return result
