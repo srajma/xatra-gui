@@ -1,9 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Trash2, ChevronDown, ChevronUp, Info, MousePointer2, Save } from 'lucide-react';
 import AutocompleteInput from './AutocompleteInput';
 import TerritoryBuilder from './TerritoryBuilder';
 import PythonTextField from './PythonTextField';
 import { isPythonValue } from '../utils/pythonValue';
+import { API_BASE } from '../config';
 
 const BUILTIN_ICON_SHAPES = ['circle', 'square', 'triangle', 'diamond', 'cross', 'plus', 'star', 'hexagon', 'pentagon', 'octagon'];
 
@@ -13,6 +14,7 @@ const LayerItem = ({
   onSaveTerritory, predefinedCode, onStartReferencePick, hubImports = []
 }) => {
   const [showMore, setShowMore] = useState(false);
+  const pickerTimeoutRef = useRef(null);
   const [builtinIconsList, setBuiltinIconsList] = useState([]);
   
   const isPicking = activePicker && activePicker.id === index && activePicker.context === 'layer';
@@ -27,7 +29,7 @@ const LayerItem = ({
 
   useEffect(() => {
     if (element.type === 'point') {
-      fetch('http://localhost:8088/icons/list')
+      fetch(`${API_BASE}/icons/list`)
         .then(r => r.json())
         .then(setBuiltinIconsList)
         .catch(() => setBuiltinIconsList([]));
@@ -44,7 +46,9 @@ const LayerItem = ({
             updateElement(index, 'value', JSON.stringify(point));
             setDraftPoints([point]);
             // Keep cue visible briefly so the click location is perceptible after picker turns off.
-            window.setTimeout(() => {
+            if (pickerTimeoutRef.current) clearTimeout(pickerTimeoutRef.current);
+            pickerTimeoutRef.current = window.setTimeout(() => {
+              pickerTimeoutRef.current = null;
               setActivePicker(null);
               setDraftPoints([]);
             }, 240);
@@ -54,7 +58,11 @@ const LayerItem = ({
             updateElement(index, 'value', JSON.stringify(newPoints));
         }
       }
-  }, [lastMapClick]);
+      return () => {
+        if (pickerTimeoutRef.current) clearTimeout(pickerTimeoutRef.current);
+      };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lastMapClick, isPicking, element.type, index, updateElement, draftPoints, setActivePicker, setDraftPoints]);
 
   // Sync draftPoints when entering picking mode for path
   useEffect(() => {

@@ -1,4 +1,4 @@
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useEffect, useCallback } from 'react';
 import { Map, Users, MapPin, Type, GitMerge, Table, Heading, Code2, Import, Trash2 } from 'lucide-react';
 import LayerItem from './LayerItem';
 import GlobalOptions from './GlobalOptions';
@@ -13,6 +13,7 @@ const Builder = ({
   const layersEndRef = useRef(null);
   const prevElementsLengthRef = useRef(elements.length);
   const pendingFocusNewLayerRef = useRef(false);
+  const focusTimeoutsRef = useRef([]);
 
   const addElement = (type, opts = { focusFirstField: true }) => {
     if (readOnly) return;
@@ -72,8 +73,12 @@ const Builder = ({
     if (elements.length > prevElementsLengthRef.current && layersEndRef.current) {
       layersEndRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' });
       if (pendingFocusNewLayerRef.current) {
+        // Clear any previous pending focus timeouts
+        focusTimeoutsRef.current.forEach(clearTimeout);
+        focusTimeoutsRef.current = [];
         [0, 40, 120, 240].forEach((delay) => {
-          window.setTimeout(() => {
+          const id = window.setTimeout(() => {
+            focusTimeoutsRef.current = focusTimeoutsRef.current.filter((t) => t !== id);
             const cards = document.querySelectorAll('#layers-container .xatra-layer-card');
             const lastCard = cards[cards.length - 1];
             if (!lastCard) return;
@@ -85,11 +90,16 @@ const Builder = ({
               }
             }
           }, delay);
+          focusTimeoutsRef.current.push(id);
         });
         pendingFocusNewLayerRef.current = false;
       }
     }
     prevElementsLengthRef.current = elements.length;
+    return () => {
+      focusTimeoutsRef.current.forEach(clearTimeout);
+      focusTimeoutsRef.current = [];
+    };
   }, [elements.length]);
 
   useEffect(() => {
