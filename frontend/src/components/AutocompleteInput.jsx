@@ -1,13 +1,14 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Code2 } from 'lucide-react';
 import { isPythonValue, toPythonValue, getPythonExpr, toTextValue } from '../utils/pythonValue';
+import { API_BASE } from '../config';
 
 const AutocompleteInput = ({
   value,
   onChange,
   placeholder,
   className,
-  endpoint = 'http://localhost:8088/search/gadm',
+  endpoint = `${API_BASE}/search/gadm`,
   minChars = 2,
   onSelectSuggestion,
   inputProps = {},

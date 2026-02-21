@@ -9,14 +9,15 @@ import signal
 import ast
 import re
 import io
+import time
 import tokenize
 import sqlite3
 import secrets
 import hashlib
 import hmac
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from types import SimpleNamespace
-from collections import OrderedDict
+from collections import OrderedDict, defaultdict
 
 # Set matplotlib backend to Agg before importing anything else
 import matplotlib
@@ -42,6 +43,26 @@ process_lock = threading.Lock()
 render_cache_lock = threading.Lock()
 RENDER_CACHE_MAX_ENTRIES = 24
 render_cache = OrderedDict()
+
+# Simple in-memory rate limiter (IP-keyed, sliding window)
+_rate_limit_store: Dict[str, List[float]] = defaultdict(list)
+_rate_limit_lock = threading.Lock()
+
+def _check_rate_limit(key: str, limit: int, window_seconds: int) -> None:
+    """Raise HTTP 429 if this key has exceeded `limit` requests in `window_seconds`."""
+    now = time.time()
+    cutoff = now - window_seconds
+    with _rate_limit_lock:
+        timestamps = _rate_limit_store[key]
+        timestamps[:] = [t for t in timestamps if t > cutoff]
+        if len(timestamps) >= limit:
+            raise HTTPException(status_code=429, detail="Too many requests. Please try again later.")
+        timestamps.append(now)
+
+# Lock protecting GADM index globals against concurrent mutation from background thread
+_gadm_lock = threading.Lock()
+
+MAX_ARTIFACT_BYTES = 10 * 1024 * 1024  # 10 MB per-artifact content size limit
 
 HUB_DB_PATH = Path(__file__).parent / "xatra_hub.db"
 HUB_NAME_PATTERN = re.compile(r"^[a-z0-9_.]+$")
@@ -292,13 +313,17 @@ def _init_hub_db():
 
         # Ensure default admin account exists.
         now = _utc_now_iso()
-        conn.execute(
+        admin_password = os.environ.get("ADMIN_PASSWORD") or secrets.token_urlsafe(16)
+        result = conn.execute(
             """
             INSERT OR IGNORE INTO hub_users(username, password_hash, full_name, bio, is_admin, created_at)
             VALUES(?, ?, ?, ?, ?, ?)
             """,
-            ("srajma", _hash_password("admin"), "srajma", "", 1, now),
+            ("srajma", _hash_password(admin_password), "srajma", "", 1, now),
         )
+        if result.rowcount > 0:
+            print(f"[xatra] Admin account 'srajma' created. Password: {admin_password}")
+            print("[xatra] Set ADMIN_PASSWORD env var to configure this at startup, or change it after first login.")
         # Seed default public territory library.
         user_row = conn.execute("SELECT id FROM hub_users WHERE username = 'srajma'").fetchone()
         if user_row is not None:
@@ -426,6 +451,14 @@ def _init_hub_db():
                 "UPDATE hub_artifact_versions SET metadata = ? WHERE id = ?",
                 (_json_text(meta), row["id"]),
             )
+        # Purge stale guest drafts (older than 90 days).
+        conn.execute(
+            """
+            DELETE FROM hub_drafts
+            WHERE owner_key LIKE 'guest:%'
+              AND updated_at < datetime('now', '-90 days')
+            """
+        )
         conn.commit()
     finally:
         conn.close()
@@ -533,6 +566,7 @@ COUNTRY_SEARCH_INDEX = []
 
 def rebuild_country_indexes():
     global COUNTRY_LEVELS_INDEX, COUNTRY_SEARCH_INDEX
+    # Called only from build_gadm_index which already holds _gadm_lock
     levels_map = {}
     names_map = {}
 
@@ -567,8 +601,10 @@ def rebuild_country_indexes():
 
 def build_gadm_index():
     global INDEX_BUILDING, GADM_INDEX
-    if INDEX_BUILDING: return
-    INDEX_BUILDING = True
+    with _gadm_lock:
+        if INDEX_BUILDING:
+            return
+        INDEX_BUILDING = True
     print("Building GADM index...")
     
     try:
@@ -618,22 +654,26 @@ def build_gadm_index():
                 except Exception as e:
                     pass
         
-        GADM_INDEX = index
-        rebuild_country_indexes()
+        with _gadm_lock:
+            GADM_INDEX = index
+            rebuild_country_indexes()
         with open("gadm_index.json", "w") as f:
             json.dump(index, f)
         print(f"GADM index built: {len(index)} entries")
-            
+
     except Exception as e:
         print(f"Error building index: {e}")
     finally:
-        INDEX_BUILDING = False
+        with _gadm_lock:
+            INDEX_BUILDING = False
 
 if os.path.exists("gadm_index.json"):
     try:
         with open("gadm_index.json", "r") as f:
-            GADM_INDEX = json.load(f)
-        rebuild_country_indexes()
+            _loaded_index = json.load(f)
+        with _gadm_lock:
+            GADM_INDEX = _loaded_index
+            rebuild_country_indexes()
     except:
         threading.Thread(target=build_gadm_index).start()
 else:
@@ -852,7 +892,8 @@ def _hub_artifact_response(conn: sqlite3.Connection, artifact: sqlite3.Row) -> D
 
 
 def _session_expiry_iso() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    expiry = datetime.now(timezone.utc) + timedelta(days=SESSION_TTL_DAYS)
+    return expiry.replace(microsecond=0).isoformat()
 
 
 def _parse_iso(ts: str) -> datetime:
@@ -1652,67 +1693,41 @@ def _extract_assigned_names(code: str) -> List[str]:
                 names.append(target.id)
     return names
 
-def _get_territory_catalog(source: str, predefined_code: str, hub_path: Optional[str] = None) -> Dict[str, List[str]]:
-    import xatra.territory_library as territory_library
-    from xatra.territory import Territory
 
-    def _territory_names_from_scope(scope: Dict[str, Any]) -> List[str]:
-        names: List[str] = []
-        for k, v in scope.items():
-            if str(k).startswith("_"):
-                continue
-            if isinstance(v, Territory):
-                names.append(str(k))
-        return names
+def _extract_territory_index(code: str) -> List[str]:
+    """Extract __TERRITORY_INDEX__ value via AST literal_eval (no exec needed)."""
+    if not code or not code.strip():
+        return []
+    try:
+        tree = ast.parse(code)
+    except Exception:
+        return []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name) and target.id == "__TERRITORY_INDEX__":
+                    try:
+                        value = ast.literal_eval(node.value)
+                        if isinstance(value, (list, tuple)):
+                            return [str(x) for x in value if isinstance(x, str)]
+                    except Exception:
+                        pass
+    return []
+
+def _get_territory_catalog(source: str, predefined_code: str, hub_path: Optional[str] = None) -> Dict[str, List[str]]:
+    """Return territory names using AST analysis only — no exec() in the main process."""
+    import xatra.territory_library as territory_library
 
     if source == "custom":
         assigned = [n for n in _extract_assigned_names(predefined_code) if n != "__TERRITORY_INDEX__"]
-        names = []
-        seen = set()
+        names: List[str] = []
+        seen: set = set()
         for name in assigned:
             if name.startswith("_") or name in seen:
                 continue
             seen.add(name)
             names.append(name)
-        index_names: List[str] = []
-        if predefined_code and predefined_code.strip():
-            try:
-                exec_globals = {
-                    "gadm": xatra.loaders.gadm,
-                    "polygon": xatra.loaders.polygon,
-                    "naturalearth": xatra.loaders.naturalearth,
-                    "overpass": xatra.loaders.overpass,
-                }
-                for name in dir(territory_library):
-                    if not name.startswith("_"):
-                        exec_globals[name] = getattr(territory_library, name)
-                def _catalog_xatrahub(path, filter_only=None, filter_not=None):
-                    parsed = _parse_xatrahub_path(str(path))
-                    loaded = _hub_load_content(parsed["username"], parsed["kind"], parsed["name"], parsed["version"])
-                    kind = loaded.get("kind")
-                    content = loaded.get("content", "")
-                    if kind == "lib":
-                        scope = {
-                            "gadm": xatra.loaders.gadm,
-                            "polygon": xatra.loaders.polygon,
-                            "naturalearth": xatra.loaders.naturalearth,
-                            "overpass": xatra.loaders.overpass,
-                        }
-                        exec(str(content or ""), scope)
-                        return SimpleNamespace(**{k: v for k, v in scope.items() if not k.startswith("_")})
-                    if kind in {"map", "css"}:
-                        exec(str(content or ""), exec_globals)
-                        return None
-                    return None
-                exec_globals["xatrahub"] = _catalog_xatrahub
-                exec(predefined_code, exec_globals)
-                if not names:
-                    names = _territory_names_from_scope(exec_globals)
-                idx = exec_globals.get("__TERRITORY_INDEX__", [])
-                if isinstance(idx, (list, tuple)):
-                    index_names = [str(n) for n in idx if isinstance(n, str)]
-            except Exception:
-                index_names = []
+        index_names = _extract_territory_index(predefined_code) if predefined_code else []
         return {
             "names": names,
             "index_names": [n for n in index_names if n in names] if index_names else names,
@@ -1724,22 +1739,7 @@ def _get_territory_catalog(source: str, predefined_code: str, hub_path: Optional
             loaded = _hub_load_content(parsed["username"], parsed["kind"], parsed["name"], parsed["version"])
             code_text = _extract_python_payload_text(loaded["kind"], loaded.get("content", ""), loaded.get("metadata", {}))
             names = [n for n in _extract_assigned_names(code_text) if n != "__TERRITORY_INDEX__" and not n.startswith("_")]
-            idx = []
-            try:
-                scope = {
-                    "gadm": xatra.loaders.gadm,
-                    "polygon": xatra.loaders.polygon,
-                    "naturalearth": xatra.loaders.naturalearth,
-                    "overpass": xatra.loaders.overpass,
-                }
-                exec(code_text or "", scope)
-                if not names:
-                    names = _territory_names_from_scope(scope)
-                idx_raw = scope.get("__TERRITORY_INDEX__", [])
-                if isinstance(idx_raw, (list, tuple)):
-                    idx = [str(x) for x in idx_raw if isinstance(x, str)]
-            except Exception:
-                idx = []
+            idx = _extract_territory_index(code_text)
             return {"names": names, "index_names": [n for n in idx if n in names] if idx else names}
         except Exception:
             return {"names": [], "index_names": []}
@@ -1785,13 +1785,41 @@ def _require_write_identity(conn: sqlite3.Connection, request: Request, username
         return user
     if target != GUEST_USERNAME:
         raise HTTPException(status_code=401, detail="Login required")
+    # For guest writes, require the guest cookie to be present so completely anonymous
+    # requests (no cookies at all) can't write to guest artifacts.
+    guest_id = request.cookies.get(GUEST_COOKIE)
+    if not guest_id or not guest_id.strip():
+        raise HTTPException(status_code=401, detail="Login required")
     return None
 
 
+def _create_session_cookie(conn: sqlite3.Connection, row: sqlite3.Row, response: Response) -> Dict[str, Any]:
+    """Insert a new session record and set the session cookie. Returns user profile."""
+    token = secrets.token_urlsafe(32)
+    token_hash = _sha256_text(token)
+    now = datetime.now(timezone.utc)
+    exp = datetime.fromtimestamp(now.timestamp() + 60 * 60 * 24 * SESSION_TTL_DAYS, tz=timezone.utc).replace(microsecond=0)
+    conn.execute(
+        "INSERT INTO hub_sessions(user_id, token_hash, created_at, expires_at) VALUES(?, ?, ?, ?)",
+        (row["id"], token_hash, _utc_now_iso(), exp.isoformat()),
+    )
+    conn.commit()
+    response.set_cookie(
+        SESSION_COOKIE,
+        token,
+        httponly=True,
+        samesite="lax",
+        max_age=60 * 60 * 24 * SESSION_TTL_DAYS,
+    )
+    return {"user": _user_public_profile(conn, row), "is_authenticated": True}
+
+
 @app.post("/auth/signup")
-def auth_signup(request: AuthSignupRequest, response: Response):
-    username = _normalize_hub_user(request.username)
-    password = str(request.password or "")
+def auth_signup(body: AuthSignupRequest, response: Response, http_request: Request):
+    ip = (http_request.client.host if http_request.client else "unknown")
+    _check_rate_limit(f"signup:{ip}", limit=5, window_seconds=3600)
+    username = _normalize_hub_user(body.username)
+    password = str(body.password or "")
     if len(password) < 8:
         raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
     conn = _hub_db_conn()
@@ -1805,40 +1833,26 @@ def auth_signup(request: AuthSignupRequest, response: Response):
             INSERT INTO hub_users(username, password_hash, full_name, bio, is_admin, created_at)
             VALUES(?, ?, ?, '', 0, ?)
             """,
-            (username, _hash_password(password), str(request.full_name or "").strip(), now),
+            (username, _hash_password(password), str(body.full_name or "").strip(), now),
         )
         conn.commit()
+        row = conn.execute("SELECT * FROM hub_users WHERE username = ?", (username,)).fetchone()
+        return _create_session_cookie(conn, row, response)
     finally:
         conn.close()
-    return auth_login(AuthLoginRequest(username=username, password=password), response)
 
 
 @app.post("/auth/login")
-def auth_login(request: AuthLoginRequest, response: Response):
+def auth_login(body: AuthLoginRequest, response: Response, http_request: Request):
+    ip = (http_request.client.host if http_request.client else "unknown")
+    _check_rate_limit(f"login:{ip}", limit=10, window_seconds=300)
     conn = _hub_db_conn()
     try:
-        username = _normalize_hub_user(request.username)
+        username = _normalize_hub_user(body.username)
         row = conn.execute("SELECT * FROM hub_users WHERE username = ?", (username,)).fetchone()
-        if row is None or not _verify_password(str(request.password or ""), row["password_hash"]):
+        if row is None or not _verify_password(str(body.password or ""), row["password_hash"]):
             raise HTTPException(status_code=401, detail="Invalid username or password")
-        token = secrets.token_urlsafe(32)
-        token_hash = _sha256_text(token)
-        now = datetime.now(timezone.utc)
-        exp = datetime.fromtimestamp(now.timestamp() + 60 * 60 * 24 * SESSION_TTL_DAYS, tz=timezone.utc).replace(microsecond=0)
-        conn.execute("DELETE FROM hub_sessions WHERE user_id = ?", (row["id"],))
-        conn.execute(
-            "INSERT INTO hub_sessions(user_id, token_hash, created_at, expires_at) VALUES(?, ?, ?, ?)",
-            (row["id"], token_hash, _utc_now_iso(), exp.isoformat()),
-        )
-        conn.commit()
-        response.set_cookie(
-            SESSION_COOKIE,
-            token,
-            httponly=True,
-            samesite="lax",
-            max_age=60 * 60 * 24 * SESSION_TTL_DAYS,
-        )
-        return {"user": _user_public_profile(conn, row), "is_authenticated": True}
+        return _create_session_cookie(conn, row, response)
     finally:
         conn.close()
 
@@ -1912,6 +1926,8 @@ def auth_update_profile(request: Request, payload: UserProfileUpdateRequest):
 
 @app.put("/auth/me/password")
 def auth_update_password(request: Request, payload: PasswordUpdateRequest):
+    ip = (request.client.host if request.client else "unknown")
+    _check_rate_limit(f"passwd:{ip}", limit=5, window_seconds=300)
     conn = _hub_db_conn()
     try:
         user = _request_user(conn, request)
@@ -1952,8 +1968,8 @@ def maps_resolve_name(request: Request, base: str = "new_map"):
 
 
 @app.get("/maps/{username}/{map_name}")
-def maps_get(username: str, map_name: str, version: str = "alpha"):
-    return hub_get_artifact_version(username=username, kind="map", name=map_name, version=version)
+def maps_get(username: str, map_name: str, version: str = "alpha", http_request: Request = None):
+    return hub_get_artifact_version(username=username, kind="map", name=map_name, version=version, http_request=http_request)
 
 
 @app.post("/maps/{username}/{map_name}/view")
@@ -2035,8 +2051,10 @@ def maps_explore(
             where.append("LOWER(u.username) = ?")
             params.append(user_filter)
         for term in text_terms:
-            where.append("(LOWER(a.name) LIKE ? OR LOWER(a.alpha_metadata) LIKE ? OR LOWER(u.username) LIKE ?)")
-            like = f"%{term}%"
+            where.append("(LOWER(a.name) LIKE ? ESCAPE '\\' OR LOWER(a.alpha_metadata) LIKE ? ESCAPE '\\' OR LOWER(u.username) LIKE ? ESCAPE '\\')")
+            # Escape LIKE wildcards so user input is treated as literal text
+            escaped = term.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
+            like = f"%{escaped}%"
             params.extend([like, like, like])
         where_sql = "WHERE " + " AND ".join(where)
         total = conn.execute(
@@ -2220,11 +2238,14 @@ def hub_save_alpha(username: str, kind: str, name: str, request: HubArtifactWrit
     conn = _hub_db_conn()
     try:
         _require_write_identity(conn, http_request, username)
+        content = request.content or ""
+        if len(content.encode("utf-8")) > MAX_ARTIFACT_BYTES:
+            raise HTTPException(status_code=413, detail="Content too large (max 10 MB)")
         # For map metadata, automatically preserve owner and updated_at.
         md = dict(request.metadata or {})
         md["owner"] = _normalize_hub_user(username)
         md["updated_at"] = _utc_now_iso()
-        artifact = _hub_upsert_alpha(conn, username, kind, name, request.content or "", md)
+        artifact = _hub_upsert_alpha(conn, username, kind, name, content, md)
         conn.commit()
         return _hub_artifact_response(conn, artifact)
     finally:
@@ -2237,6 +2258,8 @@ def hub_publish(username: str, kind: str, name: str, request: HubArtifactWriteRe
     try:
         _require_write_identity(conn, http_request, username)
         content = request.content or ""
+        if len(content.encode("utf-8")) > MAX_ARTIFACT_BYTES:
+            raise HTTPException(status_code=413, detail="Content too large (max 10 MB)")
         md = dict(request.metadata or {})
         md["owner"] = _normalize_hub_user(username)
         md["updated_at"] = _utc_now_iso()
@@ -2277,7 +2300,7 @@ def hub_get_artifact(username: str, kind: str, name: str):
 
 
 @app.get("/hub/{username}/{kind}/{name}/{version}")
-def hub_get_artifact_version(username: str, kind: str, name: str, version: str):
+def hub_get_artifact_version(username: str, kind: str, name: str, version: str, http_request: Request):
     conn = _hub_db_conn()
     try:
         artifact = _hub_get_artifact(conn, username, kind, name)
@@ -2403,7 +2426,17 @@ def hub_registry_alias(
     return hub_registry(kind=kind, q=q, limit=limit)
 
 @app.post("/stop")
-def stop_generation(request: Optional[StopRequest] = Body(default=None)):
+def stop_generation(http_request: Request, request: Optional[StopRequest] = Body(default=None)):
+    # Require either an authenticated session or a guest cookie to prevent unauthenticated
+    # external callers from stopping renders.
+    conn = _hub_db_conn()
+    try:
+        user = _request_user(conn, http_request)
+        guest_id = http_request.cookies.get(GUEST_COOKIE)
+        if user is None and not (guest_id and guest_id.strip()):
+            raise HTTPException(status_code=401, detail="Login required")
+    finally:
+        conn.close()
     allowed_task_types = {"picker", "territory_library", "code", "builder"}
     requested = request.task_types if request and request.task_types else list(allowed_task_types)
     task_types = [t for t in requested if t in allowed_task_types]
@@ -3090,10 +3123,9 @@ def run_rendering_task(task_type, data, result_queue):
                     import io
                     val = resolve_builder_value(el.value, builder_exec_globals)
                     if isinstance(val, str):
-                        if val.endswith('.csv') and os.path.exists(val):
-                             df = pd.read_csv(val)
-                        else:
-                             df = pd.read_csv(io.StringIO(val))
+                        # Always treat the value as CSV content (never as a file path)
+                        # to prevent path traversal attacks.
+                        df = pd.read_csv(io.StringIO(val))
                         if "label" in args: del args["label"]
                         if args.get("data_column") in (None, ""): args.pop("data_column", None)
                         if args.get("year_columns") in (None, [], ""): args.pop("year_columns", None)
@@ -3131,7 +3163,8 @@ def run_rendering_task(task_type, data, result_queue):
         result_queue.put(result)
         
     except Exception as e:
-        result_queue.put({"error": str(e), "traceback": traceback.format_exc()})
+        print(f"[xatra] Rendering error:\n{traceback.format_exc()}", file=sys.stderr)
+        result_queue.put({"error": str(e)})
 
 def run_in_process(task_type, data):
     cache_key = None
@@ -3149,20 +3182,19 @@ def run_in_process(task_type, data):
                 render_cache.move_to_end(cache_key)
                 return cached
 
-    # Ensure previous process for this task type is dead.
+    queue = multiprocessing.Queue()
+    p = multiprocessing.Process(target=run_rendering_task, args=(task_type, data, queue))
+
+    # Kill any previous process and register+start the new one atomically inside the lock
+    # to prevent a race window where another thread could see a registered-but-not-started
+    # process and incorrectly terminate it.
     with process_lock:
         previous = current_processes.get(task_type)
         if previous and previous.is_alive():
             previous.terminate()
             previous.join()
-    
-    queue = multiprocessing.Queue()
-    p = multiprocessing.Process(target=run_rendering_task, args=(task_type, data, queue))
-    
-    with process_lock:
         current_processes[task_type] = p
-        
-    p.start()
+        p.start()
     
     result = {"error": "Rendering process timed out or crashed"}
     try:
@@ -3219,13 +3251,13 @@ def render_builder(request: BuilderRequest):
 
 
 @app.get("/{username}/{kind}/{name}/{version}")
-def public_hub_artifact_version(username: str, kind: str, name: str, version: str):
-    return hub_get_artifact_version(username=username, kind=kind, name=name, version=version)
+def public_hub_artifact_version(username: str, kind: str, name: str, version: str, http_request: Request):
+    return hub_get_artifact_version(username=username, kind=kind, name=name, version=version, http_request=http_request)
 
 
 @app.get("/{username}/{kind}/{name}")
-def public_hub_artifact_alpha(username: str, kind: str, name: str):
-    return hub_get_artifact_version(username=username, kind=kind, name=name, version="alpha")
+def public_hub_artifact_alpha(username: str, kind: str, name: str, http_request: Request):
+    return hub_get_artifact_version(username=username, kind=kind, name=name, version="alpha", http_request=http_request)
 
 if __name__ == "__main__":
     import uvicorn

@@ -13,8 +13,7 @@ import {
   createDefaultBuilderOptions,
   createDefaultBuilderElements,
 } from './lib/editorDefaults';
-
-const API_BASE = 'http://localhost:8088';
+import { API_BASE } from './config';
 const HUB_NAME_RE = /^[a-z0-9_.]+$/;
 const FIXED_PY_IMPORTS = `import xatra
 from xatra.loaders import gadm, naturalearth, polygon, overpass
@@ -1060,6 +1059,8 @@ xatra.TitleBox("<b>My Map</b>")
 
   useEffect(() => {
     const handleMessage = (event) => {
+      // Only accept messages from our srcdoc iframes (null origin) or same origin
+      if (event.origin !== 'null' && event.origin !== window.location.origin) return;
       if (event.data && event.data.type === 'mapViewUpdate') {
         const targetSet = activePreviewTab === 'picker' ? null : setBuilderOptions;
         if (targetSet) {
@@ -1219,7 +1220,7 @@ xatra.TitleBox("<b>My Map</b>")
     Promise.all(
       uniqueCountries.map(async (country) => {
         try {
-          const res = await fetch(`http://localhost:8088/gadm/levels?country=${encodeURIComponent(country)}`);
+          const res = await fetch(`${API_BASE}/gadm/levels?country=${encodeURIComponent(country)}`);
           const levels = await res.json();
           return [country, Array.isArray(levels) && levels.length ? levels : [0, 1, 2, 3, 4]];
         } catch {
@@ -1523,8 +1524,9 @@ xatra.TitleBox("<b>My Map</b>")
             ...pickerOptions,
             basemaps: builderOptions.basemaps || [],
           };
-          const response = await fetch(`http://localhost:8088/render/picker`, {
+          const response = await fetch(`${API_BASE}/render/picker`, {
               method: 'POST',
+              credentials: 'include',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify(payload)
           });
@@ -1998,9 +2000,13 @@ xatra.TitleBox("<b>My Map</b>")
   };
 
   const handleSaveTerritoryToLibrary = (element) => {
-      const name = (element.label || '').replace(/\s+/g, '_');
+      // Sanitize to a valid Python identifier (letters, digits, underscores only; no leading digit)
+      const safeName = ((element.label || 'territory')
+          .replace(/\s+/g, '_')
+          .replace(/[^a-zA-Z0-9_]/g, '')
+          .replace(/^[0-9]+/, '')) || 'territory';
       const terrStr = formatTerritory(element.value);
-      setPredefinedCode(prev => prev + `\n${name} = ${terrStr}\n`);
+      setPredefinedCode(prev => prev + `\n${safeName} = ${terrStr}\n`);
       handleTabChange('code');
   };
 
@@ -2018,13 +2024,26 @@ xatra.TitleBox("<b>My Map</b>")
         }
         return JSON.stringify(str);
     };
+    // Recursively converts a JS value to a Python literal, without string-level replacement
+    // that would corrupt string values containing "null", "true", or "false".
+    const jsonToPy = (val) => {
+        if (val === null || val === undefined) return 'None';
+        if (typeof val === 'boolean') return val ? 'True' : 'False';
+        if (typeof val === 'number') return String(val);
+        if (typeof val === 'string') return pyString(val);
+        if (Array.isArray(val)) return `[${val.map(jsonToPy).join(', ')}]`;
+        if (typeof val === 'object') {
+            const pairs = Object.entries(val).map(([k, v]) => `${JSON.stringify(k)}: ${jsonToPy(v)}`);
+            return `{${pairs.join(', ')}}`;
+        }
+        return JSON.stringify(val);
+    };
     const pyVal = (v) => {
         if (isPythonValue(v)) return getPythonExpr(v) || 'None';
         if (v == null || v === '') return 'None';
         if (typeof v === 'boolean') return v ? 'True' : 'False';
         if (typeof v === 'string') return pyString(v);
-        if (Array.isArray(v)) return JSON.stringify(v);
-        return JSON.stringify(v).replace(/"/g, "'").replace(/null/g, 'None').replace(/true/g, 'True').replace(/false/g, 'False');
+        return jsonToPy(v);
     };
     const colorSequenceExpr = (raw) => {
         if (typeof raw !== 'string') return null;
@@ -2284,8 +2303,9 @@ xatra.TitleBox("<b>My Map</b>")
       );
       setLoadingByView((prev) => ({ ...prev, [stopView]: false }));
       try {
-          await fetch('http://localhost:8088/stop', {
+          await fetch(`${API_BASE}/stop`, {
             method: 'POST',
+            credentials: 'include',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ task_types: mappedTaskTypes }),
           });
@@ -2979,7 +2999,7 @@ xatra.TitleBox("<b>My Map</b>")
                              <div key={idx} className="flex gap-1.5 items-center">
                                  <AutocompleteInput 
                                      value={entry.country}
-                                     endpoint="http://localhost:8088/search/gadm"
+                                     endpoint={`${API_BASE}/search/gadm`}
                                      onChange={(val) => {
                                          const newEntries = [...pickerOptions.entries];
                                          newEntries[idx].country = val;

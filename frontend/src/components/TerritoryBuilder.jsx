@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Plus, Trash2, MousePointer2, GripVertical, X } from 'lucide-react';
+import { API_BASE } from '../config';
 
 const DRAG_PATH_MIME = 'application/x-xatra-territory-path';
 const TERRITORY_TYPES = ['gadm', 'polygon', 'predefined', 'group'];
@@ -407,7 +408,8 @@ const TerritoryBuilder = ({
         onChange(newParts);
       }
     }
-  }, [lastMapClick]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lastMapClick, pickingIndex, parts, draftPoints, onChange]);
 
   useEffect(() => {
     if (pickingIndex >= 0) {
@@ -786,7 +788,7 @@ const TerritoryBuilder = ({
 
   const [territoryLibraryNames, setTerritoryLibraryNames] = useState([]);
   useEffect(() => {
-    fetch('http://localhost:8088/territory_library/names')
+    fetch(`${API_BASE}/territory_library/names`)
       .then(r => r.json())
       .then(setTerritoryLibraryNames)
       .catch(() => setTerritoryLibraryNames([]));
@@ -808,7 +810,7 @@ const TerritoryBuilder = ({
       hubLibImports.map(async (imp) => {
         const hub_path = `/${imp.username}/${imp.kind}/${imp.name}/${imp.selected_version || 'alpha'}`;
         try {
-          const res = await fetch('http://localhost:8088/territory_library/catalog', {
+          const res = await fetch(`${API_BASE}/territory_library/catalog`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ source: 'hub', hub_path }),
@@ -1078,7 +1080,7 @@ const TerritoryBuilder = ({
                         onChange={(vals) => updatePart(idx, { value: toStored(vals) })}
                         placeholder="Search admin units..."
                         mode="remote"
-                        endpoint="http://localhost:8088/search/gadm"
+                        endpoint={`${API_BASE}/search/gadm`}
                         inputPath={rowPathId}
                       />
                     </div>
