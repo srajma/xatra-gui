@@ -304,6 +304,12 @@ Experiments I have to do
   - [ ] Add all the maps
 - [ ] experiment with some different designs [NOT NOW]
 
+Bugs we still have
+- [ ] when I publish a new version of a map, it doesn't automatically add that version to the version dropdown---same thing with publishing new versions of Custom territory libraries or themes (in the Code editor). 
+- [ ] When I create a new map, it gets auto-saved after a few seconds even though I have not made any changes.
+- [ ] Any map I load immediately just shows the map for India in the Map Preview at the start until I click "Render Map". It should render the actual map on first load instead.
+- [ ] Our current new map and landing page workflow causes an unnecessary proliferation of maps, because 
+
 Random misc
 - [ ] Use screenshot of map from last save as thumbnail (in Explore and Import from xatrahub interfaces)
 - [ ] improvements to forking and voting
@@ -368,6 +374,7 @@ For eventually publishing this as a website
 - [ ] Efficiency and scalability concerns [for now, just answer in words, don't implement anything]
   - Can this website handle, idk, approx 1000 users making maps? How can we estimate the resources etc. that will cost and the servers we will need? (I'm totally new to this, I have no idea if this makes sense).
   - Is it inefficient that for every change the user makes to the map, it has to be re-rendered from ground up by xatra? Are there better solutions?
+- [ ] Collaborative editing/Github integration
 - [ ] AI agent that makes maps for you --- only for paid users [have to think about exactly how to implement this]
 
 
