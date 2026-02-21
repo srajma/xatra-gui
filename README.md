@@ -304,6 +304,18 @@ Experiments I have to do
   - [ ] Add all the maps
 - [ ] experiment with some different designs [NOT NOW]
 
+Random misc
+- [ ] Use screenshot of map from last save as thumbnail (in Explore and Import from xatrahub interfaces)
+- [ ] improvements to forking and voting
+  - [ ] forks should show "fork of [...](link to original map)" under their page's byline (i.e. under "by <user> . likes . views")
+  - [ ] forking a map should automatically vote it up
+  - [ ] users should by default have liked their own maps, and should be unable to change this
+- [ ] it may make sense to go from map names being unique per-user to unique globally, and change map/territory/theme slugs to not use the username (i.e. be simply `lib/mapname` rather than `lib/username/mapname`; `map/mapname` rather than `map/username/mapname`; `css/mapname` rather than `css/username/mapname`)
+  - [ ] This will have to be updated in the original xatra project's hub.py (I maintain it, it's in `../xatra.master`) as well as in the imports list here, etc.
+  - [ ] putting a username in between should still work for backwards-compatibility
+  - [ ] Since map names must now be unique globally, the default name counter cannot simply increment as `new_map_<n>`. Instead just let the default name be the ID of the map in the database (assuming such a numeric ID exists---if not, make one). The name of a map should never be allowed to entirely numeric _unless_ it happens to be that map's ID.
+- [ ] allow user to "disassociate" their maps from their usernames on their own user page, and on the map's page. This is better than allowing deletion, so that published maps/themes/territory libraries still exist and can be used; they're just not associated with that user's name. Use an icon for "Anonymous", if such an icon exists; otherwise just use a simple trash icon. It should prompt the user for confirmation before anonymizing; making it clear to him that he will **lose all ownership and editing rights** to this map (though he can fork it) and make him type in the name of the map before anonymizing it.
+
 Development difficulties
 - [x] keeping synchrony between things---this should be documented, i.e. "if you change this, then change this too"
   - See "Development / Synchrony" section below.
