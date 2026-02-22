@@ -102,6 +102,7 @@ function App() {
   const [autoSaveStatus, setAutoSaveStatus] = useState('idle');
   const autoSaveTimerRef = useRef(null);
   const lastAutoSavedContentRef = useRef(null);
+  const editorReadyRef = useRef(false); // true after initial load phase; guards against spurious auto-saves on first render
   const [guestHasChanges, setGuestHasChanges] = useState(false);
   // Publish status for library and theme: null | 'publishing' | 'published:v{n}' | 'no_changes' | 'error'
   const [libraryPublishStatus, setLibraryPublishStatus] = useState(null);
@@ -142,6 +143,7 @@ function App() {
   const [selectedThemeVersion, setSelectedThemeVersion] = useState('alpha');
   const [mapOwner, setMapOwner] = useState('guest');
   const [sourceMapRef, setSourceMapRef] = useState(null);
+  const [forkedFrom, setForkedFrom] = useState(null);
   const [mapVotes, setMapVotes] = useState(0);
   const [mapViews, setMapViews] = useState(0);
   const [importsCode, setImportsCode] = useState(DEFAULT_INDIC_IMPORT_CODE);
@@ -693,6 +695,7 @@ xatra.TitleBox("<b>My Map</b>")
   const loadMapFromHub = async (owner, name, version = 'alpha') => {
     setAutoSaveStatus('idle');
     lastAutoSavedContentRef.current = null;
+    setForkedFrom(null);
     try {
       const resp = await apiFetch(`/maps/${owner}/${name}?version=${encodeURIComponent(version || 'alpha')}`);
       const data = await resp.json();
@@ -740,6 +743,8 @@ xatra.TitleBox("<b>My Map</b>")
         setMapVotes(Number(artifactData.votes || 0));
         setMapViews(Number(artifactData.views || 0));
         setMapVersionLabel(version === 'alpha' ? 'alpha' : String(version));
+        const forkSrc = artifactData?.alpha?.metadata?.forked_from;
+        setForkedFrom(forkSrc ? String(forkSrc) : null);
       }
     } catch (err) {
       setError(err.message);
@@ -1765,9 +1770,7 @@ xatra.TitleBox("<b>My Map</b>")
   };
 
   const performAutoSave = async (content) => {
-    if (!currentUser.is_authenticated || isReadOnlyMap || !mapOwner || !normalizedMapName) return;
-    // Only auto-save to hub when editing a named map loaded from the hub
-    if (!route.map) return;
+    if (!currentUser.is_authenticated || isReadOnlyMap || !normalizedMapName) return;
     if (!HUB_NAME_RE.test(normalizedMapName)) return;
     setAutoSaveStatus('saving');
     try {
@@ -1834,6 +1837,8 @@ xatra.TitleBox("<b>My Map</b>")
       navigateTo('/login');
       return;
     }
+    const forkSourceOwner = route.owner;
+    const forkSourceMap = route.map;
     try {
       const base = normalizedMapName || 'new_map';
       const resp = await apiFetch(`/maps/resolve-name?base=${encodeURIComponent(base)}`);
@@ -1844,6 +1849,10 @@ xatra.TitleBox("<b>My Map</b>")
         owner: normalizedHubUsername,
         name: data.name,
       });
+      // Auto-vote on the source map after forking
+      if (forkSourceOwner && forkSourceMap) {
+        apiFetch(`/maps/${forkSourceOwner}/${forkSourceMap}/vote`, { method: 'POST' }).catch(() => {});
+      }
     } catch (err) {
       setError(`Fork failed: ${err.message}`);
     }
@@ -2384,16 +2393,24 @@ xatra.TitleBox("<b>My Map</b>")
     return () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
   }, []);
 
+  // Mark editor as past its initial load phase after editorContextReady fires.
+  // This prevents the auto-save from treating the draft/default load as "user changes".
+  useEffect(() => {
+    if (!editorContextReady) { editorReadyRef.current = false; return; }
+    const t = setTimeout(() => { editorReadyRef.current = true; }, 300);
+    return () => clearTimeout(t);
+  }, [editorContextReady]);
+
   // Auto-save: trigger 'unsaved' status and schedule save whenever content changes
   useEffect(() => {
     if (!editorContextReady) return;
+    // For new maps, skip during initial load phase (before user makes any change)
+    if (!route.map && !editorReadyRef.current) return;
     if (!currentUser.is_authenticated) {
       setGuestHasChanges(true);
       return;
     }
     if (isReadOnlyMap) return;
-    // Don't trigger unsaved status for new maps (only for named hub maps)
-    if (!route.map) return;
     setAutoSaveStatus('unsaved');
     if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
     autoSaveTimerRef.current = setTimeout(async () => {
@@ -2581,6 +2598,17 @@ xatra.TitleBox("<b>My Map</b>")
     <div
       ref={topBarRef}
       className={`flex items-center h-10 px-2 gap-0.5 border-b flex-shrink-0 ${isDarkMode ? 'bg-slate-900 border-slate-700' : 'bg-white border-gray-200'}`}
+      onKeyDown={(e) => {
+        if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+        const focusables = Array.from(topBarRef.current?.querySelectorAll('button:not([disabled]), a[href]') || []);
+        const idx = focusables.indexOf(document.activeElement);
+        if (idx === -1) return;
+        e.preventDefault();
+        const next = e.key === 'ArrowRight'
+          ? focusables[(idx + 1) % focusables.length]
+          : focusables[(idx - 1 + focusables.length) % focusables.length];
+        next?.focus();
+      }}
     >
       {/* Hidden file input for Load JSON */}
       <input id="xatra-load-input" type="file" className="hidden" accept=".json" onChange={handleLoadProject} />
@@ -2628,6 +2656,39 @@ xatra.TitleBox("<b>My Map</b>")
         title={isDarkMode ? 'Switch to light mode' : 'Switch to night mode'}
         className={`p-1.5 rounded ${isDarkMode ? 'text-slate-300 hover:bg-slate-800' : 'text-gray-600 hover:bg-gray-100'}`}
       >{isDarkMode ? <Sun size={14}/> : <Moon size={14}/>}</button>
+      <div className="relative">
+        <button
+          onClick={() => setShowShortcutHelp((prev) => !prev)}
+          title="Toggle keyboard shortcuts"
+          className={`p-1.5 rounded ${isDarkMode ? 'text-slate-300 hover:bg-slate-800' : 'text-gray-600 hover:bg-gray-100'}`}
+        ><Keyboard size={14}/></button>
+        {showShortcutHelp && (
+          <div className={`absolute top-full right-0 mt-1 z-50 rounded-lg shadow-lg p-3 text-xs w-64 border ${shortcutsPanelClass}`}>
+            <div className="font-semibold mb-2">Shortcuts</div>
+            <div>`?` toggle this panel</div>
+            <div>`Ctrl/Cmd+1` Builder tab</div>
+            <div>`Ctrl/Cmd+2` Code tab</div>
+            <div>`Ctrl/Cmd+3` Map Preview</div>
+            <div>`Ctrl/Cmd+4` Reference Map</div>
+            <div>`Ctrl/Cmd+5` Territory Library</div>
+            <div>`Ctrl/Cmd+0` Focus Territory library sub-tabs</div>
+            <div>`Ctrl/Cmd+;` Focus top bar (←→ to navigate)</div>
+            <div>`Ctrl/Cmd+Enter` Render map</div>
+            <div>`Ctrl/Cmd+Shift+Enter` Stop active preview generation</div>
+            <div>`Ctrl/Cmd+Space` Update active picker map tab</div>
+            <div>`Ctrl/Cmd+Shift+X` Import from existing map</div>
+            <div className="mt-2 pt-2 border-t border-gray-200">`Ctrl/Cmd+Shift+F` add Flag</div>
+            <div>`Ctrl/Cmd+Shift+R` add River</div>
+            <div>`Ctrl/Cmd+Shift+P` add Point</div>
+            <div>`Ctrl/Cmd+Shift+T` add Text</div>
+            <div>`Ctrl/Cmd+Shift+H` add Path</div>
+            <div>`Ctrl/Cmd+Shift+A` add Admin</div>
+            <div>`Ctrl/Cmd+Shift+D` add Data</div>
+            <div>`Ctrl/Cmd+Shift+B` add TitleBox</div>
+            <div>`Ctrl/Cmd+Shift+Y` add Python</div>
+          </div>
+        )}
+      </div>
       {currentUser.is_authenticated ? (
         <>
           <a
@@ -2899,14 +2960,16 @@ xatra.TitleBox("<b>My Map</b>")
                   <CloudUpload size={13} className="text-gray-700"/>
                 </button>
               )}
-              <select
-                value={viewedMapVersion}
-                onChange={(e) => handleMapVersionSelect(e.target.value)}
-                className="text-[11px] border rounded px-1.5 py-1 bg-white font-mono"
-                title="Map version"
-              >
-                {currentMapVersionOptions.map((opt) => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
-              </select>
+              {currentMapVersionOptions.length > 0 && (
+                <select
+                  value={viewedMapVersion}
+                  onChange={(e) => handleMapVersionSelect(e.target.value)}
+                  className="text-[11px] border rounded px-1.5 py-1 bg-white font-mono"
+                  title="Map version"
+                >
+                  {currentMapVersionOptions.map((opt) => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+                </select>
+              )}
             </div>
             <div className="flex items-center gap-2">
               <div className="flex bg-white rounded-lg border border-gray-300 p-0.5">
@@ -2932,16 +2995,22 @@ xatra.TitleBox("<b>My Map</b>")
                 <a href={`/${mapOwner}`} className="text-blue-700 hover:underline">{mapOwner}</a>
                 <span>·</span>
                 <button
-                  onClick={handleVoteMap}
-                  disabled={!(route.owner && route.map)}
-                  className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded border ${route.owner && route.map ? 'hover:bg-gray-50' : 'opacity-40'}`}
-                  title="Like/unlike"
+                  onClick={isMapAuthor ? undefined : handleVoteMap}
+                  disabled={!(route.owner && route.map) || isMapAuthor}
+                  className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded border ${isMapAuthor ? 'opacity-60 cursor-default' : route.owner && route.map ? 'hover:bg-gray-50' : 'opacity-40'}`}
+                  title={isMapAuthor ? 'You always like your own map' : 'Like/unlike'}
                 >
-                  <Heart size={12} className={mapVotes > 0 ? 'text-rose-600 fill-rose-600' : 'text-gray-500'} />
+                  <Heart size={12} className={(isMapAuthor || mapVotes > 0) ? 'text-rose-600 fill-rose-600' : 'text-gray-500'} />
                   <span>{mapVotes} likes</span>
                 </button>
                 <span>·</span>
                 <span>{mapViews} views</span>
+                {forkedFrom && (
+                  <>
+                    <span>·</span>
+                    <span>fork of <a href={forkedFrom} className="text-blue-700 hover:underline">{forkedFrom}</a></span>
+                  </>
+                )}
                 {!isReadOnlyMap && autoSaveStatus !== 'idle' && (
                   <>
                     <span>·</span>
@@ -3246,40 +3315,6 @@ xatra.TitleBox("<b>My Map</b>")
         )}
 
         <div className="flex-1 overflow-hidden relative">
-            <button
-                type="button"
-                onClick={() => setShowShortcutHelp((prev) => !prev)}
-                className={`absolute top-4 right-4 z-40 rounded-full shadow p-2 border ${shortcutsToggleClass}`}
-                title="Toggle keyboard shortcuts"
-            >
-                <Keyboard size={16} />
-            </button>
-            {showShortcutHelp && (
-                <div className={`absolute top-16 right-4 z-40 rounded-lg shadow-lg p-3 text-xs w-64 border ${shortcutsPanelClass}`}>
-                    <div className="font-semibold text-gray-800 mb-2">Shortcuts</div>
-                    <div>`?` toggle this panel</div>
-                    <div>`Ctrl/Cmd+1` Builder tab</div>
-                    <div>`Ctrl/Cmd+2` Code tab</div>
-                    <div>`Ctrl/Cmd+3` Map Preview</div>
-                    <div>`Ctrl/Cmd+4` Reference Map</div>
-                    <div>`Ctrl/Cmd+5` Territory Library</div>
-                    <div>`Ctrl/Cmd+0` Focus Territory library sub-tabs</div>
-                    <div>`Ctrl/Cmd+;` Focus top bar</div>
-                    <div>`Ctrl/Cmd+Enter` Render map</div>
-                    <div>`Ctrl/Cmd+Shift+Enter` Stop active preview generation</div>
-                    <div>`Ctrl/Cmd+Space` Update active picker map tab</div>
-                    <div>`Ctrl/Cmd+Shift+X` Import from existing map</div>
-                    <div className="mt-2 pt-2 border-t border-gray-200">`Ctrl/Cmd+Shift+F` add Flag</div>
-                    <div>`Ctrl/Cmd+Shift+R` add River</div>
-                    <div>`Ctrl/Cmd+Shift+P` add Point</div>
-                    <div>`Ctrl/Cmd+Shift+T` add Text</div>
-                    <div>`Ctrl/Cmd+Shift+H` add Path</div>
-                    <div>`Ctrl/Cmd+Shift+A` add Admin</div>
-                    <div>`Ctrl/Cmd+Shift+D` add Data</div>
-                    <div>`Ctrl/Cmd+Shift+B` add TitleBox</div>
-                    <div>`Ctrl/Cmd+Shift+Y` add Python</div>
-                </div>
-            )}
             {activePicker && (activePicker.context === 'layer' || isTerritoryPolygonPicker(activePicker.context)) && (
                 <div className="absolute inset-0 z-30 pointer-events-none flex items-center justify-center">
                     <div className="bg-amber-500 text-white px-6 py-4 rounded-lg shadow-2xl border-2 border-amber-600 font-semibold text-center max-w-md animate-pulse">

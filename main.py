@@ -2267,7 +2267,7 @@ def hub_save_alpha(username: str, kind: str, name: str, request: HubArtifactWrit
 def hub_publish(username: str, kind: str, name: str, request: HubArtifactWriteRequest, http_request: Request):
     conn = _hub_db_conn()
     try:
-        _require_write_identity(conn, http_request, username)
+        user_row = _require_write_identity(conn, http_request, username)
         content = request.content or ""
         if len(content.encode("utf-8")) > MAX_ARTIFACT_BYTES:
             raise HTTPException(status_code=413, detail="Content too large (max 10 MB)")
@@ -2290,6 +2290,18 @@ def hub_publish(username: str, kind: str, name: str, request: HubArtifactWriteRe
         artifact = _hub_get_artifact(conn, username, kind, name)
         if artifact is None:
             raise HTTPException(status_code=500, detail="Artifact missing after publish")
+        # Auto-like own map on publish (idempotent — only if not already voted)
+        if kind == "map" and user_row is not None:
+            existing_vote = conn.execute(
+                "SELECT id FROM hub_votes WHERE artifact_id = ? AND user_id = ?",
+                (artifact["id"], user_row["id"]),
+            ).fetchone()
+            if not existing_vote:
+                conn.execute(
+                    "INSERT INTO hub_votes(artifact_id, user_id, created_at) VALUES(?, ?, ?)",
+                    (artifact["id"], user_row["id"], _utc_now_iso()),
+                )
+                conn.commit()
         response = _hub_artifact_response(conn, artifact)
         response["published"] = publish_result
         response["no_changes"] = False

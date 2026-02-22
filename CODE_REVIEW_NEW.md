@@ -2,12 +2,14 @@
   Code Review: Actionable Issues                                                                                                                                                              
                                                                                                                                                                                               
   Security                                                                                                                                                                                    
-                                                                                                                                                                                              
+                                                                                                                                                                          !!! FALSE ALARM !!!
+  !!! DO NOT TRY FIXING S1, IT IS FINE !!!
+  !!! Misunderstands the intended design. The CLAUDE.md explicitly states guest users get full functionality including rendering. Adding
+  _require_write_identity would break the entire guest flow. Rate limiting (S2) is the correct fix. !!!                      
   #: S1
   Severity: Critical
   Location: main.py:3266-3278
-  Issue: No auth on render endpoints. /render/code, /render/builder, etc. accept arbitrary Python code and execute it in subprocesses with no authentication or authorization. CORS only
-    provides client-side protection.
+  Issue: No auth on render endpoints. /render/code, /render/builder, etc. accept arbitrary Python code and execute it in subprocesses with no authentication or authorization. CORS only provides client-side protection.
   Action: Add _require_write_identity / session check before spawning any subprocess.
   ────────────────────────────────────────
   #: S2
@@ -25,7 +27,7 @@
   ────────────────────────────────────────
   
   !!! FALSE ALARM !!!
-  !!! DO NOT TRY FIXING THIS ISSUE, IT'S FINE !!!
+  !!! DO NOT TRY FIXING s4, IT'S FINE !!!
   
   #: S4
   Severity: High
@@ -142,7 +144,7 @@
 
   This ensures loading a map always fully replaces the relevant state, even when the incoming value is an empty string.
 
-  FIXED.
+  
 
   ────────────────────────────────────────
   #: B9
@@ -152,6 +154,9 @@
     it mutates UI state, triggering re-renders and re-firing the auto-save effect.
   Action: Separate the code generation from the state mutation; return { code, themeCode } and let callers decide whether to set state.
   ────────────────────────────────────────
+  
+  !!! False alarm: The reviewer contradicts themselves — they confirm "1" works fine as a bare integer at the API layer. Not a real bug. Do not try fixing B10. !!!
+
   #: B10
   Severity: Low
   Location: App.jsx:47-49
@@ -215,6 +220,10 @@
     rename that was never done.
   Action: Either do the rename and update callers, or delete the function and inline the string directly.
   ────────────────────────────────────────
+  
+  !!! FALSE ALARM: They write to different endpoints (/draft/current vs /hub/.../alpha), so they're not actually racing on anything shared. This is intentional
+  separation. Do not try fixing T2. !!!
+  
   #: T2
   Severity: Medium
   Location: App.jsx:759-780, 2341-2354
