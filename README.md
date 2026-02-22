@@ -328,7 +328,7 @@ Bugs we still have
   - If a logged-in user clicks the "Unsaved Draft" entry, they should be prompted to give a name for the map (and make sure they do not give a conflicting name), then it should convert that draft into a map with that name belonging to the user and take the user to that map, deleting the Unsaved draft from the database.
   - The logged-in user should _never_ be in a situation where they are editing a draft directly. Make sure of this! Make sure they cannot access a map editor at any endpoint like /new-map (such things should just redirect them to /explore); that causes a mess.
   - When a guest user logs in, any Unsaved Draft belonging to them should be transferred to the logged-in user (so the guest user should not have an unsaved draft any more), replacing any existing Unsaved Draft belonging to that user
-    - [ ] Actually, this has an unintended result: if a user logs in, then doesn't save their unsaved draft, and logs out, the guest draft will get     
+    - [x] Actually, this has an unintended result: if a user logs in, then doesn't save their unsaved draft, and logs out, the guest draft will get     
    reset to the default map (empty with just gadm("IND")), so when they log in again their unsaved draft will get replaced with this default map. Instead, when the guest logs in, that       
   unsaved draft should get duplicated (so both the logged-in user and the guest have identical copies of it).
   - For the guest, the landing page should still be the map editor.
