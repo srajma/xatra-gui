@@ -324,6 +324,7 @@ Bugs we still have
 - [x] Actually I have a better idea for the whole drafts/landing page/saving flow: (don't do this now, I have to flesh it out)
   - Only for logged-in users, the Explore page will have a section above for the logged-in user's own maps. It will be a single-row grid, starting with an "Add New Map" entry (a nice big box the same size as all the other entries), then an "Unsaved Draft" entry _if it exists_ (again a nice big box, but the "Unsaved Draft" title should be in red), then the user's few recent maps---and then there should be a little "More >" link that takes the user to his profile page.
     - while we're changing the Explore page, you can also change the weird "box inside a box" design of the search bar.
+    - [ ] Oh also add the same "New Map" and "Unsaved Draft" icons on the user's own profile page (only the logged-in user's _own_ profile page, not anybody else's).
   - For logged-in users, this new /explore should be the landing page. 
   - If a logged-in user clicks the "Unsaved Draft" entry, they should be prompted to give a name for the map (and make sure they do not give a conflicting name), then it should convert that draft into a map with that name belonging to the user and take the user to that map, deleting the Unsaved draft from the database.
   - The logged-in user should _never_ be in a situation where they are editing a draft directly. Make sure of this! Make sure they cannot access a map editor at any endpoint like /new-map (such things should just redirect them to /explore); that causes a mess.
@@ -347,7 +348,7 @@ Random misc
     - [x] Oh, the Load JSON; Save JSON; Export HTML buttons should only appear on Map pages. And Load JSON in particular should not even appear when looking at other users' maps.
   - [x] Right-aligned: New map (this should stand out); Explore; Users; Night mode toggle (should be literally just a nice toggle with night/day icons, no "Night mode" text); `[username](link to profile)` if logged in; Login/Signup or Logout (depending on whether logged in or not)
   - [x] `Ctrl/Cmd+;`, which currently clicks the triple-line menu, should instead focus the top bar allowing us to cycle through it with tab or left-right arrow keys. Make sure to update the keyboard shortcuts hint panel.
-- [x] Use image of map from last save as thumbnail (in Explore and Import from xatrahub interfaces). For this you must figure out how to best capture an image of the rendered map.
+- [ ] Use image of map from last save as the map's thumbnail (in the Explore, User page and Import from xatrahub interfaces). For this you must figure out how to best capture an image of the rendered map.
 - [x] improvements to forking and voting
   - [x] forks should show "fork of [...](link to original map)" under their page's byline (i.e. under "by <user> . likes . views")
   - [x] forking a map should automatically vote it up
