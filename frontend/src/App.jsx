@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Layers, Code, Play, Upload, Download, Image, Plus, Trash2, Keyboard, Copy, Check, Moon, Sun, Menu, Compass, User, Users, LogIn, LogOut, FilePlus2, Import, Save, Heart, GitFork, CloudUpload, UserX, Settings } from 'lucide-react';
+import { Layers, Code, Play, Upload, Download, Image, Plus, Trash2, Keyboard, Copy, Check, Moon, Sun, Menu, Search, User, Users, LogIn, LogOut, FilePlus2, Import, Save, Triangle, GitFork, CloudUpload, UserX, Settings } from 'lucide-react';
 
 // Components (defined inline for simplicity first, can be split later)
 import Builder from './components/Builder';
@@ -78,6 +78,8 @@ function App() {
   const [importModalOpen, setImportModalOpen] = useState(false);
   const [newMapDialogOpen, setNewMapDialogOpen] = useState(false);
   const [newMapDialogName, setNewMapDialogName] = useState('');
+  const [newMapDialogChecking, setNewMapDialogChecking] = useState(false);
+  const [newMapDialogError, setNewMapDialogError] = useState('');
   const [profileSettingsOpen, setProfileSettingsOpen] = useState(false);
   const [statusNotice, setStatusNotice] = useState('');
   const [authMode, setAuthMode] = useState('login');
@@ -105,6 +107,7 @@ function App() {
   const [autoSaveStatus, setAutoSaveStatus] = useState('idle');
   const autoSaveTimerRef = useRef(null);
   const lastAutoSavedContentRef = useRef(null);
+  const lastRenderedThumbnailRef = useRef('');
   const editorReadyRef = useRef(false); // true after initial load phase; guards against spurious auto-saves on first render
   const [guestHasChanges, setGuestHasChanges] = useState(false);
   const [userDraftMeta, setUserDraftMeta] = useState(null); // null | { exists: bool, mapName?: string }
@@ -556,6 +559,7 @@ xatra.TitleBox("<b>My Map</b>")
     map_name: normalizedMapName,
     username: normalizedHubUsername,
     updated_from: activeTab,
+    ...(kind === 'map' && lastRenderedThumbnailRef.current ? { thumbnail: lastRenderedThumbnailRef.current } : {}),
   });
 
   const publishHubArtifact = async (kind, content, opts = {}) => {
@@ -929,14 +933,33 @@ xatra.TitleBox("<b>My Map</b>")
       return;
     }
     setNewMapDialogName('');
+    setNewMapDialogError('');
+    setNewMapDialogChecking(false);
     setNewMapDialogOpen(true);
   };
 
-  const handleNewMapConfirm = () => {
+  const handleNewMapConfirm = async () => {
     const name = String(newMapDialogName || '').trim().toLowerCase();
     if (!name || !HUB_NAME_RE.test(name)) return;
-    setNewMapDialogOpen(false);
-    navigateTo(`/${normalizedHubUsername}/map/${name}`);
+    setNewMapDialogChecking(true);
+    setNewMapDialogError('');
+    try {
+      const resp = await apiFetch(`/hub/${normalizedHubUsername}/map/${name}`);
+      if (resp.ok) {
+        setNewMapDialogError(`Map '${name}' already exists. Choose a different name.`);
+        return;
+      }
+      if (resp.status !== 404) {
+        const data = await resp.json().catch(() => ({}));
+        throw new Error(data.detail || 'Failed to validate map name');
+      }
+      setNewMapDialogOpen(false);
+      navigateTo(`/${normalizedHubUsername}/map/${name}`);
+    } catch (err) {
+      setNewMapDialogError(err.message || 'Failed to validate map name');
+    } finally {
+      setNewMapDialogChecking(false);
+    }
   };
 
   const handlePromoteDraft = async () => {
@@ -1823,6 +1846,65 @@ xatra.TitleBox("<b>My Map</b>")
     }
   };
 
+  const captureMapThumbnail = async () => {
+    try {
+      const iframe = iframeRef.current;
+      const doc = iframe?.contentDocument;
+      const mapEl = doc?.querySelector('.leaflet-container');
+      if (!doc || !mapEl) return '';
+      const svgEl = mapEl.querySelector('svg');
+      if (!svgEl) return '';
+      const sourceRect = mapEl.getBoundingClientRect();
+      const srcW = Math.max(1, Math.round(sourceRect.width || mapEl.clientWidth || 1));
+      const srcH = Math.max(1, Math.round(sourceRect.height || mapEl.clientHeight || 1));
+      const targetW = 480;
+      const targetH = 270;
+
+      const clone = svgEl.cloneNode(true);
+      clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+      clone.setAttribute('width', String(srcW));
+      clone.setAttribute('height', String(srcH));
+      clone.setAttribute('viewBox', `0 0 ${srcW} ${srcH}`);
+      const serialized = new XMLSerializer().serializeToString(clone);
+      const blob = new Blob([serialized], { type: 'image/svg+xml;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      try {
+        const img = await new Promise((resolve, reject) => {
+          const nextImg = new window.Image();
+          nextImg.onload = () => resolve(nextImg);
+          nextImg.onerror = reject;
+          nextImg.src = url;
+        });
+        const canvas = document.createElement('canvas');
+        canvas.width = targetW;
+        canvas.height = targetH;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return '';
+        ctx.fillStyle = isDarkMode ? '#0f172a' : '#f8fafc';
+        ctx.fillRect(0, 0, targetW, targetH);
+        ctx.drawImage(img, 0, 0, targetW, targetH);
+        return canvas.toDataURL('image/jpeg', 0.78);
+      } finally {
+        URL.revokeObjectURL(url);
+      }
+    } catch {
+      return '';
+    }
+  };
+
+  useEffect(() => {
+    if (!mapHtml) {
+      lastRenderedThumbnailRef.current = '';
+      return;
+    }
+    const timer = window.setTimeout(async () => {
+      const dataUrl = await captureMapThumbnail();
+      if (dataUrl) lastRenderedThumbnailRef.current = dataUrl;
+    }, 200);
+    return () => window.clearTimeout(timer);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mapHtml, isDarkMode]);
+
   const downloadFile = (content, filename, contentType) => {
     const a = document.createElement("a");
     const file = new Blob([content], {type: contentType});
@@ -1911,7 +1993,14 @@ xatra.TitleBox("<b>My Map</b>")
       const resp = await apiFetch(`/hub/${normalizedHubUsername}/map/${normalizedMapName}/alpha`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content, metadata: { owner: normalizedHubUsername, updated_at: new Date().toISOString() } }),
+        body: JSON.stringify({
+          content,
+          metadata: {
+            owner: normalizedHubUsername,
+            updated_at: new Date().toISOString(),
+            thumbnail: lastRenderedThumbnailRef.current || undefined,
+          },
+        }),
       });
       if (!resp.ok) {
         const data = await resp.json().catch(() => ({}));
@@ -2675,7 +2764,7 @@ xatra.TitleBox("<b>My Map</b>")
         <div className={`font-mono text-xs font-medium group-hover:text-blue-500 transition-colors ${isDarkMode ? 'text-slate-200' : 'text-slate-800'}`}>{item.name}</div>
         <div className={`text-[10px] mt-0.5 truncate ${isDarkMode ? 'text-slate-400' : 'text-gray-500'}`}>by {item.username}</div>
         <div className={`flex items-center gap-2 mt-1.5 text-[10px] ${isDarkMode ? 'text-slate-500' : 'text-gray-400'}`}>
-          <span className="inline-flex items-center gap-0.5"><Heart size={9}/> {item.votes || 0}</span>
+          <span className="inline-flex items-center gap-0.5"><Triangle size={9}/> {item.votes || 0}</span>
           <span>{item.views || 0} views</span>
         </div>
       </div>
@@ -2820,7 +2909,7 @@ xatra.TitleBox("<b>My Map</b>")
         onClick={() => navigateTo('/explore')}
         title="Explore"
         className={`p-1.5 rounded ${isDarkMode ? 'text-slate-300 hover:bg-slate-800' : 'text-gray-600 hover:bg-gray-100'}`}
-      ><Compass size={14}/></button>
+      ><Search size={14}/></button>
       <button
         onClick={() => setIsDarkMode((p) => !p)}
         title={isDarkMode ? 'Switch to light mode' : 'Switch to night mode'}
@@ -2888,7 +2977,7 @@ xatra.TitleBox("<b>My Map</b>")
         <div className={`text-[10px] mt-0.5 ${isDarkMode ? 'text-slate-500' : 'text-gray-400'}`}>studio</div>
       </div>
       <nav className="px-2 py-3 flex-1 space-y-0.5">
-        <button className={`w-full text-left px-3 py-2 rounded-lg text-sm inline-flex items-center gap-2.5 transition-colors ${activePage === 'explore' ? (isDarkMode ? 'bg-slate-800 text-white font-medium' : 'bg-blue-50 text-blue-700 font-medium') : (isDarkMode ? 'text-slate-300 hover:bg-slate-800 hover:text-white' : 'text-gray-600 hover:bg-gray-100')}`} onClick={() => navigateTo('/explore')}><Compass size={14}/> Explore</button>
+        <button className={`w-full text-left px-3 py-2 rounded-lg text-sm inline-flex items-center gap-2.5 transition-colors ${activePage === 'explore' ? (isDarkMode ? 'bg-slate-800 text-white font-medium' : 'bg-blue-50 text-blue-700 font-medium') : (isDarkMode ? 'text-slate-300 hover:bg-slate-800 hover:text-white' : 'text-gray-600 hover:bg-gray-100')}`} onClick={() => navigateTo('/explore')}><Search size={14}/> Explore</button>
         <button className={`w-full text-left px-3 py-2 rounded-lg text-sm inline-flex items-center gap-2.5 transition-colors ${activePage === 'users' ? (isDarkMode ? 'bg-slate-800 text-white font-medium' : 'bg-blue-50 text-blue-700 font-medium') : (isDarkMode ? 'text-slate-300 hover:bg-slate-800 hover:text-white' : 'text-gray-600 hover:bg-gray-100')}`} onClick={() => navigateTo('/explore')}><Users size={14}/> Users</button>
         <button className={`w-full text-left px-3 py-2 rounded-lg text-sm inline-flex items-center gap-2.5 transition-colors ${activePage === 'profile' ? (isDarkMode ? 'bg-slate-800 text-white font-medium' : 'bg-blue-50 text-blue-700 font-medium') : (isDarkMode ? 'text-slate-300 hover:bg-slate-800 hover:text-white' : 'text-gray-600 hover:bg-gray-100')}`} onClick={() => (currentUser.is_authenticated ? navigateTo(`/${normalizedHubUsername}`) : navigateTo('/login'))}><User size={14}/> {currentUser.is_authenticated ? normalizedHubUsername : 'My Profile'}</button>
         <button className={`w-full text-left px-3 py-2 rounded-lg text-sm inline-flex items-center gap-2.5 transition-colors ${isDarkMode ? 'text-slate-300 hover:bg-slate-800 hover:text-white' : 'text-gray-600 hover:bg-gray-100'}`} onClick={handleNewMapClick}><FilePlus2 size={14}/> New map…</button>
@@ -2963,28 +3052,34 @@ xatra.TitleBox("<b>My Map</b>")
     <>
       {newMapDialogOpen && (
         <div className="fixed inset-0 bg-black/40 z-[100] flex items-center justify-center" onClick={(e) => { if (e.target === e.currentTarget) setNewMapDialogOpen(false); }}>
-          <div className="bg-white rounded-lg border shadow-xl p-6 w-80">
+          <div className={`rounded-lg border shadow-xl p-6 w-80 ${isDarkMode ? 'bg-slate-900 border-slate-700 text-slate-100' : 'bg-white border-gray-200 text-slate-800'}`}>
             <div className="font-semibold text-sm mb-3">Create new map</div>
-            <label className="block text-xs text-gray-600 mb-1">Map name <span className="text-gray-400">(lowercase letters, digits, _ or .)</span></label>
+            <label className={`block text-xs mb-1 ${isDarkMode ? 'text-slate-300' : 'text-gray-600'}`}>Map name <span className={`${isDarkMode ? 'text-slate-500' : 'text-gray-400'}`}>(lowercase letters, digits, _ or .)</span></label>
             <input
               autoFocus
               type="text"
               value={newMapDialogName}
-              onChange={(e) => setNewMapDialogName(e.target.value.toLowerCase().replace(/[^a-z0-9_.]/g, ''))}
+              onChange={(e) => {
+                setNewMapDialogName(e.target.value.toLowerCase().replace(/[^a-z0-9_.]/g, ''));
+                if (newMapDialogError) setNewMapDialogError('');
+              }}
               onKeyDown={(e) => { if (e.key === 'Enter') handleNewMapConfirm(); else if (e.key === 'Escape') setNewMapDialogOpen(false); }}
               placeholder="my_map"
-              className="w-full border rounded px-3 py-2 text-sm mb-1"
+              className={`w-full border rounded px-3 py-2 text-sm mb-1 focus:outline-none focus:ring-2 focus:ring-blue-300 ${isDarkMode ? 'bg-slate-800 border-slate-600 text-white placeholder-slate-500 focus:border-blue-400' : 'bg-white border-gray-300 focus:border-blue-400'}`}
             />
             {newMapDialogName && !HUB_NAME_RE.test(newMapDialogName) && (
               <div className="text-xs text-red-600 mb-2">Invalid name. Use only a–z, 0–9, _ or .</div>
             )}
+            {newMapDialogError && (
+              <div className="text-xs text-red-600 mb-2">{newMapDialogError}</div>
+            )}
             <div className="flex gap-2 mt-3 justify-end">
-              <button className="px-3 py-1.5 text-sm border rounded hover:bg-gray-50" onClick={() => setNewMapDialogOpen(false)}>Cancel</button>
+              <button className={`px-3 py-1.5 text-sm border rounded transition-colors ${isDarkMode ? 'border-slate-600 text-slate-300 hover:bg-slate-800' : 'border-gray-300 text-gray-700 hover:bg-gray-50'}`} onClick={() => setNewMapDialogOpen(false)}>Cancel</button>
               <button
                 className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
-                disabled={!newMapDialogName || !HUB_NAME_RE.test(newMapDialogName)}
+                disabled={!newMapDialogName || !HUB_NAME_RE.test(newMapDialogName) || newMapDialogChecking}
                 onClick={handleNewMapConfirm}
-              >Create</button>
+              >{newMapDialogChecking ? 'Checking…' : 'Create'}</button>
             </div>
           </div>
         </div>
@@ -3044,20 +3139,20 @@ xatra.TitleBox("<b>My Map</b>")
       {promoteDraftDialogOpen && (
         <div className="fixed inset-0 bg-black/40 z-[100] flex items-center justify-center"
              onClick={(e) => { if (e.target === e.currentTarget) setPromoteDraftDialogOpen(false); }}>
-          <div className="bg-white rounded-lg border shadow-xl p-6 w-80">
+          <div className={`rounded-lg border shadow-xl p-6 w-80 ${isDarkMode ? 'bg-slate-900 border-slate-700 text-slate-100' : 'bg-white border-gray-200 text-slate-800'}`}>
             <div className="font-semibold text-sm mb-1">Save map</div>
-            <div className="text-xs text-gray-500 mb-3">Give this unsaved draft a name to save it to your account.</div>
-            <label className="block text-xs text-gray-600 mb-1">Map name <span className="text-gray-400">(a–z, 0–9, _ or .)</span></label>
+            <div className={`text-xs mb-3 ${isDarkMode ? 'text-slate-400' : 'text-gray-500'}`}>Give this unsaved draft a name to save it to your account.</div>
+            <label className={`block text-xs mb-1 ${isDarkMode ? 'text-slate-300' : 'text-gray-600'}`}>Map name <span className={`${isDarkMode ? 'text-slate-500' : 'text-gray-400'}`}>(a–z, 0–9, _ or .)</span></label>
             <input autoFocus type="text" value={promoteDraftName}
               onChange={(e) => setPromoteDraftName(e.target.value.toLowerCase().replace(/[^a-z0-9_.]/g, ''))}
               onKeyDown={(e) => { if (e.key === 'Enter') handlePromoteDraft(); else if (e.key === 'Escape') setPromoteDraftDialogOpen(false); }}
-              placeholder="my_map" className="w-full border rounded px-3 py-2 text-sm mb-1" />
+              placeholder="my_map" className={`w-full border rounded px-3 py-2 text-sm mb-1 focus:outline-none focus:ring-2 focus:ring-blue-300 ${isDarkMode ? 'bg-slate-800 border-slate-600 text-white placeholder-slate-500 focus:border-blue-400' : 'bg-white border-gray-300 focus:border-blue-400'}`} />
             {promoteDraftName && !HUB_NAME_RE.test(promoteDraftName) && (
               <div className="text-xs text-red-600 mb-2">Invalid name.</div>
             )}
             {promoteDraftError && <div className="text-xs text-red-600 mb-2">{promoteDraftError}</div>}
             <div className="flex gap-2 mt-3 justify-end">
-              <button className="px-3 py-1.5 text-sm border rounded hover:bg-gray-50"
+              <button className={`px-3 py-1.5 text-sm border rounded transition-colors ${isDarkMode ? 'border-slate-600 text-slate-300 hover:bg-slate-800' : 'border-gray-300 text-gray-700 hover:bg-gray-50'}`}
                 onClick={() => setPromoteDraftDialogOpen(false)}>Cancel</button>
               <button className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
                 disabled={!promoteDraftName || !HUB_NAME_RE.test(promoteDraftName) || promoteDraftLoading}
@@ -3182,8 +3277,11 @@ xatra.TitleBox("<b>My Map</b>")
     const viewingOwnProfilePath = route.username && route.username === normalizedHubUsername;
     if (viewingOwnProfilePath && !authReady) {
       return (
-        <div className={`h-screen w-full flex items-center justify-center ${isDarkMode ? 'theme-dark bg-slate-950 text-slate-100' : 'bg-gray-50'}`}>
-          <div className={`text-sm ${isDarkMode ? 'text-slate-400' : 'text-gray-500'}`}>Loading profile…</div>
+        <div className={`h-screen w-full flex flex-col ${isDarkMode ? 'theme-dark bg-slate-950 text-slate-100' : 'bg-gray-50'}`}>
+          {renderTopBar()}
+          <div className="flex-1 flex items-center justify-center">
+            <div className={`text-sm ${isDarkMode ? 'text-slate-400' : 'text-gray-500'}`}>Loading profile…</div>
+          </div>
         </div>
       );
     }
@@ -3245,7 +3343,7 @@ xatra.TitleBox("<b>My Map</b>")
             {maps.length === 0 && !profileLoading && (
               <div className={`text-sm text-center py-12 ${isDarkMode ? 'text-slate-500' : 'text-gray-400'}`}>No maps yet.</div>
             )}
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-4">
               {maps.map((m) => (
                 <div key={m.slug} className={`relative group rounded-xl border overflow-hidden shadow-sm hover:shadow-md transition-shadow ${isDarkMode ? 'bg-slate-800 border-slate-700 hover:border-slate-600' : 'bg-white border-gray-200 hover:border-gray-300'}`}>
                   <a href={m.slug} className="block">
@@ -3253,7 +3351,7 @@ xatra.TitleBox("<b>My Map</b>")
                     <div className="p-3">
                       <div className={`font-mono text-xs font-medium truncate group-hover:text-blue-500 transition-colors ${isDarkMode ? 'text-slate-200' : 'text-slate-800'}`}>{m.name}</div>
                       <div className={`flex items-center gap-2 mt-1 text-[10px] ${isDarkMode ? 'text-slate-500' : 'text-gray-400'}`}>
-                        <span className="inline-flex items-center gap-0.5"><Heart size={9}/> {m.votes || 0}</span>
+                        <span className="inline-flex items-center gap-0.5"><Triangle size={9}/> {m.votes || 0}</span>
                         <span>{m.views || 0} views</span>
                       </div>
                     </div>
@@ -3287,8 +3385,11 @@ xatra.TitleBox("<b>My Map</b>")
 
   if (route.page === 'editor' && !editorContextReady) {
     return (
-      <div className={`h-screen w-full flex items-center justify-center ${isDarkMode ? 'theme-dark bg-slate-950 text-slate-100' : 'bg-gray-100'}`}>
-        <div className="text-sm text-gray-600">Loading editor context...</div>
+      <div className={`h-screen w-full flex flex-col ${isDarkMode ? 'theme-dark bg-slate-950 text-slate-100' : 'bg-gray-100'}`}>
+        {renderTopBar()}
+        <div className="flex-1 flex items-center justify-center">
+          <div className={`text-sm ${isDarkMode ? 'text-slate-300' : 'text-gray-600'}`}>Loading editor context...</div>
+        </div>
       </div>
     );
   }
@@ -3374,7 +3475,7 @@ xatra.TitleBox("<b>My Map</b>")
                   className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded border ${isMapAuthor ? 'opacity-60 cursor-default' : route.owner && route.map ? 'hover:bg-gray-50' : 'opacity-40'}`}
                   title={isMapAuthor ? 'You always like your own map' : 'Like/unlike'}
                 >
-                  <Heart size={12} className={(isMapAuthor || mapVotes > 0) ? 'text-rose-600 fill-rose-600' : 'text-gray-500'} />
+                  <Triangle size={12} className={(isMapAuthor || mapVotes > 0) ? 'text-rose-600 fill-rose-600' : 'text-gray-500'} />
                   <span>{mapVotes} likes</span>
                 </button>
                 <span>·</span>
