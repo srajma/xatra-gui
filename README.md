@@ -345,6 +345,7 @@ Random misc
 - [x] Instead of having a separate "/users" page, merge it into "/explore" by using a column view and making Users (with its own search bar, like it has now) the little right column. Make sure this doesn't mess up the Import panel in maps, which may share some UI with /explore. Also update the top bar to remove the link to /users.
 - [x] You know the little keyboard shortcuts panel? Move the button for that (which is currently inside the map preview for some reason) to the top-bar, next to the night mode toggle.
 - [ ] Re-design the Profile page to give main focus to the list of maps (and have a thumbnail-based grid view exactly like /explore); while the account settings and stuff appears as a collapsible form that is collapsed by default.
+- [ ] Make sure all the obvious things can be set by environment variables---admin username and password, backend and frontend ports, anonymous username, whatever makes sense---and create a .env file showing our defaults for these.
 
 Development difficulties
 - [x] keeping synchrony between things---this should be documented, i.e. "if you change this, then change this too"
