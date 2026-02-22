@@ -1683,10 +1683,17 @@ def sync_code_to_builder(request: CodeSyncRequest):
             continue
 
         if method == "Music":
-            music_node = kwargs.get("value")
+            music_node = kwargs.get("path")
+            if music_node is None:
+                music_node = kwargs.get("value")
             if music_node is None and call.args:
                 music_node = call.args[0]
             music_value = _builder_value_from_node(source_code, music_node) if music_node is not None else ""
+            if "timestamps" not in args_dict and len(call.args) >= 2:
+                args_dict["timestamps"] = _builder_value_from_node(source_code, call.args[1])
+            if "period" not in args_dict and len(call.args) >= 3:
+                args_dict["period"] = _builder_value_from_node(source_code, call.args[2])
+            args_dict.pop("path", None)
             args_dict.pop("value", None)
             label = args_dict.pop("label", None)
             elements.append({"type": "music", "label": label, "value": music_value if music_value is not None else "", "args": args_dict})
@@ -2817,6 +2824,8 @@ def _filter_xatra_code(code: str, filter_only: Optional[List[str]] = None, filte
     return "\n".join(kept)
 
 def run_rendering_task(task_type, data, result_queue):
+    music_temp_files: List[str] = []
+
     def parse_color_list(val):
         if not val or not isinstance(val, str) or not val.strip():
             return None
@@ -2936,6 +2945,29 @@ def run_rendering_task(task_type, data, result_queue):
             raise ValueError(f"Unsupported xatrahub kind: {kind}")
 
         exec_globals["xatrahub"] = xatrahub
+
+    def materialize_music_path(music_value):
+        if not isinstance(music_value, str):
+            return music_value
+        raw = music_value.strip()
+        if not raw.startswith("data:"):
+            return raw
+        try:
+            import base64
+            import mimetypes
+            import tempfile
+            header, b64data = raw.split(",", 1)
+            mime_match = re.match(r"^data:([^;]+);base64$", header)
+            mime = mime_match.group(1) if mime_match else "audio/mpeg"
+            ext = mimetypes.guess_extension(mime) or ".mp3"
+            decoded = base64.b64decode(b64data)
+            fd, tmp_path = tempfile.mkstemp(prefix="xatra_music_", suffix=ext)
+            with os.fdopen(fd, "wb") as f:
+                f.write(decoded)
+            music_temp_files.append(tmp_path)
+            return tmp_path
+        except Exception:
+            return raw
 
     try:
         # Re-import xatra inside the process just in case, though imports are inherited on fork (mostly)
@@ -3418,7 +3450,11 @@ def run_rendering_task(task_type, data, result_queue):
                     music_val = resolve_builder_value(el.value, builder_exec_globals)
                     if "label" in args:
                         del args["label"]
-                    m.Music(value=music_val, **args)
+                    if "filename" in args:
+                        del args["filename"]
+                    music_path = materialize_music_path(music_val)
+                    if music_path not in (None, ""):
+                        m.Music(path=music_path, **args)
                 elif el.type == "python":
                     code_line = el.value if isinstance(el.value, str) else str(el.value or "")
                     if code_line.strip():
@@ -3443,6 +3479,12 @@ def run_rendering_task(task_type, data, result_queue):
     except Exception as e:
         print(f"[xatra] Rendering error:\n{traceback.format_exc()}", file=sys.stderr)
         result_queue.put({"error": str(e)})
+    finally:
+        for tmp_path in music_temp_files:
+            try:
+                os.remove(tmp_path)
+            except Exception:
+                pass
 
 def run_in_process(task_type, data):
     cache_key = None

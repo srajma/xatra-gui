@@ -1091,6 +1091,13 @@ ${DEFAULT_MAP_CODE}
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [route.page, currentUser.is_authenticated, authReady, normalizedHubUsername]);
 
+  useEffect(() => {
+    if (route.page === 'profile' && currentUser.is_authenticated && authReady && route.username === normalizedHubUsername) {
+      loadUserDraftMeta();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [route.page, route.username, currentUser.is_authenticated, authReady, normalizedHubUsername]);
+
   const handleLogin = async (mode = authMode) => {
     setAuthSubmitting(true);
     try {
@@ -2602,8 +2609,11 @@ ${DEFAULT_MAP_CODE}
             const titleHtml = (el.value != null && el.value !== '') ? pyVal(el.value) : 'None';
             lines.push(`xatra.TitleBox(${titleHtml}${argsStr})`);
         } else if (el.type === 'music') {
+            const musicArgs = { ...args };
+            delete musicArgs.filename;
+            const musicArgsStr = argsToStr(musicArgs);
             const musicVal = (el.value != null && el.value !== '') ? pyVal(el.value) : 'None';
-            lines.push(`xatra.Music(value=${musicVal}${argsStr})`);
+            lines.push(`xatra.Music(path=${musicVal}${musicArgsStr})`);
         } else if (el.type === 'python') {
             const raw = (el.value == null) ? '' : String(el.value);
             if (raw.trim()) lines.push(raw);
@@ -3419,34 +3429,32 @@ ${DEFAULT_MAP_CODE}
           {/* Maps grid */}
           <div className="flex-1 overflow-y-auto px-6 py-5">
             {profileLoading && <div className={`mb-4 text-xs px-3 py-2 border rounded-lg ${isDarkMode ? 'bg-blue-900/20 text-blue-300 border-blue-700' : 'bg-blue-50 text-blue-700 border-blue-200'}`}>Loading maps…</div>}
-            {isOwn && (
-              <div className="mb-5 flex gap-3 overflow-x-auto pb-1">
-                <button
-                  onClick={handleNewMapClick}
-                  className={`flex-shrink-0 min-w-[130px] h-28 rounded-xl border flex flex-col items-center justify-center gap-1.5 text-xs font-medium transition-colors ${isDarkMode ? 'bg-slate-800 border-slate-700 text-slate-300 hover:border-blue-500 hover:text-blue-400' : 'bg-white border-gray-200 text-gray-500 hover:border-blue-400 hover:text-blue-600'}`}
-                >
-                  <Plus size={18}/>
-                  New map
-                </button>
-                {userDraftMeta?.exists && (
-                  <button
-                    onClick={() => { setPromoteDraftName(''); setPromoteDraftError(''); setPromoteDraftDialogOpen(true); }}
-                    className={`flex-shrink-0 min-w-[130px] h-28 rounded-xl border flex flex-col items-center justify-center gap-1 text-xs transition-colors ${isDarkMode ? 'bg-slate-800 border-red-700/50 hover:border-red-500' : 'bg-white border-red-200 hover:border-red-400'}`}
-                  >
-                    <div className={`font-semibold ${isDarkMode ? 'text-red-400' : 'text-red-500'}`}>Unsaved Draft</div>
-                    <div className={`text-[10px] ${isDarkMode ? 'text-slate-400' : 'text-gray-400'}`}>{userDraftMeta.mapName}</div>
-                  </button>
-                )}
-              </div>
-            )}
             <div className="flex gap-2 mb-5">
               <input value={profileSearch} onChange={(e) => setProfileSearch(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { setProfilePage(1); loadProfile(route.username, 1, profileSearch); } }} className={`flex-1 rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300 ${isDarkMode ? 'bg-slate-800 border-slate-600 text-white placeholder-slate-500 focus:border-blue-400' : 'bg-white border-gray-300 focus:border-blue-400'}`} placeholder="Search maps…" />
               <button className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 transition-colors" onClick={() => { setProfilePage(1); loadProfile(route.username, 1, profileSearch); }}>Search</button>
             </div>
-            {maps.length === 0 && !profileLoading && (
+            {maps.length === 0 && !profileLoading && !isOwn && (
               <div className={`text-sm text-center py-12 ${isDarkMode ? 'text-slate-500' : 'text-gray-400'}`}>No maps yet.</div>
             )}
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-4">
+              {isOwn && (
+                <button
+                  onClick={handleNewMapClick}
+                  className={`rounded-xl border h-full min-h-[168px] flex flex-col items-center justify-center gap-1.5 text-xs font-medium transition-colors ${isDarkMode ? 'bg-slate-800 border-slate-700 text-slate-300 hover:border-blue-500 hover:text-blue-400' : 'bg-white border-gray-200 text-gray-500 hover:border-blue-400 hover:text-blue-600'}`}
+                >
+                  <Plus size={18}/>
+                  New map
+                </button>
+              )}
+              {isOwn && userDraftMeta?.exists && (
+                <button
+                  onClick={() => { setPromoteDraftName(''); setPromoteDraftError(''); setPromoteDraftDialogOpen(true); }}
+                  className={`rounded-xl border h-full min-h-[168px] flex flex-col items-center justify-center gap-1 text-xs transition-colors ${isDarkMode ? 'bg-slate-800 border-red-700/50 hover:border-red-500' : 'bg-white border-red-200 hover:border-red-400'}`}
+                >
+                  <div className={`font-semibold ${isDarkMode ? 'text-red-400' : 'text-red-500'}`}>Unsaved Draft</div>
+                  <div className={`text-[10px] ${isDarkMode ? 'text-slate-400' : 'text-gray-400'}`}>{userDraftMeta.mapName}</div>
+                </button>
+              )}
               {maps.map((m) => (
                 <div key={m.slug} className={`relative group rounded-xl border overflow-hidden shadow-sm hover:shadow-md transition-shadow ${isDarkMode ? 'bg-slate-800 border-slate-700 hover:border-slate-600' : 'bg-white border-gray-200 hover:border-gray-300'}`}>
                   <a href={m.slug} className="block">

@@ -381,6 +381,7 @@ const TerritoryBuilder = ({
     if (Number.isInteger(activePicker.id)) return [activePicker.id];
     return null;
   }, [activePicker, parentId]);
+  const pickerStartedAt = Number(activePicker?.startedAt || 0);
 
   const pickingIndex = useMemo(() => {
     if (!matchingPickerPath || matchingPickerPath.length !== pathPrefix.length + 1) return -1;
@@ -395,6 +396,7 @@ const TerritoryBuilder = ({
 
   useEffect(() => {
     if (pickingIndex >= 0 && lastMapClick) {
+      if (pickerStartedAt && Number(lastMapClick.ts || 0) <= pickerStartedAt) return;
       if (lastHandledClickTsRef.current === lastMapClick.ts) return;
       lastHandledClickTsRef.current = lastMapClick.ts;
       const lat = parseFloat(lastMapClick.lat.toFixed(4));
@@ -413,7 +415,7 @@ const TerritoryBuilder = ({
       }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lastMapClick, pickingIndex, parts, onChange]);
+  }, [lastMapClick, pickingIndex, pickerStartedAt, parts, onChange]);
 
   useEffect(() => {
     if (pickingIndex >= 0) {
@@ -441,7 +443,7 @@ const TerritoryBuilder = ({
       return;
     }
     lastHandledClickTsRef.current = null;
-    setActivePicker({ id: idx, type: 'polygon', context: `territory-${parentId}`, target: { partPath: nextPath } });
+    setActivePicker({ id: idx, type: 'polygon', context: `territory-${parentId}`, target: { partPath: nextPath }, startedAt: Date.now() });
     setDraftPoints([]);
   };
 
