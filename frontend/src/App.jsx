@@ -1857,7 +1857,7 @@ ${DEFAULT_MAP_CODE}
         setError(data.error);
         console.error(data.traceback);
       } else {
-        setMapHtml(data.html);
+        setMapHtml(injectThumbnailCapture(data.html));
         setMapPayload(data.payload);
       }
     } catch (err) {
@@ -1903,7 +1903,7 @@ ${DEFAULT_MAP_CODE}
         setError(data.error);
         console.error(data.traceback);
       } else {
-        setMapHtml(data.html);
+        setMapHtml(injectThumbnailCapture(data.html));
         setMapPayload(data.payload);
       }
     } catch (err) {
@@ -1914,27 +1914,71 @@ ${DEFAULT_MAP_CODE}
     }
   };
 
+  // Inject a postMessage listener into rendered HTML so the sandboxed iframe can
+  // respond to thumbnail capture requests (contentDocument is inaccessible without allow-same-origin).
+  const injectThumbnailCapture = (html) => {
+    const script = `<script>
+window.addEventListener('message', function(e) {
+  if (!e.data || e.data.type !== 'xatra_request_thumbnail') return;
+  try {
+    var mapEl = document.querySelector('.leaflet-container');
+    var svgEl = mapEl ? mapEl.querySelector('svg') : null;
+    if (!svgEl) { parent.postMessage({ type: 'xatra_thumbnail_response', svg: null }, '*'); return; }
+    var w = mapEl.clientWidth || 1;
+    var h = mapEl.clientHeight || 1;
+
+    // Leaflet positions the SVG via CSS translate3d, and the map pane also has a pan offset.
+    // We must account for both to produce the correct viewBox for the visible area.
+    function getTranslate(el) {
+      var t = el ? (el.style.transform || '') : '';
+      var m = t.match(/translate3d\\((-?[\\d.]+)px,\\s*(-?[\\d.]+)px/);
+      return m ? [parseFloat(m[1]), parseFloat(m[2])] : [0, 0];
+    }
+    var paneEl = mapEl.querySelector('.leaflet-map-pane');
+    var pane = getTranslate(paneEl);  // pan offset [A, B]
+    var svgT = getTranslate(svgEl);   // pixel-origin offset [C, D]
+    // Screen (0,0) = path coordinate (-A-C, -B-D)
+    var vbX = -(pane[0] + svgT[0]);
+    var vbY = -(pane[1] + svgT[1]);
+
+    var clone = svgEl.cloneNode(true);
+    clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+    clone.setAttribute('width', String(w));
+    clone.setAttribute('height', String(h));
+    clone.setAttribute('viewBox', vbX + ' ' + vbY + ' ' + w + ' ' + h);
+    clone.style.transform = '';  // strip the CSS transform — viewBox handles positioning now
+    var svg = new XMLSerializer().serializeToString(clone);
+    parent.postMessage({ type: 'xatra_thumbnail_response', svg: svg, width: w, height: h }, '*');
+  } catch(err) {
+    parent.postMessage({ type: 'xatra_thumbnail_response', svg: null }, '*');
+  }
+});<\/script>`;
+    return html.includes('</body>') ? html.replace('</body>', script + '</body>') : html + script;
+  };
+
   const captureMapThumbnail = async () => {
     try {
       const iframe = iframeRef.current;
-      const doc = iframe?.contentDocument;
-      const mapEl = doc?.querySelector('.leaflet-container');
-      if (!doc || !mapEl) return '';
-      const svgEl = mapEl.querySelector('svg');
-      if (!svgEl) return '';
-      const sourceRect = mapEl.getBoundingClientRect();
-      const srcW = Math.max(1, Math.round(sourceRect.width || mapEl.clientWidth || 1));
-      const srcH = Math.max(1, Math.round(sourceRect.height || mapEl.clientHeight || 1));
+      if (!iframe?.contentWindow) return '';
+      // The iframe is sandboxed without allow-same-origin, so contentDocument is inaccessible.
+      // Use postMessage to ask the iframe to serialize its own SVG and send it back.
+      const svgData = await new Promise((resolve) => {
+        const timeout = setTimeout(() => resolve(null), 3000);
+        const handler = (event) => {
+          if (event.data?.type === 'xatra_thumbnail_response') {
+            clearTimeout(timeout);
+            window.removeEventListener('message', handler);
+            resolve(event.data);
+          }
+        };
+        window.addEventListener('message', handler);
+        iframe.contentWindow.postMessage({ type: 'xatra_request_thumbnail' }, '*');
+      });
+      if (!svgData?.svg) return '';
+      const { svg, width: srcW, height: srcH } = svgData;
       const targetW = 480;
       const targetH = 270;
-
-      const clone = svgEl.cloneNode(true);
-      clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
-      clone.setAttribute('width', String(srcW));
-      clone.setAttribute('height', String(srcH));
-      clone.setAttribute('viewBox', `0 0 ${srcW} ${srcH}`);
-      const serialized = new XMLSerializer().serializeToString(clone);
-      const blob = new Blob([serialized], { type: 'image/svg+xml;charset=utf-8' });
+      const blob = new Blob([svg], { type: 'image/svg+xml;charset=utf-8' });
       const url = URL.createObjectURL(blob);
       try {
         const img = await new Promise((resolve, reject) => {
@@ -1950,7 +1994,7 @@ ${DEFAULT_MAP_CODE}
         if (!ctx) return '';
         ctx.fillStyle = isDarkMode ? '#0f172a' : '#f8fafc';
         ctx.fillRect(0, 0, targetW, targetH);
-        ctx.drawImage(img, 0, 0, targetW, targetH);
+        ctx.drawImage(img, 0, 0, srcW, srcH, 0, 0, targetW, targetH);
         return canvas.toDataURL('image/jpeg', 0.78);
       } finally {
         URL.revokeObjectURL(url);
