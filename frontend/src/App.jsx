@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Layers, Code, Play, Upload, Download, Image, Plus, Trash2, Keyboard, Copy, Check, Moon, Sun, Menu, Compass, User, Users, LogIn, LogOut, FilePlus2, Import, Save, Heart, GitFork, CloudUpload, UserX } from 'lucide-react';
+import { Layers, Code, Play, Upload, Download, Image, Plus, Trash2, Keyboard, Copy, Check, Moon, Sun, Menu, Compass, User, Users, LogIn, LogOut, FilePlus2, Import, Save, Heart, GitFork, CloudUpload, UserX, Settings } from 'lucide-react';
 
 // Components (defined inline for simplicity first, can be split later)
 import Builder from './components/Builder';
@@ -76,6 +76,9 @@ function App() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuFocusIndex, setMenuFocusIndex] = useState(0);
   const [importModalOpen, setImportModalOpen] = useState(false);
+  const [newMapDialogOpen, setNewMapDialogOpen] = useState(false);
+  const [newMapDialogName, setNewMapDialogName] = useState('');
+  const [profileSettingsOpen, setProfileSettingsOpen] = useState(false);
   const [statusNotice, setStatusNotice] = useState('');
   const [authMode, setAuthMode] = useState('login');
   const [authForm, setAuthForm] = useState({ username: '', password: '', full_name: '' });
@@ -459,7 +462,7 @@ xatra.TitleBox("<b>My Map</b>")
       () => window.open('/explore', '_blank'),
       () => window.open('/users', '_blank'),
       () => (currentUser.is_authenticated ? window.open(`/${normalizedHubUsername}`, '_blank') : navigateTo('/login')),
-      () => window.open('/new-map', '_blank'),
+      () => handleNewMapClick(),
       () => (currentUser.is_authenticated ? handleLogout() : navigateTo('/login')),
     ];
     if (actions[idx]) actions[idx]();
@@ -700,7 +703,28 @@ xatra.TitleBox("<b>My Map</b>")
     try {
       const resp = await apiFetch(`/maps/${owner}/${name}?version=${encodeURIComponent(version || 'alpha')}`);
       const data = await resp.json();
-      if (!resp.ok) throw new Error(data.detail || data.error || 'Failed to load map');
+      if (!resp.ok) {
+        // If the map doesn't exist yet and the user is creating their own new map, initialize with defaults
+        const isOwner = currentUser.is_authenticated && owner === currentUser?.user?.username;
+        if (resp.status === 404 && isOwner && version === 'alpha') {
+          const defElements = createDefaultBuilderElements();
+          const defOptions = createDefaultBuilderOptions();
+          const defaultImports = [{ ...DEFAULT_INDIC_IMPORT }];
+          setMapName(name);
+          setMapOwner(owner);
+          setBuilderElements(defElements);
+          setBuilderOptions(defOptions);
+          setCode('');
+          setThemeCode('');
+          setRuntimeCode('');
+          setPredefinedCode('');
+          setHubImports(defaultImports);
+          setImportsCode(serializeHubImports(defaultImports));
+          renderMapWithData({ elements: defElements, options: defOptions, mapCode: '', predCode: '', importsCode: '', themeCode: '', runtimeCode: '' });
+          return;
+        }
+        throw new Error(data.detail || data.error || 'Failed to load map');
+      }
       const content = typeof data.content === 'string' ? data.content : '';
       const parsed = (() => {
         try { return JSON.parse(content || '{}'); } catch { return null; }
@@ -756,7 +780,7 @@ xatra.TitleBox("<b>My Map</b>")
     try {
       const resp = await apiFetch('/draft/current');
       const data = await resp.json();
-      if (!resp.ok || !data.exists || !data.draft) return;
+      if (!resp.ok || !data.exists || !data.draft) return false;
       const draft = data.draft;
       if (draft.map_name && HUB_NAME_RE.test(draft.map_name)) setMapName(draft.map_name);
       if (draft.project?.elements && draft.project?.options) {
@@ -776,12 +800,27 @@ xatra.TitleBox("<b>My Map</b>")
       if (draft.project?.pickerOptions && typeof draft.project.pickerOptions === 'object') {
         setPickerOptions(draft.project.pickerOptions);
       }
+      // Trigger initial render with the draft data (state updates are async, so pass data directly)
+      if (draft.project?.elements && draft.project?.options) {
+        renderMapWithData({
+          elements: draft.project.elements,
+          options: draft.project.options,
+          mapCode: draft.project.code || '',
+          predCode: draft.project.predefinedCode || '',
+          importsCode: draft.project.importsCode || '',
+          themeCode: draft.project.themeCode || '',
+          runtimeCode: draft.project.runtimeCode || '',
+        });
+      }
+      return true;
     } catch {
-      // ignore
+      return false;
     }
   };
 
   useEffect(() => {
+    // Don't save until the editor has finished its initial load (prevents overwriting draft with initial state)
+    if (!editorReadyRef.current) return;
     const t = setTimeout(() => {
       apiFetch('/draft/current', {
         method: 'PUT',
@@ -824,7 +863,7 @@ xatra.TitleBox("<b>My Map</b>")
     if (!username) return;
     setProfileLoading(true);
     try {
-      const params = new URLSearchParams({ page: String(page), per_page: '10', q: query || '' });
+      const params = new URLSearchParams({ page: String(page), per_page: '12', q: query || '' });
       const resp = await apiFetch(`/users/${username}?${params.toString()}`);
       const data = await resp.json();
       if (!resp.ok) throw new Error(data.detail || 'Failed to load profile');
@@ -865,6 +904,22 @@ xatra.TitleBox("<b>My Map</b>")
     setImportsCode(serializeHubImports(defaults));
   };
 
+  const handleNewMapClick = () => {
+    if (!currentUser.is_authenticated) {
+      navigateTo('/login');
+      return;
+    }
+    setNewMapDialogName('');
+    setNewMapDialogOpen(true);
+  };
+
+  const handleNewMapConfirm = () => {
+    const name = String(newMapDialogName || '').trim().toLowerCase();
+    if (!name || !HUB_NAME_RE.test(name)) return;
+    setNewMapDialogOpen(false);
+    navigateTo(`/${normalizedHubUsername}/map/${name}`);
+  };
+
   const switchHubImportVersion = (idx, version, applyNow = false) => {
     const next = [...(hubImports || [])];
     if (!next[idx]) return;
@@ -887,6 +942,8 @@ xatra.TitleBox("<b>My Map</b>")
   useEffect(() => {
     if (route.page === 'explore') { loadExplore(explorePage, exploreQuery); loadUsers(usersPage, usersQuery); }
     if (route.page === 'profile') loadProfile(route.username, profilePage, profileSearch);
+    // Reset editor init key when leaving editor so re-entry always reloads draft
+    if (route.page !== 'editor') { editorInitKeyRef.current = ''; return; }
     if (route.page === 'editor' && route.owner && route.map) {
       editorInitKeyRef.current = '';
       setMapOwner(route.owner);
@@ -898,16 +955,43 @@ xatra.TitleBox("<b>My Map</b>")
       const owner = currentUser.is_authenticated ? normalizedHubUsername : 'guest';
       const initKey = `${route.newMap ? 'new' : 'draft'}:${owner}`;
       if (editorInitKeyRef.current === initKey) return;
+      // If already in editor and only auth state changed (e.g. guest logged in),
+      // keep current work and just update owner — don't reload draft.
+      if (editorInitKeyRef.current && !route.newMap) {
+        editorInitKeyRef.current = initKey;
+        setMapOwner(owner);
+        return;
+      }
       editorInitKeyRef.current = initKey;
       setMapOwner(owner);
       if (route.newMap) {
         applyNewMapDefaults();
+        // Render with default values directly (state updates from applyNewMapDefaults are async)
+        const defElements = createDefaultBuilderElements();
+        const defOptions = createDefaultBuilderOptions();
+        renderMapWithData({ elements: defElements, options: defOptions, mapCode: '', predCode: '', importsCode: '', themeCode: '', runtimeCode: '' });
+        // For new maps, fetch a default name suggestion
+        apiFetch('/maps/default-name').then((r) => r.json()).then((d) => {
+          if (d?.name && HUB_NAME_RE.test(d.name)) setMapName(d.name);
+        }).catch(() => {});
       } else {
-        loadDraft();
+        // Load draft; don't call /maps/default-name afterwards (it would overwrite the draft's map name)
+        (async () => {
+          const hasDraft = await loadDraft();
+          if (!hasDraft) {
+            if (currentUser.is_authenticated) {
+              // Logged-in users with no draft go to their profile page
+              navigateTo(`/${normalizedHubUsername}`);
+            } else {
+              // Guest with no draft: set a default map name and render default
+              apiFetch('/maps/default-name').then((r) => r.json()).then((d) => {
+                if (d?.name && HUB_NAME_RE.test(d.name)) setMapName(d.name);
+              }).catch(() => {});
+              renderMap();
+            }
+          }
+        })();
       }
-      apiFetch('/maps/default-name').then((r) => r.json()).then((d) => {
-        if (d?.name && HUB_NAME_RE.test(d.name)) setMapName(d.name);
-      }).catch(() => {});
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [route.page, route.owner, route.map, route.version, route.newMap, authReady, currentUser.is_authenticated, normalizedHubUsername]);
@@ -1448,6 +1532,11 @@ xatra.TitleBox("<b>My Map</b>")
         }
         return;
       }
+      if (e.key === 'Escape' && newMapDialogOpen) {
+        e.preventDefault();
+        setNewMapDialogOpen(false);
+        return;
+      }
       if (e.key === 'Escape' && importModalOpen) {
         e.preventDefault();
         setImportModalOpen(false);
@@ -1801,6 +1890,10 @@ xatra.TitleBox("<b>My Map</b>")
       lastAutoSavedContentRef.current = content;
       setAutoSaveStatus('saved');
       setTimeout(() => setAutoSaveStatus((s) => s === 'saved' ? 'idle' : s), 3000);
+      // After a successful rename, update the URL to reflect the new map name
+      if (isRename) {
+        navigateTo(`/${normalizedHubUsername}/map/${normalizedMapName}`);
+      }
     } catch {
       setAutoSaveStatus('unsaved');
     }
@@ -2437,13 +2530,15 @@ xatra.TitleBox("<b>My Map</b>")
     }, 3000);
     return () => { if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [builderElements, builderOptions, code, predefinedCode, importsCode, themeCode, runtimeCode]);
+  }, [normalizedMapName, currentUser.is_authenticated, builderElements, builderOptions, code, predefinedCode, importsCode, themeCode, runtimeCode]);
 
-  // Initial render — for hub maps, loadMapFromHub triggers the render directly
+  // Initial render — for hub maps, loadMapFromHub triggers the render directly;
+  // for root/new-map, the route effect handles rendering after draft load or defaults.
   useEffect(() => {
     if (!editorContextReady) return;
-    if (route.owner && route.map) return; // handled by loadMapFromHub
-    renderMap();
+    if (!route.owner) return; // root/new-map: handled by route effect
+    // Hub map without explicit map name (shouldn't happen per parsePath, but guard anyway)
+    if (!route.map) renderMap();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editorContextReady]);
 
@@ -2680,7 +2775,7 @@ xatra.TitleBox("<b>My Map</b>")
       <div className="flex-1" />
       {/* Right: nav actions */}
       <button
-        onClick={() => navigateTo('/new-map')}
+        onClick={handleNewMapClick}
         className="px-3 py-1 text-xs font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 mr-1"
         title="Create a new map"
       >New map</button>
@@ -2759,7 +2854,7 @@ xatra.TitleBox("<b>My Map</b>")
         <button className={`w-full text-left px-3 py-2 rounded-lg text-sm inline-flex items-center gap-2.5 transition-colors ${activePage === 'explore' ? (isDarkMode ? 'bg-slate-800 text-white font-medium' : 'bg-blue-50 text-blue-700 font-medium') : (isDarkMode ? 'text-slate-300 hover:bg-slate-800 hover:text-white' : 'text-gray-600 hover:bg-gray-100')}`} onClick={() => navigateTo('/explore')}><Compass size={14}/> Explore</button>
         <button className={`w-full text-left px-3 py-2 rounded-lg text-sm inline-flex items-center gap-2.5 transition-colors ${activePage === 'users' ? (isDarkMode ? 'bg-slate-800 text-white font-medium' : 'bg-blue-50 text-blue-700 font-medium') : (isDarkMode ? 'text-slate-300 hover:bg-slate-800 hover:text-white' : 'text-gray-600 hover:bg-gray-100')}`} onClick={() => navigateTo('/explore')}><Users size={14}/> Users</button>
         <button className={`w-full text-left px-3 py-2 rounded-lg text-sm inline-flex items-center gap-2.5 transition-colors ${activePage === 'profile' ? (isDarkMode ? 'bg-slate-800 text-white font-medium' : 'bg-blue-50 text-blue-700 font-medium') : (isDarkMode ? 'text-slate-300 hover:bg-slate-800 hover:text-white' : 'text-gray-600 hover:bg-gray-100')}`} onClick={() => (currentUser.is_authenticated ? navigateTo(`/${normalizedHubUsername}`) : navigateTo('/login'))}><User size={14}/> {currentUser.is_authenticated ? normalizedHubUsername : 'My Profile'}</button>
-        <button className={`w-full text-left px-3 py-2 rounded-lg text-sm inline-flex items-center gap-2.5 transition-colors ${isDarkMode ? 'text-slate-300 hover:bg-slate-800 hover:text-white' : 'text-gray-600 hover:bg-gray-100'}`} onClick={() => window.open('/new-map', '_blank')}><FilePlus2 size={14}/> New map…</button>
+        <button className={`w-full text-left px-3 py-2 rounded-lg text-sm inline-flex items-center gap-2.5 transition-colors ${isDarkMode ? 'text-slate-300 hover:bg-slate-800 hover:text-white' : 'text-gray-600 hover:bg-gray-100'}`} onClick={handleNewMapClick}><FilePlus2 size={14}/> New map…</button>
       </nav>
       <div className={`px-2 pb-3 pt-2 border-t space-y-0.5 ${isDarkMode ? 'border-slate-700' : 'border-gray-100'}`}>
         <button className={`w-full text-left px-3 py-2 rounded-lg text-sm inline-flex items-center gap-2.5 transition-colors ${isDarkMode ? 'text-slate-300 hover:bg-slate-800 hover:text-white' : 'text-gray-600 hover:bg-gray-100'}`} onClick={() => setIsDarkMode((p) => !p)}>{isDarkMode ? <Sun size={14}/> : <Moon size={14}/>} {isDarkMode ? 'Light mode' : 'Night mode'}</button>
@@ -2883,7 +2978,7 @@ xatra.TitleBox("<b>My Map</b>")
   if (route.page === 'profile') {
     const profile = profileData?.profile;
     const maps = profileData?.maps || [];
-    const totalPages = Math.max(1, Math.ceil((profileData?.total || 0) / (profileData?.per_page || 10)));
+    const totalPages = Math.max(1, Math.ceil((profileData?.total || 0) / (profileData?.per_page || 12)));
     const viewingOwnProfilePath = route.username && route.username === normalizedHubUsername;
     if (viewingOwnProfilePath && !authReady) {
       return (
@@ -2898,62 +2993,89 @@ xatra.TitleBox("<b>My Map</b>")
       <div className={`h-screen w-full flex flex-col ${isDarkMode ? 'theme-dark bg-slate-950 text-slate-100' : 'bg-gray-50'}`}>
         {renderTopBar()}
         <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-          <div className={`border-b px-6 py-4 flex-shrink-0 ${isDarkMode ? 'border-slate-800 bg-slate-900/50' : 'border-gray-200 bg-white'}`}>
-            <div className="flex items-center gap-3">
-              <div className={`w-10 h-10 rounded-full flex items-center justify-center text-lg font-bold flex-shrink-0 ${isDarkMode ? 'bg-slate-700 text-slate-300' : 'bg-gray-200 text-gray-600'}`}>{((profile?.username || route.username || '?')[0] || '?').toUpperCase()}</div>
-              <div className="min-w-0">
-                <div className={`font-mono text-base font-semibold ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>{profile?.username || route.username}</div>
-                {profile?.full_name && <div className={`text-xs ${isDarkMode ? 'text-slate-400' : 'text-gray-500'}`}>{profile.full_name}</div>}
+          {/* Profile header */}
+          <div className={`border-b px-6 py-5 flex-shrink-0 ${isDarkMode ? 'border-slate-800 bg-slate-900/50' : 'border-gray-200 bg-white'}`}>
+            <div className="flex items-start gap-4">
+              <div className={`w-14 h-14 rounded-full flex items-center justify-center text-2xl font-bold flex-shrink-0 ${isDarkMode ? 'bg-slate-700 text-slate-300' : 'bg-gray-200 text-gray-600'}`}>{((profile?.username || route.username || '?')[0] || '?').toUpperCase()}</div>
+              <div className="flex-1 min-w-0">
+                <div className={`font-mono text-lg font-semibold ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>{profile?.username || route.username}</div>
+                {profile?.full_name && <div className={`text-sm ${isDarkMode ? 'text-slate-300' : 'text-gray-700'}`}>{profile.full_name}</div>}
+                {profile?.bio && <div className={`text-sm mt-1 ${isDarkMode ? 'text-slate-400' : 'text-gray-500'}`}>{profile.bio}</div>}
+                <div className={`text-xs mt-1.5 ${isDarkMode ? 'text-slate-500' : 'text-gray-400'}`}>{profile?.maps_count || 0} maps · {profile?.views_count || 0} views</div>
               </div>
-              <div className={`ml-auto text-xs flex-shrink-0 ${isDarkMode ? 'text-slate-500' : 'text-gray-400'}`}>{profile?.maps_count || 0} maps · {profile?.views_count || 0} views</div>
+              {isOwn && (
+                <button
+                  onClick={() => setProfileSettingsOpen((p) => !p)}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors flex-shrink-0 ${profileSettingsOpen ? (isDarkMode ? 'bg-slate-700 border-slate-600 text-white' : 'bg-gray-100 border-gray-300 text-gray-800') : (isDarkMode ? 'border-slate-700 text-slate-400 hover:bg-slate-800' : 'border-gray-200 text-gray-500 hover:bg-gray-50')}`}
+                  title="Account settings"
+                >
+                  <Settings size={12}/> Settings
+                </button>
+              )}
             </div>
-            {profile?.bio && <div className={`mt-2 text-sm ${isDarkMode ? 'text-slate-300' : 'text-gray-600'}`}>{profile.bio}</div>}
-          </div>
-          <div className="flex-1 overflow-y-auto px-6 py-5">
-            {profileLoading && <div className={`mb-4 text-xs px-3 py-2 border rounded-lg ${isDarkMode ? 'bg-blue-900/20 text-blue-300 border-blue-700' : 'bg-blue-50 text-blue-700 border-blue-200'}`}>Loading maps…</div>}
-            {isOwn && (
-              <div className={`mb-5 rounded-xl border p-5 ${isDarkMode ? 'bg-slate-800/50 border-slate-700' : 'bg-white border-gray-200 shadow-sm'}`}>
-                <div className={`text-sm font-semibold mb-3 ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>Account settings</div>
-                <div className="space-y-2">
-                  <input className={profInputCls} placeholder="Full name" value={profileEdit.full_name} onChange={(e) => setProfileEdit((p) => ({ ...p, full_name: e.target.value }))} />
-                  <textarea className={`${profInputCls} min-h-[72px] resize-none`} placeholder="Profile description" value={profileEdit.bio} onChange={(e) => setProfileEdit((p) => ({ ...p, bio: e.target.value }))} />
-                  <button className={`px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors ${isDarkMode ? 'border-slate-600 text-slate-300 hover:bg-slate-700' : 'border-gray-300 text-gray-700 hover:bg-gray-100'}`} onClick={handleSaveProfile}>Save profile</button>
-                </div>
-                <div className={`pt-3 mt-3 border-t space-y-2 ${isDarkMode ? 'border-slate-700' : 'border-gray-100'}`}>
-                  <input type="password" className={profInputCls} placeholder="Current password" value={passwordEdit.current_password} onChange={(e) => setPasswordEdit((p) => ({ ...p, current_password: e.target.value }))} />
-                  <input type="password" className={profInputCls} placeholder="New password" value={passwordEdit.new_password} onChange={(e) => setPasswordEdit((p) => ({ ...p, new_password: e.target.value }))} />
-                  <button className={`px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors ${isDarkMode ? 'border-slate-600 text-slate-300 hover:bg-slate-700' : 'border-gray-300 text-gray-700 hover:bg-gray-100'}`} onClick={handleChangePassword}>Update password</button>
+            {/* Collapsible account settings */}
+            {isOwn && profileSettingsOpen && (
+              <div className={`mt-4 pt-4 border-t ${isDarkMode ? 'border-slate-700' : 'border-gray-200'}`}>
+                <div className={`text-xs font-semibold uppercase tracking-wide mb-3 ${isDarkMode ? 'text-slate-400' : 'text-gray-500'}`}>Account settings</div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <div className={`text-xs font-medium mb-1 ${isDarkMode ? 'text-slate-300' : 'text-gray-700'}`}>Profile</div>
+                    <input className={profInputCls} placeholder="Full name" value={profileEdit.full_name} onChange={(e) => setProfileEdit((p) => ({ ...p, full_name: e.target.value }))} />
+                    <textarea className={`${profInputCls} min-h-[64px] resize-none`} placeholder="Profile description" value={profileEdit.bio} onChange={(e) => setProfileEdit((p) => ({ ...p, bio: e.target.value }))} />
+                    <button className={`px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors ${isDarkMode ? 'border-slate-600 text-slate-300 hover:bg-slate-700' : 'border-gray-300 text-gray-700 hover:bg-gray-100'}`} onClick={handleSaveProfile}>Save profile</button>
+                  </div>
+                  <div className="space-y-2">
+                    <div className={`text-xs font-medium mb-1 ${isDarkMode ? 'text-slate-300' : 'text-gray-700'}`}>Change password</div>
+                    <input type="password" className={profInputCls} placeholder="Current password" value={passwordEdit.current_password} onChange={(e) => setPasswordEdit((p) => ({ ...p, current_password: e.target.value }))} />
+                    <input type="password" className={profInputCls} placeholder="New password" value={passwordEdit.new_password} onChange={(e) => setPasswordEdit((p) => ({ ...p, new_password: e.target.value }))} />
+                    <button className={`px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors ${isDarkMode ? 'border-slate-600 text-slate-300 hover:bg-slate-700' : 'border-gray-300 text-gray-700 hover:bg-gray-100'}`} onClick={handleChangePassword}>Update password</button>
+                  </div>
                 </div>
               </div>
             )}
-            <div className={`flex gap-2 mb-4 p-3 rounded-xl border ${isDarkMode ? 'bg-slate-800/50 border-slate-700' : 'bg-white border-gray-200 shadow-sm'}`}>
+          </div>
+          {/* Maps grid */}
+          <div className="flex-1 overflow-y-auto px-6 py-5">
+            {profileLoading && <div className={`mb-4 text-xs px-3 py-2 border rounded-lg ${isDarkMode ? 'bg-blue-900/20 text-blue-300 border-blue-700' : 'bg-blue-50 text-blue-700 border-blue-200'}`}>Loading maps…</div>}
+            <div className="flex gap-2 mb-5">
               <input value={profileSearch} onChange={(e) => setProfileSearch(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { setProfilePage(1); loadProfile(route.username, 1, profileSearch); } }} className={`flex-1 rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300 ${isDarkMode ? 'bg-slate-800 border-slate-600 text-white placeholder-slate-500 focus:border-blue-400' : 'bg-white border-gray-300 focus:border-blue-400'}`} placeholder="Search maps…" />
               <button className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 transition-colors" onClick={() => { setProfilePage(1); loadProfile(route.username, 1, profileSearch); }}>Search</button>
             </div>
-            <div className="space-y-2">
+            {maps.length === 0 && !profileLoading && (
+              <div className={`text-sm text-center py-12 ${isDarkMode ? 'text-slate-500' : 'text-gray-400'}`}>No maps yet.</div>
+            )}
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
               {maps.map((m) => (
-                <div key={m.slug} className={`flex items-center justify-between rounded-xl border px-4 py-3 hover:shadow-sm transition-shadow ${isDarkMode ? 'bg-slate-800 border-slate-700 hover:border-slate-600' : 'bg-white border-gray-200 hover:border-gray-300'}`}>
-                  <a href={m.slug} className={`font-mono text-xs font-medium flex-1 min-w-0 ${isDarkMode ? 'text-slate-200' : 'text-slate-700'}`}>{m.name}</a>
-                  <div className="flex items-center gap-2">
-                    <a href={m.slug} className={`text-xs px-2 py-0.5 rounded border ${isDarkMode ? 'border-slate-600 text-slate-400' : 'border-gray-200 text-gray-400'}`}>Open →</a>
-                    {isOwn && (
-                      <button
-                        onClick={(e) => { e.preventDefault(); setDisassociateConfirm({ open: true, kind: m.kind || 'map', name: m.name, nameInput: '', loading: false, error: null }); }}
-                        className={`p-1 rounded border hover:bg-red-50 hover:border-red-300 transition-colors ${isDarkMode ? 'border-slate-600' : 'border-gray-200'}`}
-                        title="Disassociate from your account"
-                      >
-                        <UserX size={12} className={`${isDarkMode ? 'text-slate-400' : 'text-gray-400'} hover:text-red-500`}/>
-                      </button>
-                    )}
-                  </div>
+                <div key={m.slug} className={`relative group rounded-xl border overflow-hidden shadow-sm hover:shadow-md transition-shadow ${isDarkMode ? 'bg-slate-800 border-slate-700 hover:border-slate-600' : 'bg-white border-gray-200 hover:border-gray-300'}`}>
+                  <a href={m.slug} className="block">
+                    <img src={m.thumbnail || '/vite.svg'} alt="" className={`w-full h-28 object-cover ${isDarkMode ? 'bg-slate-700' : 'bg-gray-100'}`} />
+                    <div className="p-3">
+                      <div className={`font-mono text-xs font-medium truncate group-hover:text-blue-500 transition-colors ${isDarkMode ? 'text-slate-200' : 'text-slate-800'}`}>{m.name}</div>
+                      <div className={`flex items-center gap-2 mt-1 text-[10px] ${isDarkMode ? 'text-slate-500' : 'text-gray-400'}`}>
+                        <span className="inline-flex items-center gap-0.5"><Heart size={9}/> {m.votes || 0}</span>
+                        <span>{m.views || 0} views</span>
+                      </div>
+                    </div>
+                  </a>
+                  {isOwn && (
+                    <button
+                      onClick={() => setDisassociateConfirm({ open: true, kind: m.kind || 'map', name: m.name, nameInput: '', loading: false, error: null })}
+                      className={`absolute top-2 right-2 p-1 rounded border opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-50 hover:border-red-300 ${isDarkMode ? 'bg-slate-800/80 border-slate-600' : 'bg-white/80 border-gray-200'}`}
+                      title="Disassociate from your account"
+                    >
+                      <UserX size={11} className={`${isDarkMode ? 'text-slate-400' : 'text-gray-400'} hover:text-red-500`}/>
+                    </button>
+                  )}
                 </div>
               ))}
             </div>
-            <div className={`flex items-center gap-3 mt-5 ${isDarkMode ? 'text-slate-400' : 'text-gray-500'}`}>
-              <button disabled={profilePage <= 1} className={`px-3 py-1.5 rounded-lg border text-xs disabled:opacity-40 transition-colors ${isDarkMode ? 'border-slate-700 hover:bg-slate-800' : 'border-gray-300 hover:bg-gray-100'}`} onClick={() => { const p = Math.max(1, profilePage - 1); setProfilePage(p); loadProfile(route.username, p, profileSearch); }}>← Prev</button>
-              <span className="text-xs">Page {profilePage} / {totalPages}</span>
-              <button disabled={profilePage >= totalPages} className={`px-3 py-1.5 rounded-lg border text-xs disabled:opacity-40 transition-colors ${isDarkMode ? 'border-slate-700 hover:bg-slate-800' : 'border-gray-300 hover:bg-gray-100'}`} onClick={() => { const p = Math.min(totalPages, profilePage + 1); setProfilePage(p); loadProfile(route.username, p, profileSearch); }}>Next →</button>
-            </div>
+            {totalPages > 1 && (
+              <div className={`flex items-center gap-3 mt-6 ${isDarkMode ? 'text-slate-400' : 'text-gray-500'}`}>
+                <button disabled={profilePage <= 1} className={`px-3 py-1.5 rounded-lg border text-xs disabled:opacity-40 transition-colors ${isDarkMode ? 'border-slate-700 hover:bg-slate-800' : 'border-gray-300 hover:bg-gray-100'}`} onClick={() => { const p = Math.max(1, profilePage - 1); setProfilePage(p); loadProfile(route.username, p, profileSearch); }}>← Prev</button>
+                <span className="text-xs">Page {profilePage} / {totalPages}</span>
+                <button disabled={profilePage >= totalPages} className={`px-3 py-1.5 rounded-lg border text-xs disabled:opacity-40 transition-colors ${isDarkMode ? 'border-slate-700 hover:bg-slate-800' : 'border-gray-300 hover:bg-gray-100'}`} onClick={() => { const p = Math.min(totalPages, profilePage + 1); setProfilePage(p); loadProfile(route.username, p, profileSearch); }}>Next →</button>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -3396,6 +3518,34 @@ xatra.TitleBox("<b>My Map</b>")
             )}
         </div>
       </div>
+      {newMapDialogOpen && (
+        <div className="fixed inset-0 bg-black/40 z-[100] flex items-center justify-center" onClick={(e) => { if (e.target === e.currentTarget) setNewMapDialogOpen(false); }}>
+          <div className="bg-white rounded-lg border shadow-xl p-6 w-80">
+            <div className="font-semibold text-sm mb-3">Create new map</div>
+            <label className="block text-xs text-gray-600 mb-1">Map name <span className="text-gray-400">(lowercase letters, digits, _ or .)</span></label>
+            <input
+              autoFocus
+              type="text"
+              value={newMapDialogName}
+              onChange={(e) => setNewMapDialogName(e.target.value.toLowerCase().replace(/[^a-z0-9_.]/g, ''))}
+              onKeyDown={(e) => { if (e.key === 'Enter') handleNewMapConfirm(); else if (e.key === 'Escape') setNewMapDialogOpen(false); }}
+              placeholder="my_map"
+              className="w-full border rounded px-3 py-2 text-sm mb-1"
+            />
+            {newMapDialogName && !HUB_NAME_RE.test(newMapDialogName) && (
+              <div className="text-xs text-red-600 mb-2">Invalid name. Use only a–z, 0–9, _ or .</div>
+            )}
+            <div className="flex gap-2 mt-3 justify-end">
+              <button className="px-3 py-1.5 text-sm border rounded hover:bg-gray-50" onClick={() => setNewMapDialogOpen(false)}>Cancel</button>
+              <button
+                className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+                disabled={!newMapDialogName || !HUB_NAME_RE.test(newMapDialogName)}
+                onClick={handleNewMapConfirm}
+              >Create</button>
+            </div>
+          </div>
+        </div>
+      )}
       {importModalOpen && (
         <div className="fixed inset-0 bg-black/40 z-[100] flex items-center justify-center">
           <div className="w-[980px] max-w-[96vw] h-[84vh] bg-white rounded-lg border shadow-xl flex flex-col">

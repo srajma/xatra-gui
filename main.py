@@ -70,8 +70,12 @@ HUB_DB_PATH = Path(__file__).parent / "xatra_hub.db"
 HUB_NAME_PATTERN = re.compile(r"^[a-z0-9_.]+$")
 HUB_USER_PATTERN = re.compile(r"^[a-z0-9_.-]+$")
 HUB_KINDS = {"map", "lib", "css"}
-GUEST_USERNAME = "guest"
-ANONYMOUS_USERNAME = "anonymous"
+GUEST_USERNAME = os.environ.get("XATRA_GUEST_USERNAME", "guest")
+ANONYMOUS_USERNAME = os.environ.get("XATRA_ANONYMOUS_USERNAME", "anonymous")
+ADMIN_USERNAME = os.environ.get("XATRA_ADMIN_USERNAME", "srajma")
+ADMIN_PASSWORD_ENV = os.environ.get("XATRA_ADMIN_PASSWORD") or os.environ.get("ADMIN_PASSWORD")
+FRONTEND_PORT = int(os.environ.get("XATRA_FRONTEND_PORT", "5188"))
+FRONTEND_PREVIEW_PORT = int(os.environ.get("XATRA_FRONTEND_PREVIEW_PORT", "4173"))
 HUB_RESERVED_USERNAMES = {
     GUEST_USERNAME,
     ANONYMOUS_USERNAME,
@@ -317,19 +321,19 @@ def _init_hub_db():
 
         # Ensure default admin account exists.
         now = _utc_now_iso()
-        admin_password = os.environ.get("ADMIN_PASSWORD") or secrets.token_urlsafe(16)
+        admin_password = ADMIN_PASSWORD_ENV or secrets.token_urlsafe(16)
         result = conn.execute(
             """
             INSERT OR IGNORE INTO hub_users(username, password_hash, full_name, bio, is_admin, created_at)
             VALUES(?, ?, ?, ?, ?, ?)
             """,
-            ("srajma", _hash_password(admin_password), "srajma", "", 1, now),
+            (ADMIN_USERNAME, _hash_password(admin_password), ADMIN_USERNAME, "", 1, now),
         )
         if result.rowcount > 0:
-            print(f"[xatra] Admin account 'srajma' created. Password: {admin_password}")
-            print("[xatra] Set ADMIN_PASSWORD env var to configure this at startup, or change it after first login.")
+            print(f"[xatra] Admin account '{ADMIN_USERNAME}' created. Password: {admin_password}")
+            print("[xatra] Set XATRA_ADMIN_PASSWORD env var to configure this at startup, or change it after first login.")
         # Seed default public territory library.
-        user_row = conn.execute("SELECT id FROM hub_users WHERE username = 'srajma'").fetchone()
+        user_row = conn.execute("SELECT id FROM hub_users WHERE username = ?", (ADMIN_USERNAME,)).fetchone()
         if user_row is not None:
             territory_seed = _territory_library_seed_code()
             seed_content = json.dumps({
@@ -695,10 +699,10 @@ _init_hub_db()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "http://localhost:5188",
-        "http://127.0.0.1:5188",
-        "http://localhost:4173",
-        "http://127.0.0.1:4173",
+        f"http://localhost:{FRONTEND_PORT}",
+        f"http://127.0.0.1:{FRONTEND_PORT}",
+        f"http://localhost:{FRONTEND_PREVIEW_PORT}",
+        f"http://127.0.0.1:{FRONTEND_PREVIEW_PORT}",
     ],
     allow_credentials=True,
     allow_methods=["*"],

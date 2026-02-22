@@ -3,8 +3,17 @@ set -euo pipefail
 trap 'kill 0' EXIT
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BACKEND_PORT=8088
+BACKEND_PORT="${XATRA_BACKEND_PORT:-8088}"
 PYTHON_BIN="python3.12"
+
+# Load .env if it exists (simple key=value parsing, no export of comments or blanks)
+if [ -f "$SCRIPT_DIR/.env" ]; then
+    set -a
+    # shellcheck disable=SC1090
+    source "$SCRIPT_DIR/.env"
+    set +a
+    BACKEND_PORT="${XATRA_BACKEND_PORT:-$BACKEND_PORT}"
+fi
 
 cd "$SCRIPT_DIR"
 
