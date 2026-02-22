@@ -329,8 +329,8 @@ Bugs we still have
   - The logged-in user should _never_ be in a situation where they are editing a draft directly. Make sure of this! Make sure they cannot access a map editor at any endpoint like /new-map (such things should just redirect them to /explore); that causes a mess.
   - When a guest user logs in, any Unsaved Draft belonging to them should be transferred to the logged-in user (so the guest user should not have an unsaved draft any more), replacing any existing Unsaved Draft belonging to that user
     - [x] Actually, this has an unintended result: if a user logs in, then doesn't save their unsaved draft, and logs out, the guest draft will get     
-   reset to the default map (empty with just gadm("IND")), so when they log in again their unsaved draft will get replaced with this default map. Instead, when the guest logs in, that       
-  unsaved draft should get duplicated (so both the logged-in user and the guest have identical copies of it).
+   reset to the default map (empty with just gadm("IND")), so when they log in again their unsaved draft will get replaced with this default map. Instead, when the guest logs in, that unsaved draft should get duplicated (so both the logged-in user and the guest have identical copies of it).
+   - [ ] Uh there's still a weird issue: a logged-in user editing any existing map or creating any new map seems to also overwrite the unsaved draft. This is wrong; like I said, nothing the logged-in user does should ever affect the unsaved draft. Go through things very thoroughly so this is guaranteed.
   - For the guest, the landing page should still be the map editor.
 - [x] Anonymization is very buggy; sometimes an anonymized map reappears in the user's profile with some underscores.
 - [x] The New map button doesn't seem to bother checking if the name of the map entered already exists, and allows overwriting existing maps. This is bad!

@@ -20,6 +20,10 @@ from xatra.loaders import gadm, naturalearth, polygon, overpass
 from xatra.icon import Icon
 from xatra.colorseq import Color, ColorSequence, LinearColorSequence
 from matplotlib.colors import LinearSegmentedColormap`;
+const DEFAULT_MAP_CODE = `xatra.BaseOption("Esri.WorldTopoMap", default=True)
+xatra.Flag(label="India", value=gadm("IND"), note="Republic of India")
+xatra.TitleBox("<b>My Map</b>")
+`;
 const IMPORTABLE_LAYER_TYPES = [
   'Flag', 'River', 'Path', 'Point', 'Text', 'Admin', 'AdminRivers', 'Dataframe',
   'TitleBox', 'CSS', 'BaseOption', 'FlagColorSequence', 'AdminColorSequence',
@@ -172,9 +176,7 @@ function App() {
   const [code, setCode] = useState(`import xatra
 from xatra.loaders import gadm, naturalearth
 
-xatra.BaseOption("Esri.WorldTopoMap", default=True)
-xatra.Flag(label="India", value=gadm("IND"), note="Republic of India")
-xatra.TitleBox("<b>My Map</b>")
+${DEFAULT_MAP_CODE}
 `);
 
   const [predefinedCode, setPredefinedCode] = useState(``);
@@ -586,7 +588,8 @@ xatra.TitleBox("<b>My Map</b>")
       throw new Error(data.detail || data.error || 'Failed to publish artifact');
     }
     const latest = data.latest_published_version;
-    if (kind === 'map') setMapVersionLabel(latest || 'alpha');
+    const publishedVersion = data?.published?.version ?? latest ?? null;
+    if (kind === 'map') setMapVersionLabel(publishedVersion || 'alpha');
     if (kind === 'lib') {
       setLibraryVersionLabel(latest || 'alpha');
       setSelectedLibraryVersion('alpha');
@@ -608,7 +611,7 @@ xatra.TitleBox("<b>My Map</b>")
     if (kind === 'map') {
       setMapOwner(owner);
       setMapName(targetName);
-      setStatusNotice(data.no_changes ? 'No changes' : `Published v${latest}`);
+      setStatusNotice(data.no_changes ? 'No changes' : `Published v${publishedVersion ?? 1}`);
       // Force-refresh version options (bypass cache)
       ensureArtifactVersions(owner, targetName, 'map', true);
       ensureArtifactVersions(owner, targetName, 'lib', true);
@@ -721,17 +724,26 @@ xatra.TitleBox("<b>My Map</b>")
           const defElements = createDefaultBuilderElements();
           const defOptions = createDefaultBuilderOptions();
           const defaultImports = [{ ...DEFAULT_INDIC_IMPORT }];
+          const defaultImportsCode = serializeHubImports(defaultImports);
           setMapName(name);
           setMapOwner(owner);
           setBuilderElements(defElements);
           setBuilderOptions(defOptions);
-          setCode('');
+          setCode(DEFAULT_MAP_CODE);
           setThemeCode('');
           setRuntimeCode('');
           setPredefinedCode('');
           setHubImports(defaultImports);
-          setImportsCode(serializeHubImports(defaultImports));
-          renderMapWithData({ elements: defElements, options: defOptions, mapCode: '', predCode: '', importsCode: '', themeCode: '', runtimeCode: '' });
+          setImportsCode(defaultImportsCode);
+          renderMapWithData({
+            elements: defElements,
+            options: defOptions,
+            mapCode: DEFAULT_MAP_CODE,
+            predCode: '',
+            importsCode: defaultImportsCode,
+            themeCode: '',
+            runtimeCode: '',
+          });
           return;
         }
         throw new Error(data.detail || data.error || 'Failed to load map');
@@ -924,7 +936,7 @@ xatra.TitleBox("<b>My Map</b>")
     setMapName('new_map');
     setBuilderElements(createDefaultBuilderElements());
     setBuilderOptions(createDefaultBuilderOptions());
-    setCode('');
+    setCode(DEFAULT_MAP_CODE);
     setThemeCode('');
     setRuntimeCode('');
     setPredefinedCode('');
@@ -2902,6 +2914,13 @@ xatra.TitleBox("<b>My Map</b>")
             title="Export HTML (Download Map)"
             className={`p-1.5 rounded ${isDarkMode ? 'text-slate-300 hover:bg-slate-800' : 'text-gray-600 hover:bg-gray-100'}`}
           ><Image size={14}/></button>
+          {route.map && isMapAuthor && (
+            <button
+              onClick={() => setDisassociateConfirm({ open: true, kind: 'map', name: route.map, nameInput: '', loading: false, error: null })}
+              title="Disassociate map from your account"
+              className={`p-1.5 rounded ${isDarkMode ? 'text-red-400 hover:bg-red-950/40' : 'text-red-600 hover:bg-red-50'}`}
+            ><Trash2 size={14}/></button>
+          )}
         </>
       )}
       {/* Spacer */}
@@ -3427,20 +3446,9 @@ xatra.TitleBox("<b>My Map</b>")
                   <GitFork size={13} className="text-gray-700"/>
                 </button>
               ) : (
-                <>
-                  <button onClick={handlePublishMap} className="p-1.5 bg-white border border-gray-300 rounded hover:bg-gray-50 inline-flex items-center justify-center" title="Publish new version">
-                    <CloudUpload size={13} className="text-gray-700"/>
-                  </button>
-                  {route.map && isMapAuthor && (
-                    <button
-                      onClick={() => setDisassociateConfirm({ open: true, kind: 'map', name: normalizedMapName, nameInput: '', loading: false, error: null })}
-                      className="p-1.5 bg-white border border-gray-300 rounded hover:bg-red-50 hover:border-red-300 inline-flex items-center justify-center"
-                      title="Disassociate map from your account"
-                    >
-                      <UserX size={13} className="text-gray-400 hover:text-red-500"/>
-                    </button>
-                  )}
-                </>
+                <button onClick={handlePublishMap} className="p-1.5 bg-white border border-gray-300 rounded hover:bg-gray-50 inline-flex items-center justify-center" title="Publish new version">
+                  <CloudUpload size={13} className="text-gray-700"/>
+                </button>
               )}
               {currentMapVersionOptions.length > 0 && (
                 <select
