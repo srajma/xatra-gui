@@ -359,7 +359,7 @@ Random misc
     - [x] Oh, the Load JSON; Save JSON; Export HTML buttons should only appear on Map pages. And Load JSON in particular should not even appear when looking at other users' maps.
   - [x] Right-aligned: New map (this should stand out); Explore; Users; Night mode toggle (should be literally just a nice toggle with night/day icons, no "Night mode" text); `[username](link to profile)` if logged in; Login/Signup or Logout (depending on whether logged in or not)
   - [x] `Ctrl/Cmd+;`, which currently clicks the triple-line menu, should instead focus the top bar allowing us to cycle through it with tab or left-right arrow keys. Make sure to update the keyboard shortcuts hint panel.
-- [ ] Use image of map from last save as the map's thumbnail (in the Explore, User page and Import from xatrahub interfaces). For this you must figure out how to best capture an image of the rendered map.
+- [x] Use image of map from last save as the map's thumbnail (in the Explore, User page and Import from xatrahub interfaces). For this you must figure out how to best capture an image of the rendered map.
 - [x] improvements to forking and voting
   - [x] forks should show "fork of [...](link to original map)" under their page's byline (i.e. under "by <user> . likes . views")
   - [x] forking a map should automatically vote it up
@@ -393,7 +393,7 @@ Random misc
 - [x] Re-design the Profile page to give main focus to the list of maps (and have a thumbnail-based grid view exactly like /explore); while the account settings and stuff appears as a collapsible form that is collapsed by default.
 - [x] Make sure all the obvious things can be set by environment variables---admin username and password, backend and frontend ports, anonymous username, whatever makes sense---and create a .env file showing our defaults for these.
 - [x] Add support for the new xatra.Music() layers that have just been implemented.
-  - [ ] The interface for the Music layers is wrong. Have you looked at what its fields actually are in xatra? The xatra repo is in ../xatra.master.
+  - [x] The interface for the Music layers is wrong. Have you looked at what its fields actually are in xatra? The xatra repo is in ../xatra.master.
     - It should not ask for a path to the mp3 file, but should have a file upload UI (and it should upload from the _user_'s system, not a path on the server system, obviously).
     - It has two optional fields: Period and Timestamps. Both of these are optional fields, so should be collapsed by default in the UI.
 
@@ -443,12 +443,12 @@ For eventually publishing this as a website
 - [x] Move GUI to a separate repo instead of being part of the main xatra package
 - [ ] Security
   - [ ] Obviously can't allow users to just run any Python code. Instead of blindly running whatever code the user enters in the Code editor, we should convert it into the "Builder" format first and then run _that_.
-      - [ ] "Python" blocks and "Python" input to fields should _only_ be available to "Trusted" users. Other users should not be able to do that or even see the options; however they should be able to import maps from users who did use these blocks.
-        - [ ] Even that code should only be run in a sandbox.
+      - [ ] "Python" blocks and "Python" input to fields should _only_ be available to "Trusted" users. Other users should not be able to do that or even see the options; however they should be able to import maps from users who did use these blocks. Admin users are always trusted.
+        - [ ] Even that code should only be run in a sandbox, not affecting anything else on the system.
     - [ ] Is the parsing of Python into Builder json, and the parsing of Builder json back into Python code, perfectly secure?
 - [ ] Efficiency and scalability concerns [for now, just answer in words, don't implement anything]
   - Can this website handle, idk, approx 1000 users making maps? How can we estimate the resources etc. that will cost and the servers we will need? (I'm totally new to this, I have no idea if this makes sense).
-  - Is it inefficient that for every change the user makes to the map, it has to be re-rendered from ground up by xatra? Are there better solutions?
+  - Is it inefficient that for every change the user makes to the map, it has to be re-rendered from ground up by xatra? Are there better solutions? Do note that the maps can get pretty long (e.g. maps of global territorial evolution over history, etc.)
 - [ ] Admin can "featured" maps, making them appear on top
 - [ ] Collaborative editing/Github integration
 - [ ] AI agent that makes maps for you --- only for paid users [have to think about exactly how to implement this]
