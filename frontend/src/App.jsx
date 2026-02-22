@@ -611,13 +611,14 @@ ${DEFAULT_MAP_CODE}
     if (kind === 'map') {
       setMapOwner(owner);
       setMapName(targetName);
-      setStatusNotice(data.no_changes ? 'No changes' : `Published v${publishedVersion ?? 1}`);
+      const publishedLabel = Number(publishedVersion ?? latest ?? 1) || 1;
+      setStatusNotice(data.no_changes ? 'No changes' : `Published v${publishedLabel}`);
       // Force-refresh version options (bypass cache)
       ensureArtifactVersions(owner, targetName, 'map', true);
       ensureArtifactVersions(owner, targetName, 'lib', true);
       ensureArtifactVersions(owner, targetName, 'css', true);
       navigateTo(`/${owner}/map/${targetName}`);
-      setTimeout(() => setStatusNotice(''), 1800);
+      setTimeout(() => setStatusNotice(''), 5000);
     }
     return data;
   };
@@ -846,8 +847,8 @@ ${DEFAULT_MAP_CODE}
   };
 
   useEffect(() => {
-    // Don't save until the editor has finished its initial load (prevents overwriting draft with initial state)
-    if (!editorReadyRef.current) return;
+    // Guest-only draft persistence. Logged-in users should not mutate their stored unsaved draft.
+    if (!editorReadyRef.current || currentUser.is_authenticated) return;
     const t = setTimeout(() => {
       apiFetch('/draft/current', {
         method: 'PUT',
@@ -868,7 +869,7 @@ ${DEFAULT_MAP_CODE}
       }).catch(() => {});
     }, 800);
     return () => clearTimeout(t);
-  }, [normalizedMapName, builderElements, builderOptions, code, predefinedCode, importsCode, themeCode, runtimeCode]);
+  }, [normalizedMapName, builderElements, builderOptions, code, predefinedCode, importsCode, themeCode, runtimeCode, pickerOptions, currentUser.is_authenticated]);
 
   const loadExplore = async (page = 1, query = exploreQuery) => {
     setExploreLoading(true);
@@ -932,17 +933,39 @@ ${DEFAULT_MAP_CODE}
     }
   };
 
-  const applyNewMapDefaults = () => {
-    setMapName('new_map');
-    setBuilderElements(createDefaultBuilderElements());
-    setBuilderOptions(createDefaultBuilderOptions());
+  const applyNewMapDefaults = (opts = {}) => {
+    const nextName = opts.name && HUB_NAME_RE.test(opts.name) ? opts.name : 'new_map';
+    const nextOwner = opts.owner || (currentUser.is_authenticated ? normalizedHubUsername : 'guest');
+    const defElements = createDefaultBuilderElements();
+    const defOptions = createDefaultBuilderOptions();
+    const defaults = [{ ...DEFAULT_INDIC_IMPORT }];
+    const defaultImportsCode = serializeHubImports(defaults);
+
+    setMapOwner(nextOwner);
+    setMapName(nextName);
+    setBuilderElements(defElements);
+    setBuilderOptions(defOptions);
     setCode(DEFAULT_MAP_CODE);
     setThemeCode('');
     setRuntimeCode('');
     setPredefinedCode('');
-    const defaults = [{ ...DEFAULT_INDIC_IMPORT }];
     setHubImports(defaults);
-    setImportsCode(serializeHubImports(defaults));
+    setImportsCode(defaultImportsCode);
+    setActiveTab('builder');
+    setStatusNotice('');
+    setAutoSaveStatus('idle');
+    lastAutoSavedContentRef.current = null;
+    setForkedFrom(null);
+
+    renderMapWithData({
+      elements: defElements,
+      options: defOptions,
+      mapCode: DEFAULT_MAP_CODE,
+      predCode: '',
+      importsCode: defaultImportsCode,
+      themeCode: '',
+      runtimeCode: '',
+    });
   };
 
   const handleNewMapClick = () => {
@@ -972,6 +995,7 @@ ${DEFAULT_MAP_CODE}
         throw new Error(data.detail || 'Failed to validate map name');
       }
       setNewMapDialogOpen(false);
+      applyNewMapDefaults({ name, owner: normalizedHubUsername });
       navigateTo(`/${normalizedHubUsername}/map/${name}`);
     } catch (err) {
       setNewMapDialogError(err.message || 'Failed to validate map name');

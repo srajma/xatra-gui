@@ -2296,7 +2296,9 @@ def draft_save(request: Request, response: Response, payload: DraftRequest):
     try:
         user = _request_user(conn, request)
         if user is not None:
-            owner_key = f"user:{user['id']}"
+            # Logged-in users should not overwrite their transferred unsaved draft
+            # while editing normal maps.
+            raise HTTPException(status_code=403, detail="Draft edits are guest-only")
         else:
             owner_key = f"guest:{_ensure_guest_id(request, response=response)}"
         now = _utc_now_iso()
