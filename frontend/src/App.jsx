@@ -39,8 +39,7 @@ const parsePath = (pathname) => {
   const parts = String(pathname || '/').split('/').filter(Boolean);
   if (parts.length === 0) return { page: 'editor' };
   if (parts[0] === 'new-map') return { page: 'editor', newMap: true };
-  if (parts[0] === 'explore') return { page: 'explore' };
-  if (parts[0] === 'users') return { page: 'users' };
+  if (parts[0] === 'explore' || parts[0] === 'users') return { page: 'explore' };
   if (parts[0] === 'login') return { page: 'login' };
   if (parts.length >= 3 && parts[1] === 'map') {
     let version = 'alpha';
@@ -885,8 +884,7 @@ xatra.TitleBox("<b>My Map</b>")
   };
 
   useEffect(() => {
-    if (route.page === 'explore') loadExplore(explorePage, exploreQuery);
-    if (route.page === 'users') loadUsers(usersPage, usersQuery);
+    if (route.page === 'explore') { loadExplore(explorePage, exploreQuery); loadUsers(usersPage, usersQuery); }
     if (route.page === 'profile') loadProfile(route.username, profilePage, profileSearch);
     if (route.page === 'editor' && route.owner && route.map) {
       editorInitKeyRef.current = '';
@@ -2634,27 +2632,33 @@ xatra.TitleBox("<b>My Map</b>")
     >
       {/* Hidden file input for Load JSON */}
       <input id="xatra-load-input" type="file" className="hidden" accept=".json" onChange={handleLoadProject} />
-      {/* Left: title + file actions */}
+      {/* Left: title + file actions (file buttons only on editor pages) */}
       <button
         onClick={() => navigateTo('/')}
         className={`font-bold text-sm lowercase tracking-tight px-2 py-1 rounded mr-1 ${isDarkMode ? 'text-white hover:bg-slate-800' : 'text-slate-900 hover:bg-gray-100'}`}
         title="Home"
       >xatra</button>
-      <button
-        onClick={() => document.getElementById('xatra-load-input')?.click()}
-        title="Load JSON"
-        className={`p-1.5 rounded ${isDarkMode ? 'text-slate-300 hover:bg-slate-800' : 'text-gray-600 hover:bg-gray-100'}`}
-      ><Upload size={14}/></button>
-      <button
-        onClick={handleSaveProject}
-        title="Save JSON"
-        className={`p-1.5 rounded ${isDarkMode ? 'text-slate-300 hover:bg-slate-800' : 'text-gray-600 hover:bg-gray-100'}`}
-      ><Download size={14}/></button>
-      <button
-        onClick={handleExportHtml}
-        title="Export HTML (Download Map)"
-        className={`p-1.5 rounded ${isDarkMode ? 'text-slate-300 hover:bg-slate-800' : 'text-gray-600 hover:bg-gray-100'}`}
-      ><Image size={14}/></button>
+      {route.page === 'editor' && !isReadOnlyMap && (
+        <button
+          onClick={() => document.getElementById('xatra-load-input')?.click()}
+          title="Load JSON"
+          className={`p-1.5 rounded ${isDarkMode ? 'text-slate-300 hover:bg-slate-800' : 'text-gray-600 hover:bg-gray-100'}`}
+        ><Upload size={14}/></button>
+      )}
+      {route.page === 'editor' && (
+        <>
+          <button
+            onClick={handleSaveProject}
+            title="Save JSON"
+            className={`p-1.5 rounded ${isDarkMode ? 'text-slate-300 hover:bg-slate-800' : 'text-gray-600 hover:bg-gray-100'}`}
+          ><Download size={14}/></button>
+          <button
+            onClick={handleExportHtml}
+            title="Export HTML (Download Map)"
+            className={`p-1.5 rounded ${isDarkMode ? 'text-slate-300 hover:bg-slate-800' : 'text-gray-600 hover:bg-gray-100'}`}
+          ><Image size={14}/></button>
+        </>
+      )}
       {/* Spacer */}
       <div className="flex-1" />
       {/* Right: nav actions */}
@@ -2668,11 +2672,6 @@ xatra.TitleBox("<b>My Map</b>")
         title="Explore"
         className={`p-1.5 rounded ${isDarkMode ? 'text-slate-300 hover:bg-slate-800' : 'text-gray-600 hover:bg-gray-100'}`}
       ><Compass size={14}/></button>
-      <button
-        onClick={() => navigateTo('/users')}
-        title="Users"
-        className={`p-1.5 rounded ${isDarkMode ? 'text-slate-300 hover:bg-slate-800' : 'text-gray-600 hover:bg-gray-100'}`}
-      ><Users size={14}/></button>
       <button
         onClick={() => setIsDarkMode((p) => !p)}
         title={isDarkMode ? 'Switch to light mode' : 'Switch to night mode'}
@@ -2741,7 +2740,7 @@ xatra.TitleBox("<b>My Map</b>")
       </div>
       <nav className="px-2 py-3 flex-1 space-y-0.5">
         <button className={`w-full text-left px-3 py-2 rounded-lg text-sm inline-flex items-center gap-2.5 transition-colors ${activePage === 'explore' ? (isDarkMode ? 'bg-slate-800 text-white font-medium' : 'bg-blue-50 text-blue-700 font-medium') : (isDarkMode ? 'text-slate-300 hover:bg-slate-800 hover:text-white' : 'text-gray-600 hover:bg-gray-100')}`} onClick={() => navigateTo('/explore')}><Compass size={14}/> Explore</button>
-        <button className={`w-full text-left px-3 py-2 rounded-lg text-sm inline-flex items-center gap-2.5 transition-colors ${activePage === 'users' ? (isDarkMode ? 'bg-slate-800 text-white font-medium' : 'bg-blue-50 text-blue-700 font-medium') : (isDarkMode ? 'text-slate-300 hover:bg-slate-800 hover:text-white' : 'text-gray-600 hover:bg-gray-100')}`} onClick={() => navigateTo('/users')}><Users size={14}/> Users</button>
+        <button className={`w-full text-left px-3 py-2 rounded-lg text-sm inline-flex items-center gap-2.5 transition-colors ${activePage === 'users' ? (isDarkMode ? 'bg-slate-800 text-white font-medium' : 'bg-blue-50 text-blue-700 font-medium') : (isDarkMode ? 'text-slate-300 hover:bg-slate-800 hover:text-white' : 'text-gray-600 hover:bg-gray-100')}`} onClick={() => navigateTo('/explore')}><Users size={14}/> Users</button>
         <button className={`w-full text-left px-3 py-2 rounded-lg text-sm inline-flex items-center gap-2.5 transition-colors ${activePage === 'profile' ? (isDarkMode ? 'bg-slate-800 text-white font-medium' : 'bg-blue-50 text-blue-700 font-medium') : (isDarkMode ? 'text-slate-300 hover:bg-slate-800 hover:text-white' : 'text-gray-600 hover:bg-gray-100')}`} onClick={() => (currentUser.is_authenticated ? navigateTo(`/${normalizedHubUsername}`) : navigateTo('/login'))}><User size={14}/> {currentUser.is_authenticated ? normalizedHubUsername : 'My Profile'}</button>
         <button className={`w-full text-left px-3 py-2 rounded-lg text-sm inline-flex items-center gap-2.5 transition-colors ${isDarkMode ? 'text-slate-300 hover:bg-slate-800 hover:text-white' : 'text-gray-600 hover:bg-gray-100'}`} onClick={() => window.open('/new-map', '_blank')}><FilePlus2 size={14}/> New map…</button>
       </nav>
@@ -2813,14 +2812,13 @@ xatra.TitleBox("<b>My Map</b>")
 
   if (route.page === 'explore') {
     const totalPages = Math.max(1, Math.ceil((exploreData.total || 0) / (exploreData.per_page || 12)));
+    const usersTotalPages = Math.max(1, Math.ceil((usersData.total || 0) / (usersData.per_page || 20)));
     return (
       <div className={`h-screen w-full flex flex-col ${isDarkMode ? 'theme-dark bg-slate-950 text-slate-100' : 'bg-gray-50'}`}>
         {renderTopBar()}
-        <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-          <div className={`border-b px-6 py-4 flex-shrink-0 ${isDarkMode ? 'border-slate-800 bg-slate-900/50' : 'border-gray-200 bg-white'}`}>
-            <div className={`text-base font-semibold ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>Explore maps</div>
-          </div>
-          <div className="flex-1 overflow-y-auto px-6 py-5">
+        <div className="flex-1 flex min-w-0 overflow-hidden">
+          {/* Maps column */}
+          <div className="flex-1 overflow-y-auto px-6 py-5 min-w-0">
             {exploreLoading && <div className={`mb-4 text-xs px-3 py-2 border rounded-lg ${isDarkMode ? 'bg-blue-900/20 text-blue-300 border-blue-700' : 'bg-blue-50 text-blue-700 border-blue-200'}`}>Loading maps…</div>}
             <div className={`flex gap-2 mb-5 p-3 rounded-xl border ${isDarkMode ? 'bg-slate-800/50 border-slate-700' : 'bg-white border-gray-200 shadow-sm'}`}>
               <input value={exploreQuery} onChange={(e) => setExploreQuery(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { setExplorePage(1); loadExplore(1, exploreQuery); } }} placeholder='Search maps, e.g. "indica user:srajma"' className={`flex-1 rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300 ${isDarkMode ? 'bg-slate-800 border-slate-600 text-white placeholder-slate-500 focus:border-blue-400' : 'bg-white border-gray-300 focus:border-blue-400'}`} />
@@ -2835,40 +2833,30 @@ xatra.TitleBox("<b>My Map</b>")
               <button disabled={explorePage >= totalPages} className={`px-3 py-1.5 rounded-lg border text-xs disabled:opacity-40 transition-colors ${isDarkMode ? 'border-slate-700 hover:bg-slate-800' : 'border-gray-300 hover:bg-gray-100'}`} onClick={() => { const p = Math.min(totalPages, explorePage + 1); setExplorePage(p); loadExplore(p, exploreQuery); }}>Next →</button>
             </div>
           </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (route.page === 'users') {
-    const totalPages = Math.max(1, Math.ceil((usersData.total || 0) / (usersData.per_page || 20)));
-    return (
-      <div className={`h-screen w-full flex flex-col ${isDarkMode ? 'theme-dark bg-slate-950 text-slate-100' : 'bg-gray-50'}`}>
-        {renderTopBar()}
-        <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-          <div className={`border-b px-6 py-4 flex-shrink-0 ${isDarkMode ? 'border-slate-800 bg-slate-900/50' : 'border-gray-200 bg-white'}`}>
-            <div className={`text-base font-semibold ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>Users</div>
-          </div>
-          <div className="flex-1 overflow-y-auto px-6 py-5">
-            {usersLoading && <div className={`mb-4 text-xs px-3 py-2 border rounded-lg ${isDarkMode ? 'bg-blue-900/20 text-blue-300 border-blue-700' : 'bg-blue-50 text-blue-700 border-blue-200'}`}>Loading users…</div>}
-            <div className={`flex gap-2 mb-5 p-3 rounded-xl border ${isDarkMode ? 'bg-slate-800/50 border-slate-700' : 'bg-white border-gray-200 shadow-sm'}`}>
-              <input value={usersQuery} onChange={(e) => setUsersQuery(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { setUsersPage(1); loadUsers(1, usersQuery); } }} placeholder="Search users…" className={`flex-1 rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300 ${isDarkMode ? 'bg-slate-800 border-slate-600 text-white placeholder-slate-500 focus:border-blue-400' : 'bg-white border-gray-300 focus:border-blue-400'}`} />
-              <button className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 transition-colors" onClick={() => { setUsersPage(1); loadUsers(1, usersQuery); }}>Search</button>
+          {/* Users sidebar */}
+          <div className={`w-64 flex-shrink-0 border-l overflow-y-auto px-4 py-5 ${isDarkMode ? 'border-slate-800 bg-slate-900/30' : 'border-gray-200 bg-white'}`}>
+            <div className={`text-xs font-semibold mb-3 ${isDarkMode ? 'text-slate-400' : 'text-gray-500'}`}>Users</div>
+            {usersLoading && <div className={`mb-3 text-xs px-2 py-1 border rounded ${isDarkMode ? 'bg-blue-900/20 text-blue-300 border-blue-700' : 'bg-blue-50 text-blue-700 border-blue-200'}`}>Loading…</div>}
+            <div className={`flex gap-1.5 mb-3`}>
+              <input value={usersQuery} onChange={(e) => setUsersQuery(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { setUsersPage(1); loadUsers(1, usersQuery); } }} placeholder="Search users…" className={`flex-1 rounded-lg border px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-300 ${isDarkMode ? 'bg-slate-800 border-slate-600 text-white placeholder-slate-500 focus:border-blue-400' : 'bg-white border-gray-300 focus:border-blue-400'}`} />
+              <button className="px-2 py-1.5 bg-blue-600 text-white rounded-lg text-xs hover:bg-blue-700 transition-colors" onClick={() => { setUsersPage(1); loadUsers(1, usersQuery); }}>Go</button>
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            <div className="space-y-1.5">
               {(usersData.items || []).map((u) => (
-                <a key={u.username} href={`/${u.username}`} className={`block rounded-xl border p-4 hover:shadow-md transition-shadow ${isDarkMode ? 'bg-slate-800 border-slate-700 hover:border-slate-600' : 'bg-white border-gray-200 hover:border-gray-300'}`}>
-                  <div className={`font-mono text-sm font-medium ${isDarkMode ? 'text-blue-400' : 'text-blue-700'}`}>{u.username}</div>
-                  {u.full_name && <div className={`text-xs mt-0.5 ${isDarkMode ? 'text-slate-300' : 'text-gray-700'}`}>{u.full_name}</div>}
-                  <div className={`text-[11px] mt-2 ${isDarkMode ? 'text-slate-500' : 'text-gray-400'}`}>{u.maps_count || 0} maps · {u.views_count || 0} views</div>
+                <a key={u.username} href={`/${u.username}`} className={`block rounded-lg border px-3 py-2 hover:shadow-sm transition-shadow ${isDarkMode ? 'bg-slate-800 border-slate-700 hover:border-slate-600' : 'bg-gray-50 border-gray-200 hover:border-gray-300 hover:bg-white'}`}>
+                  <div className={`font-mono text-xs font-medium ${isDarkMode ? 'text-blue-400' : 'text-blue-700'}`}>{u.username}</div>
+                  {u.full_name && <div className={`text-[11px] mt-0.5 truncate ${isDarkMode ? 'text-slate-300' : 'text-gray-600'}`}>{u.full_name}</div>}
+                  <div className={`text-[10px] mt-1 ${isDarkMode ? 'text-slate-500' : 'text-gray-400'}`}>{u.maps_count || 0} maps</div>
                 </a>
               ))}
             </div>
-            <div className={`flex items-center gap-3 mt-5 ${isDarkMode ? 'text-slate-400' : 'text-gray-500'}`}>
-              <button disabled={usersPage <= 1} className={`px-3 py-1.5 rounded-lg border text-xs disabled:opacity-40 transition-colors ${isDarkMode ? 'border-slate-700 hover:bg-slate-800' : 'border-gray-300 hover:bg-gray-100'}`} onClick={() => { const p = Math.max(1, usersPage - 1); setUsersPage(p); loadUsers(p, usersQuery); }}>← Prev</button>
-              <span className="text-xs">Page {usersPage} / {totalPages}</span>
-              <button disabled={usersPage >= totalPages} className={`px-3 py-1.5 rounded-lg border text-xs disabled:opacity-40 transition-colors ${isDarkMode ? 'border-slate-700 hover:bg-slate-800' : 'border-gray-300 hover:bg-gray-100'}`} onClick={() => { const p = Math.min(totalPages, usersPage + 1); setUsersPage(p); loadUsers(p, usersQuery); }}>Next →</button>
-            </div>
+            {usersTotalPages > 1 && (
+              <div className={`flex items-center gap-2 mt-4 ${isDarkMode ? 'text-slate-400' : 'text-gray-500'}`}>
+                <button disabled={usersPage <= 1} className={`px-2 py-1 rounded border text-[11px] disabled:opacity-40 ${isDarkMode ? 'border-slate-700 hover:bg-slate-800' : 'border-gray-300 hover:bg-gray-100'}`} onClick={() => { const p = Math.max(1, usersPage - 1); setUsersPage(p); loadUsers(p, usersQuery); }}>←</button>
+                <span className="text-[11px]">{usersPage}/{usersTotalPages}</span>
+                <button disabled={usersPage >= usersTotalPages} className={`px-2 py-1 rounded border text-[11px] disabled:opacity-40 ${isDarkMode ? 'border-slate-700 hover:bg-slate-800' : 'border-gray-300 hover:bg-gray-100'}`} onClick={() => { const p = Math.min(usersTotalPages, usersPage + 1); setUsersPage(p); loadUsers(p, usersQuery); }}>→</button>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -3383,6 +3371,7 @@ xatra.TitleBox("<b>My Map</b>")
                 onChange={(e) => setHubQuery(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') { e.preventDefault(); searchHubRegistry(); }
+                  else if (e.key === 'Escape') { e.preventDefault(); setImportModalOpen(false); }
                   else if (e.key === 'ArrowDown') {
                     e.preventDefault();
                     importGridRef.current?.querySelector('[data-import-card]')?.focus();

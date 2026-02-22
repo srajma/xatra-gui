@@ -333,9 +333,10 @@ Random misc
   - [ ] Since map names must now be unique globally, the default name counter cannot simply increment as `new_map_<n>`. Instead just let the default name be the ID of the map in the database (assuming such a numeric ID exists---if not, make one). The name of a map should never be allowed to entirely numeric _unless_ it happens to be that map's ID.
 - [ ] allow user to "disassociate" their maps from their usernames on their own user page, and on the map's page. This is better than allowing deletion, so that published maps/themes/territory libraries still exist and can be used; they're just not associated with that user's name. Use an icon for "Anonymous", if such an icon exists; otherwise just use a simple trash icon. It should prompt the user for confirmation before anonymizing; making it clear to him that he will **lose all ownership and editing rights** to this map (though he can fork it) and make him type in the name of the map before anonymizing it.
 - [ ] Make Import panel more keyboard-friendly.
-  - Pressing the down key from the search bar should focus the first entry in the grid of maps.
-  - We should be able to navigate the grid with arrow keys.
-  - Pressing the up key from a map in the top row of the grid should take us back to the search bar
+  - [ ] Pressing the down key from the search bar should focus the first entry in the grid of maps.
+  - [ ] We should be able to navigate the grid with arrow keys.
+  - [ ] Pressing the up key from a map in the top row of the grid should take us back to the search bar
+  - [ ] Oh one last thing: escape should close the import panel
 - [ ] Instead of having a separate "/users" page, merge it into "/explore" by using a column view and making Users (with its own search bar, like it has now) the little right column. Make sure this doesn't mess up the Import panel in maps, which may share some UI with /explore. Also update the top bar to remove the link to /users.
 - [ ] You know the little keyboard shortcuts panel? Move the button for that (which is currently inside the map preview for some reason) to the top-bar, next to the night mode toggle.
 
