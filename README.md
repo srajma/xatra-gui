@@ -328,9 +328,15 @@ Bugs we still have
   - If a logged-in user clicks the "Unsaved Draft" entry, they should be prompted to give a name for the map (and make sure they do not give a conflicting name), then it should convert that draft into a map with that name belonging to the user and take the user to that map, deleting the Unsaved draft from the database.
   - The logged-in user should _never_ be in a situation where they are editing a draft directly. Make sure of this! Make sure they cannot access a map editor at any endpoint like /new-map (such things should just redirect them to /explore); that causes a mess.
   - When a guest user logs in, any Unsaved Draft belonging to them should be transferred to the logged-in user (so the guest user should not have an unsaved draft any more), replacing any existing Unsaved Draft belonging to that user
+    - [ ] Actually, this has an unintended result: if a user logs in, then doesn't save their unsaved draft, and logs out, the guest draft will get     
+   reset to the default map (empty with just gadm("IND")), so when they log in again their unsaved draft will get replaced with this default map. Instead, when the guest logs in, that       
+  unsaved draft should get duplicated (so both the logged-in user and the guest have identical copies of it).
   - For the guest, the landing page should still be the map editor.
 - [x] Anonymization is very buggy; sometimes an anonymized map reappears in the user's profile with some underscores.
-
+- [ ] The New map button doesn't seem to bother checking if the name of the map entered already exists, and allows overwriting existing maps. This is bad!
+- [ ] The New map prompt on the map page and on other pages seem to be slightly different? Why? E.g. the New map prompt on the other pages does not respect dark mode for some reason.
+  - [ ] Also the "Save map" dialog for saving an unsaved draft should respect night mode.
+  
 Random misc
 - [x] On the new map creating editor, non logged-in user should see a red "Unsaved changes" message on the second line (i.e. below the name field etc.) as soon as they make any change worth saving, and a "Login to save/publish" link after it (this should be visible whether or not the user has made any changes).
   - [x] And when the user logs in and is returned to the map editor, make sure it correctly shows "Unsaved changes" since the map has not yet been saved.
@@ -348,10 +354,12 @@ Random misc
   - [ ] This will have to be updated in the original xatra project's hub.py (I maintain it, it's in `../xatra.master`) as well as in the imports list here, etc.
   - [ ] putting a username in between should still work for backwards-compatibility
   - [ ] Since map names must now be unique globally, the default name counter cannot simply increment as `new_map_<n>`. Instead just let the default name be the ID of the map in the database (assuming such a numeric ID exists---if not, make one). The name of a map should never be allowed to entirely numeric _unless_ it happens to be that map's ID.
-  - [ ] In order to prevent conflicts (since map URLs will now simply be `/<mapname>`), user profile pages should now appear under `/user/<username>` rather than simply `<username>`. 
+  - [ ] In order to prevent conflicts (since map URLs will now simply be `/<mapname>`), user profile pages should now appear under `/user/<username>` rather than simply `<username>`. Non-existent URLs (like `/oogabooga4473`) currently show a fake user page---instead, you should just show the "Uncharted territories" 404 error page.
   - [ ] There is the question of how to migrate existing map names. We can just migrate them all to their integer IDs for now; taking care to ensure that imports in existing maps also change along with this. Only the `srajma/.../indic` case needs to be handled specifically, rename this to `dtl` (for default territory library) and make sure that all references to it (in imports, in default imports, in the code for pre-seeding this library in the database etc.) use this new reference.
   - [ ] the main reason to make this change is to let users change their usernames without breaking links/imports to their maps. For the same reason, it should not be possible to change the name of a map after publishing a version of it or of any of its territory libraries and themes (it should warn the user of this when he tries to publish v1 of either the map or a territory library/theme, asking for confirmation).
 - [ ] Change the icon for likes from a heart to a simple upwards triangle (meaning "upvote"). And change the icon for "/explore" from the compass to a search icon.
+- [ ] Make sure the xatra top bar is everywhere: on the "Loading editor context" page, on error pages etc.
+- [ ] Increase the number of items in the grid on the user profile page to 6 (it seems to be 4 at the moment).
 - [x] allow user to "disassociate" their maps from their usernames on their own user page, and on the map's page. This is better than allowing deletion, so that published maps/themes/territory libraries still exist and can be used; they're just not associated with that user's name. Use an icon for "Anonymous", if such an icon exists; otherwise just use a simple trash icon. It should prompt the user for confirmation before anonymizing; making it clear to him that he will **lose all ownership and editing rights** to this map (though he can fork it) and make him type in the name of the map before anonymizing it.
 - [x] Make Import panel more keyboard-friendly.
   - [x] Pressing the down key from the search bar should focus the first entry in the grid of maps.

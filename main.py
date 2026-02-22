@@ -845,6 +845,10 @@ class DraftRequest(BaseModel):
     project: Dict[str, Any] = {}
 
 
+class DraftPromoteRequest(BaseModel):
+    name: str
+
+
 class PasswordUpdateRequest(BaseModel):
     current_password: str
     new_password: str
@@ -1807,6 +1811,30 @@ def _require_write_identity(conn: sqlite3.Connection, request: Request, username
     return None
 
 
+def _transfer_guest_draft(conn: sqlite3.Connection, guest_id: str, user_id: int) -> None:
+    """Copy guest draft to user (overwriting any existing user draft), then delete guest draft."""
+    guest_key = f"guest:{guest_id}"
+    user_key = f"user:{user_id}"
+    guest_row = conn.execute(
+        "SELECT project_json FROM hub_drafts WHERE owner_key = ?", (guest_key,)
+    ).fetchone()
+    if guest_row is None:
+        return
+    now = _utc_now_iso()
+    conn.execute(
+        """
+        INSERT INTO hub_drafts(owner_key, project_json, updated_at)
+        VALUES(?, ?, ?)
+        ON CONFLICT(owner_key) DO UPDATE SET
+            project_json = excluded.project_json,
+            updated_at = excluded.updated_at
+        """,
+        (user_key, guest_row["project_json"], now),
+    )
+    conn.execute("DELETE FROM hub_drafts WHERE owner_key = ?", (guest_key,))
+    # Note: caller must conn.commit()
+
+
 def _create_session_cookie(conn: sqlite3.Connection, row: sqlite3.Row, response: Response) -> Dict[str, Any]:
     """Insert a new session record and set the session cookie. Returns user profile."""
     token = secrets.token_urlsafe(32)
@@ -1851,7 +1879,12 @@ def auth_signup(body: AuthSignupRequest, response: Response, http_request: Reque
         )
         conn.commit()
         row = conn.execute("SELECT * FROM hub_users WHERE username = ?", (username,)).fetchone()
-        return _create_session_cookie(conn, row, response)
+        result = _create_session_cookie(conn, row, response)
+        guest_id = http_request.cookies.get(GUEST_COOKIE)
+        if guest_id and guest_id.strip():
+            _transfer_guest_draft(conn, guest_id.strip(), row["id"])
+            conn.commit()
+        return result
     finally:
         conn.close()
 
@@ -1866,7 +1899,12 @@ def auth_login(body: AuthLoginRequest, response: Response, http_request: Request
         row = conn.execute("SELECT * FROM hub_users WHERE username = ?", (username,)).fetchone()
         if row is None or not _verify_password(str(body.password or ""), row["password_hash"]):
             raise HTTPException(status_code=401, detail="Invalid username or password")
-        return _create_session_cookie(conn, row, response)
+        result = _create_session_cookie(conn, row, response)
+        guest_id = http_request.cookies.get(GUEST_COOKIE)
+        if guest_id and guest_id.strip():
+            _transfer_guest_draft(conn, guest_id.strip(), row["id"])
+            conn.commit()
+        return result
     finally:
         conn.close()
 
@@ -2252,20 +2290,70 @@ def draft_get(request: Request, response: Response):
         else:
             owner_key = f"guest:{_ensure_guest_id(request, response=response)}"
         row = conn.execute("SELECT project_json, updated_at FROM hub_drafts WHERE owner_key = ?", (owner_key,)).fetchone()
-        if row is None and user is not None:
-            # Authenticated user has no draft — fall back to guest draft if one exists.
-            # This handles the case where a guest logs in and their work should carry over.
-            guest_id = request.cookies.get(GUEST_COOKIE)
-            if guest_id and guest_id.strip():
-                guest_row = conn.execute(
-                    "SELECT project_json, updated_at FROM hub_drafts WHERE owner_key = ?",
-                    (f"guest:{guest_id}",)
-                ).fetchone()
-                if guest_row is not None:
-                    return {"exists": True, "updated_at": guest_row["updated_at"], "draft": _json_parse(guest_row["project_json"], {})}
         if row is None:
             return {"exists": False}
         return {"exists": True, "updated_at": row["updated_at"], "draft": _json_parse(row["project_json"], {})}
+    finally:
+        conn.close()
+
+
+@app.delete("/draft/current")
+def draft_delete(request: Request):
+    conn = _hub_db_conn()
+    try:
+        user = _request_user(conn, request)
+        if user is None:
+            raise HTTPException(status_code=401, detail="Login required")
+        conn.execute(
+            "DELETE FROM hub_drafts WHERE owner_key = ?",
+            (f"user:{user['id']}",)
+        )
+        conn.commit()
+        return {"ok": True}
+    finally:
+        conn.close()
+
+
+@app.post("/draft/promote")
+def draft_promote(body: DraftPromoteRequest, request: Request):
+    conn = _hub_db_conn()
+    try:
+        user = _request_user(conn, request)
+        if user is None:
+            raise HTTPException(status_code=401, detail="Login required")
+        name = _normalize_hub_name(body.name)
+        username = user["username"]
+        owner_key = f"user:{user['id']}"
+        row = conn.execute("SELECT project_json FROM hub_drafts WHERE owner_key = ?", (owner_key,)).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="No draft found")
+        existing = _hub_get_artifact(conn, username, "map", name)
+        if existing is not None:
+            raise HTTPException(status_code=409, detail="Map already exists")
+        draft = _json_parse(row["project_json"], {})
+        project = draft.get("project", {})
+        content_obj = {
+            "imports_code":    project.get("importsCode", ""),
+            "theme_code":      project.get("themeCode", ""),
+            "predefined_code": project.get("predefinedCode", ""),
+            "map_code":        project.get("code", ""),
+            "runtime_code":    project.get("runtimeCode", ""),
+            "picker_options":  project.get("pickerOptions", {"entries": [], "adminRivers": False}),
+            "project": {
+                "elements":       project.get("elements", []),
+                "options":        project.get("options", {}),
+                "predefinedCode": project.get("predefinedCode", ""),
+                "importsCode":    project.get("importsCode", ""),
+                "themeCode":      project.get("themeCode", ""),
+                "runtimeCode":    project.get("runtimeCode", ""),
+            }
+        }
+        content = json.dumps(content_obj, ensure_ascii=False)
+        metadata: Dict[str, Any] = {"updated_at": _utc_now_iso()}
+        _hub_upsert_alpha(conn, username, "map", name, content, metadata)
+        conn.execute("DELETE FROM hub_drafts WHERE owner_key = ?", (owner_key,))
+        conn.commit()
+        return {"ok": True, "url": f"/{username}/map/{name}"}
     finally:
         conn.close()
 

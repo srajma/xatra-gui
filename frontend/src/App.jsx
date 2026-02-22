@@ -107,6 +107,11 @@ function App() {
   const lastAutoSavedContentRef = useRef(null);
   const editorReadyRef = useRef(false); // true after initial load phase; guards against spurious auto-saves on first render
   const [guestHasChanges, setGuestHasChanges] = useState(false);
+  const [userDraftMeta, setUserDraftMeta] = useState(null); // null | { exists: bool, mapName?: string }
+  const [promoteDraftDialogOpen, setPromoteDraftDialogOpen] = useState(false);
+  const [promoteDraftName, setPromoteDraftName] = useState('');
+  const [promoteDraftLoading, setPromoteDraftLoading] = useState(false);
+  const [promoteDraftError, setPromoteDraftError] = useState('');
   // Publish status for library and theme: null | 'publishing' | 'published:v{n}' | 'no_changes' | 'error'
   const [libraryPublishStatus, setLibraryPublishStatus] = useState(null);
   const [themePublishStatus, setThemePublishStatus] = useState(null);
@@ -876,6 +881,20 @@ xatra.TitleBox("<b>My Map</b>")
     }
   };
 
+  const loadUserDraftMeta = async () => {
+    try {
+      const resp = await apiFetch('/draft/current');
+      const data = await resp.json();
+      if (data.exists && data.draft) {
+        setUserDraftMeta({ exists: true, mapName: data.draft.map_name || 'new_map' });
+      } else {
+        setUserDraftMeta({ exists: false });
+      }
+    } catch {
+      setUserDraftMeta({ exists: false });
+    }
+  };
+
   const loadUsers = async (page = 1, query = usersQuery) => {
     setUsersLoading(true);
     try {
@@ -920,6 +939,28 @@ xatra.TitleBox("<b>My Map</b>")
     navigateTo(`/${normalizedHubUsername}/map/${name}`);
   };
 
+  const handlePromoteDraft = async () => {
+    if (!HUB_NAME_RE.test(promoteDraftName)) return;
+    setPromoteDraftLoading(true);
+    setPromoteDraftError('');
+    try {
+      const resp = await apiFetch('/draft/promote', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: promoteDraftName }),
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.detail || 'Failed to save map');
+      setPromoteDraftDialogOpen(false);
+      setUserDraftMeta({ exists: false });
+      navigateTo(`/${normalizedHubUsername}/map/${promoteDraftName}`);
+    } catch (err) {
+      setPromoteDraftError(err.message);
+    } finally {
+      setPromoteDraftLoading(false);
+    }
+  };
+
   const switchHubImportVersion = (idx, version, applyNow = false) => {
     const next = [...(hubImports || [])];
     if (!next[idx]) return;
@@ -952,55 +993,38 @@ xatra.TitleBox("<b>My Map</b>")
     }
     if (route.page === 'editor' && !route.owner) {
       if (!authReady) return;
-      const owner = currentUser.is_authenticated ? normalizedHubUsername : 'guest';
-      const initKey = `${route.newMap ? 'new' : 'draft'}:${owner}`;
-      if (editorInitKeyRef.current === initKey) return;
-      // If already in editor and only auth state changed (e.g. guest logged in),
-      // keep current work and just update owner — don't reload draft.
-      if (editorInitKeyRef.current && !route.newMap) {
-        editorInitKeyRef.current = initKey;
-        setMapOwner(owner);
+      // Logged-in users never edit a draft — redirect to explore
+      if (currentUser.is_authenticated) {
+        navigateTo('/explore');
         return;
       }
+      // Guest-only draft editor flow
+      const initKey = `draft:guest`;
+      if (editorInitKeyRef.current === initKey) return;
       editorInitKeyRef.current = initKey;
-      setMapOwner(owner);
-      if (route.newMap) {
-        applyNewMapDefaults();
-        // Render with default values directly (state updates from applyNewMapDefaults are async)
-        const defElements = createDefaultBuilderElements();
-        const defOptions = createDefaultBuilderOptions();
-        renderMapWithData({ elements: defElements, options: defOptions, mapCode: '', predCode: '', importsCode: '', themeCode: '', runtimeCode: '' });
-        // For new maps, fetch a default name suggestion
-        apiFetch('/maps/default-name').then((r) => r.json()).then((d) => {
-          if (d?.name && HUB_NAME_RE.test(d.name)) setMapName(d.name);
-        }).catch(() => {});
-      } else {
-        // Load draft; don't call /maps/default-name afterwards (it would overwrite the draft's map name)
-        (async () => {
-          const hasDraft = await loadDraft();
-          if (hasDraft && currentUser.is_authenticated) {
-            // Mark hub as unsaved so the user sees "Unsaved changes" immediately.
-            // This handles the guest-login transition: the backend may have returned the guest
-            // draft (fallback) and the user's hub artifact hasn't been updated yet.
-            setTimeout(() => setAutoSaveStatus('unsaved'), 400);
-          }
-          if (!hasDraft) {
-            if (currentUser.is_authenticated) {
-              // Logged-in users with no draft go to their profile page
-              navigateTo(`/${normalizedHubUsername}`);
-            } else {
-              // Guest with no draft: set a default map name and render default
-              apiFetch('/maps/default-name').then((r) => r.json()).then((d) => {
-                if (d?.name && HUB_NAME_RE.test(d.name)) setMapName(d.name);
-              }).catch(() => {});
-              renderMap();
-            }
-          }
-        })();
-      }
+      setMapOwner('guest');
+      // Load draft; don't call /maps/default-name afterwards (it would overwrite the draft's map name)
+      (async () => {
+        const hasDraft = await loadDraft();
+        if (!hasDraft) {
+          // Guest with no draft: set a default map name and render default
+          apiFetch('/maps/default-name').then((r) => r.json()).then((d) => {
+            if (d?.name && HUB_NAME_RE.test(d.name)) setMapName(d.name);
+          }).catch(() => {});
+          renderMap();
+        }
+      })();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [route.page, route.owner, route.map, route.version, route.newMap, authReady, currentUser.is_authenticated, normalizedHubUsername]);
+
+  useEffect(() => {
+    if (route.page === 'explore' && currentUser.is_authenticated && authReady) {
+      loadProfile(normalizedHubUsername, 1, '');
+      loadUserDraftMeta();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [route.page, currentUser.is_authenticated, authReady, normalizedHubUsername]);
 
   const handleLogin = async (mode = authMode) => {
     setAuthSubmitting(true);
@@ -1017,7 +1041,7 @@ xatra.TitleBox("<b>My Map</b>")
       const data = await resp.json();
       if (!resp.ok) throw new Error(data.detail || data.error || 'Authentication failed');
       await loadMe();
-      navigateTo('/');
+      navigateTo('/explore');
     } catch (err) {
       setError(err.message);
     } finally {
@@ -1541,6 +1565,11 @@ xatra.TitleBox("<b>My Map</b>")
       if (e.key === 'Escape' && newMapDialogOpen) {
         e.preventDefault();
         setNewMapDialogOpen(false);
+        return;
+      }
+      if (e.key === 'Escape' && promoteDraftDialogOpen) {
+        e.preventDefault();
+        setPromoteDraftDialogOpen(false);
         return;
       }
       if (e.key === 'Escape' && importModalOpen) {
@@ -2754,7 +2783,7 @@ xatra.TitleBox("<b>My Map</b>")
       <input id="xatra-load-input" type="file" className="hidden" accept=".json" onChange={handleLoadProject} />
       {/* Left: title + file actions (file buttons only on editor pages) */}
       <button
-        onClick={() => navigateTo('/')}
+        onClick={() => navigateTo(currentUser.is_authenticated ? '/explore' : '/')}
         className={`font-bold text-sm lowercase tracking-tight px-2 py-1 rounded mr-1 ${isDarkMode ? 'text-white hover:bg-slate-800' : 'text-slate-900 hover:bg-gray-100'}`}
         title="Home"
       >xatra</button>
@@ -2800,7 +2829,7 @@ xatra.TitleBox("<b>My Map</b>")
       <div className="relative">
         <button
           onClick={() => setShowShortcutHelp((prev) => !prev)}
-          title="Toggle keyboard shortcuts"
+          title="Keyboard shortcuts"
           className={`p-1.5 rounded ${isDarkMode ? 'text-slate-300 hover:bg-slate-800' : 'text-gray-600 hover:bg-gray-100'}`}
         ><Keyboard size={14}/></button>
         {showShortcutHelp && (
@@ -3012,6 +3041,33 @@ xatra.TitleBox("<b>My Map</b>")
           </div>
         </div>
       )}
+      {promoteDraftDialogOpen && (
+        <div className="fixed inset-0 bg-black/40 z-[100] flex items-center justify-center"
+             onClick={(e) => { if (e.target === e.currentTarget) setPromoteDraftDialogOpen(false); }}>
+          <div className="bg-white rounded-lg border shadow-xl p-6 w-80">
+            <div className="font-semibold text-sm mb-1">Save map</div>
+            <div className="text-xs text-gray-500 mb-3">Give this unsaved draft a name to save it to your account.</div>
+            <label className="block text-xs text-gray-600 mb-1">Map name <span className="text-gray-400">(a–z, 0–9, _ or .)</span></label>
+            <input autoFocus type="text" value={promoteDraftName}
+              onChange={(e) => setPromoteDraftName(e.target.value.toLowerCase().replace(/[^a-z0-9_.]/g, ''))}
+              onKeyDown={(e) => { if (e.key === 'Enter') handlePromoteDraft(); else if (e.key === 'Escape') setPromoteDraftDialogOpen(false); }}
+              placeholder="my_map" className="w-full border rounded px-3 py-2 text-sm mb-1" />
+            {promoteDraftName && !HUB_NAME_RE.test(promoteDraftName) && (
+              <div className="text-xs text-red-600 mb-2">Invalid name.</div>
+            )}
+            {promoteDraftError && <div className="text-xs text-red-600 mb-2">{promoteDraftError}</div>}
+            <div className="flex gap-2 mt-3 justify-end">
+              <button className="px-3 py-1.5 text-sm border rounded hover:bg-gray-50"
+                onClick={() => setPromoteDraftDialogOpen(false)}>Cancel</button>
+              <button className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+                disabled={!promoteDraftName || !HUB_NAME_RE.test(promoteDraftName) || promoteDraftLoading}
+                onClick={handlePromoteDraft}>
+                {promoteDraftLoading ? 'Saving…' : 'Save map'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 
@@ -3025,8 +3081,56 @@ xatra.TitleBox("<b>My Map</b>")
         <div className="flex-1 flex min-w-0 overflow-hidden">
           {/* Maps column */}
           <div className="flex-1 overflow-y-auto px-6 py-5 min-w-0">
+            {/* My Maps section — logged-in users only */}
+            {currentUser.is_authenticated && (
+              <div className="mb-6">
+                <div className={`text-xs font-semibold mb-2 ${isDarkMode ? 'text-slate-400' : 'text-gray-500'}`}>My Maps</div>
+                <div className="flex gap-3 overflow-x-auto pb-1">
+                  {/* New Map card */}
+                  <button
+                    onClick={handleNewMapClick}
+                    className={`flex-shrink-0 min-w-[130px] h-28 rounded-xl border flex flex-col items-center justify-center gap-1.5 text-xs font-medium transition-colors ${isDarkMode ? 'bg-slate-800 border-slate-700 text-slate-300 hover:border-blue-500 hover:text-blue-400' : 'bg-white border-gray-200 text-gray-500 hover:border-blue-400 hover:text-blue-600'}`}
+                  >
+                    <Plus size={18}/>
+                    New map
+                  </button>
+                  {/* Unsaved Draft card */}
+                  {userDraftMeta?.exists && (
+                    <button
+                      onClick={() => { setPromoteDraftName(''); setPromoteDraftError(''); setPromoteDraftDialogOpen(true); }}
+                      className={`flex-shrink-0 min-w-[130px] h-28 rounded-xl border flex flex-col items-center justify-center gap-1 text-xs transition-colors ${isDarkMode ? 'bg-slate-800 border-red-700/50 hover:border-red-500' : 'bg-white border-red-200 hover:border-red-400'}`}
+                    >
+                      <div className={`font-semibold ${isDarkMode ? 'text-red-400' : 'text-red-500'}`}>Unsaved Draft</div>
+                      <div className={`text-[10px] ${isDarkMode ? 'text-slate-400' : 'text-gray-400'}`}>{userDraftMeta.mapName}</div>
+                    </button>
+                  )}
+                  {/* Recent maps */}
+                  {(profileData?.maps || []).slice(0, 5).map((item) => (
+                    <a
+                      key={item.name}
+                      href={`/${normalizedHubUsername}/map/${item.name}`}
+                      className={`flex-shrink-0 min-w-[130px] h-28 rounded-xl border overflow-hidden shadow-sm hover:shadow-md transition-shadow group ${isDarkMode ? 'bg-slate-800 border-slate-700 hover:border-slate-600' : 'bg-white border-gray-200 hover:border-gray-300'}`}
+                    >
+                      <img src={item.thumbnail || '/vite.svg'} alt="" className={`w-full h-16 object-cover ${isDarkMode ? 'bg-slate-700' : 'bg-gray-100'}`} />
+                      <div className="px-2 py-1">
+                        <div className={`font-mono text-[11px] font-medium truncate group-hover:text-blue-500 transition-colors ${isDarkMode ? 'text-slate-200' : 'text-slate-800'}`}>{item.name}</div>
+                      </div>
+                    </a>
+                  ))}
+                  {/* More → link */}
+                  {(profileData?.total || 0) > 5 && (
+                    <a
+                      href={`/${normalizedHubUsername}`}
+                      className={`flex-shrink-0 min-w-[80px] h-28 rounded-xl border flex items-center justify-center text-xs font-medium transition-colors ${isDarkMode ? 'bg-slate-800 border-slate-700 text-slate-400 hover:text-blue-400 hover:border-blue-500' : 'bg-white border-gray-200 text-gray-400 hover:text-blue-600 hover:border-blue-400'}`}
+                    >
+                      More →
+                    </a>
+                  )}
+                </div>
+              </div>
+            )}
             {exploreLoading && <div className={`mb-4 text-xs px-3 py-2 border rounded-lg ${isDarkMode ? 'bg-blue-900/20 text-blue-300 border-blue-700' : 'bg-blue-50 text-blue-700 border-blue-200'}`}>Loading maps…</div>}
-            <div className={`flex gap-2 mb-5 p-3 rounded-xl border ${isDarkMode ? 'bg-slate-800/50 border-slate-700' : 'bg-white border-gray-200 shadow-sm'}`}>
+            <div className="flex gap-2 mb-5">
               <input value={exploreQuery} onChange={(e) => setExploreQuery(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { setExplorePage(1); loadExplore(1, exploreQuery); } }} placeholder='Search maps, e.g. "indica user:srajma"' className={`flex-1 rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300 ${isDarkMode ? 'bg-slate-800 border-slate-600 text-white placeholder-slate-500 focus:border-blue-400' : 'bg-white border-gray-300 focus:border-blue-400'}`} />
               <button className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 transition-colors" onClick={() => { setExplorePage(1); loadExplore(1, exploreQuery); }}>Search</button>
             </div>
