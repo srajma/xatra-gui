@@ -324,9 +324,9 @@ Bugs we still have
 - [x] Actually I have a better idea for the whole drafts/landing page/saving flow: (don't do this now, I have to flesh it out)
   - Only for logged-in users, the Explore page will have a section above for the logged-in user's own maps. It will be a single-row grid, starting with an "Add New Map" entry (a nice big box the same size as all the other entries), then an "Unsaved Draft" entry _if it exists_ (again a nice big box, but the "Unsaved Draft" title should be in red), then the user's few recent maps---and then there should be a little "More >" link that takes the user to his profile page.
     - while we're changing the Explore page, you can also change the weird "box inside a box" design of the search bar.
-    - [ ] Oh also add the same "New Map" and "Unsaved Draft" icons on the user's own profile page (only the logged-in user's _own_ profile page, not anybody else's).
+    - [x] Oh also add the same "New Map" and "Unsaved Draft" icons on the user's own profile page (only the logged-in user's _own_ profile page, not anybody else's).
   - For logged-in users, this new /explore should be the landing page. 
-      - [ ] Uh, the Unsaved Draft still does not appear in the user profile page? Also both the New Map and the Unsaved Draft buttons should appear in the same grid as the user's list of maps, they don't need a separate row for themselves.
+      - [x] Uh, the Unsaved Draft still does not appear in the user profile page? Also both the New Map and the Unsaved Draft buttons should appear in the same grid as the user's list of maps, they don't need a separate row for themselves.
   - If a logged-in user clicks the "Unsaved Draft" entry, they should be prompted to give a name for the map (and make sure they do not give a conflicting name), then it should convert that draft into a map with that name belonging to the user and take the user to that map, deleting the Unsaved draft from the database.
   - The logged-in user should _never_ be in a situation where they are editing a draft directly. Make sure of this! Make sure they cannot access a map editor at any endpoint like /new-map (such things should just redirect them to /explore); that causes a mess.
   - When a guest user logs in, any Unsaved Draft belonging to them should be transferred to the logged-in user (so the guest user should not have an unsaved draft any more), replacing any existing Unsaved Draft belonging to that user
@@ -348,7 +348,7 @@ Bugs we still have
   - [x] The previewed path/polygon on the map doesn't even properly reflect the co-ordinates in the co-ordinates field. Sometimes there will be a whole bunch of co-ordinates in the co-ordinates field, and yet only one point will show up in the preview.
   - [x] Holding Ctrl/Cmd to drag free-hand does not behave as intended in polygons. Say we already have points a, b, c and then draw freehand x1 x2 x3 x4 ... You would expect lines from c to x1, x1 to x2, x2 to x3, ... but instead the preview shows lines from c to x1, c to x2, c to x3, c to x4 etc. And when I click Render map, the polygon doesn't even render! WTF?
   - [x] Backspace does not remove the previous point.
-- [ ] Ok, the above bugs with drawing Paths, Polygons, Points with the Picker are fixed/much better; however there's still one issue: the moment I click the picker for a new (empty) field, the field gets populated with the last point I had selected (for any other item/layer). Instead it should be initialized with the empty list.
+- [x] Ok, the above bugs with drawing Paths, Polygons, Points with the Picker are fixed/much better; however there's still one issue: the moment I click the picker for a new (empty) field, the field gets populated with the last point I had selected (for any other item/layer). Instead it should be initialized with the empty list.
 
 
 Random misc

@@ -17,6 +17,8 @@ const LayerItem = ({
   const pickerTimeoutRef = useRef(null);
   const lastHandledClickTsRef = useRef(null);
   const [builtinIconsList, setBuiltinIconsList] = useState([]);
+  const [musicPeriodText, setMusicPeriodText] = useState('');
+  const [musicTimestampsText, setMusicTimestampsText] = useState('');
   
   const isPicking = activePicker && activePicker.id === index && activePicker.context === 'layer';
   const isRiverReferencePicking = activePicker && activePicker.id === index && activePicker.context === 'reference-river';
@@ -28,6 +30,20 @@ const LayerItem = ({
   useEffect(() => {
       setPeriodText(Array.isArray(element.args?.period) ? element.args.period.join(', ') : '');
   }, [element.args?.period]);
+
+  useEffect(() => {
+    const p = element.args?.period;
+    if (Array.isArray(p) && p.length === 2) setMusicPeriodText(`${p[0]}, ${p[1]}`);
+    else if (typeof p === 'string') setMusicPeriodText(p);
+    else setMusicPeriodText('');
+  }, [element.args?.period]);
+
+  useEffect(() => {
+    const t = element.args?.timestamps;
+    if (Array.isArray(t) && t.length === 2) setMusicTimestampsText(`${t[0]}, ${t[1]}`);
+    else if (typeof t === 'string') setMusicTimestampsText(t);
+    else setMusicTimestampsText('');
+  }, [element.args?.timestamps]);
 
   useEffect(() => {
     if (element.type === 'point') {
@@ -514,13 +530,15 @@ const LayerItem = ({
                 <div>
                   <label className="block text-xs text-gray-500 mb-1">Period [start, end]</label>
                   <PythonTextField
-                    value={element.args?.period || ''}
+                    value={musicPeriodText}
                     onChange={(val) => {
                       if (val && typeof val === 'object' && !Array.isArray(val)) {
+                        setMusicPeriodText('');
                         updateArg(index, 'period', val);
                         return;
                       }
                       const text = String(val || '').trim();
+                      setMusicPeriodText(String(val || ''));
                       if (!text) {
                         updateArg(index, 'period', null);
                         return;
@@ -540,13 +558,15 @@ const LayerItem = ({
                 <div>
                   <label className="block text-xs text-gray-500 mb-1">Timestamps [start, end] seconds</label>
                   <PythonTextField
-                    value={element.args?.timestamps || ''}
+                    value={musicTimestampsText}
                     onChange={(val) => {
                       if (val && typeof val === 'object' && !Array.isArray(val)) {
+                        setMusicTimestampsText('');
                         updateArg(index, 'timestamps', val);
                         return;
                       }
                       const text = String(val || '').trim();
+                      setMusicTimestampsText(String(val || ''));
                       if (!text) {
                         updateArg(index, 'timestamps', null);
                         return;
