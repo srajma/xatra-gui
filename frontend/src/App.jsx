@@ -15,6 +15,11 @@ import {
 } from './lib/editorDefaults';
 import { API_BASE } from './config';
 const HUB_NAME_RE = /^[a-z0-9_.]+$/;
+const RESERVED_MAP_NAMES = new Set([
+  'guest', 'admin', 'explore', 'users', 'login', 'logout', 'new-map', 'new_map',
+  'map', 'lib', 'css', 'user', 'hub', 'auth', 'registry', 'render', 'sync',
+  'health', 'stop', 'search', 'docs', 'redoc', 'openapi.json', 'favicon.ico',
+]);
 const FIXED_PY_IMPORTS = `import xatra
 from xatra.loaders import gadm, naturalearth, polygon, overpass
 from xatra.icon import Icon
@@ -774,6 +779,10 @@ ${DEFAULT_MAP_CODE}
           });
           return;
         }
+        if (resp.status === 404) {
+          navigateTo('/explore');
+          return;
+        }
         throw new Error(data.detail || data.error || 'Failed to load map');
       }
       const content = typeof data.content === 'string' ? data.content : '';
@@ -1017,6 +1026,10 @@ ${DEFAULT_MAP_CODE}
   const handleNewMapConfirm = async () => {
     const name = String(newMapDialogName || '').trim().toLowerCase();
     if (!name || !HUB_NAME_RE.test(name)) return;
+    if (RESERVED_MAP_NAMES.has(name)) {
+      setNewMapDialogError(`'${name}' is a reserved name and cannot be used for a map.`);
+      return;
+    }
     setNewMapDialogChecking(true);
     setNewMapDialogError('');
     try {
@@ -2830,7 +2843,7 @@ ${DEFAULT_MAP_CODE}
     kind: 'css',
     name: route.map || '',
   });
-  const importedBaseSet = new Set((hubImports || []).map((imp) => `${imp.kind}:${imp.username}:${imp.name}`));
+  const importedBaseSet = new Set((hubImports || []).map((imp) => `${imp.kind}:${imp.name}`));
   const renderExploreCatalogCard = (item) => (
     <a
       key={`${item.username}-${item.name}`}
@@ -2861,9 +2874,9 @@ ${DEFAULT_MAP_CODE}
     const mapVersion = importVersionDraft[mapKey] || mapOptions[0]?.value || 'alpha';
     const cssVersion = importVersionDraft[cssKey] || cssOptions[0]?.value || 'alpha';
     const libVersion = importVersionDraft[libKey] || libOptions[0]?.value || 'alpha';
-    const mapImported = importedBaseSet.has(`map:${item.username}:${item.name}`);
-    const cssImported = importedBaseSet.has(`css:${item.username}:${item.name}`);
-    const libImported = importedBaseSet.has(`lib:${item.username}:${item.name}`);
+    const mapImported = importedBaseSet.has(`map:${item.name}`);
+    const cssImported = importedBaseSet.has(`css:${item.name}`);
+    const libImported = importedBaseSet.has(`lib:${item.name}`);
     const isCurrentMap = (item.username === mapOwner && item.name === mapName);
     return (
       <div

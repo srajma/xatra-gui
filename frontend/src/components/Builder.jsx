@@ -158,7 +158,7 @@ const Builder = ({
             {(hubImports || []).map((imp, idx) => (
               <div key={`${imp.kind}-${imp.path}-${idx}`} className="flex items-center justify-between px-2 py-1 rounded border border-gray-100 bg-gray-50">
                 <div className="text-[11px] font-mono text-gray-700 flex-1 min-w-0">
-                  {imp.kind} /{imp.username}/{imp.name}
+                  {imp.kind} /{imp.name}
                 </div>
                 <div className="flex items-center gap-1 mr-2">
                   <select

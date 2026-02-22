@@ -705,6 +705,8 @@ def _hub_upsert_alpha(
     username = _normalize_hub_user(username, allow_reserved=(str(username or "").strip().lower() == GUEST_USERNAME))
     kind = _normalize_hub_kind(kind)
     name = _normalize_hub_name(name)
+    if kind == "map" and name in HUB_RESERVED_USERNAMES:
+        raise HTTPException(status_code=400, detail=f"Map name '{name}' is reserved")
     user = _hub_ensure_user(conn, username)
     now = _utc_now_iso()
     metadata_json = _json_text(_sanitize_artifact_metadata(kind, metadata))
