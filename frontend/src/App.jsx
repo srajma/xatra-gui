@@ -689,12 +689,12 @@ xatra.TitleBox("<b>My Map</b>")
   }, [hubSearchResults]);
 
   useEffect(() => {
-    if (!mapOwner || !normalizedMapName || !HUB_NAME_RE.test(normalizedMapName)) return;
-    ensureArtifactVersions(mapOwner, normalizedMapName, 'map');
-    ensureArtifactVersions(mapOwner, normalizedMapName, 'css');
-    ensureArtifactVersions(mapOwner, normalizedMapName, 'lib');
+    if (!mapOwner || !route.map || !HUB_NAME_RE.test(route.map)) return;
+    ensureArtifactVersions(mapOwner, route.map, 'map');
+    ensureArtifactVersions(mapOwner, route.map, 'css');
+    ensureArtifactVersions(mapOwner, route.map, 'lib');
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mapOwner, normalizedMapName]);
+  }, [mapOwner, route.map]);
 
   const loadMapFromHub = async (owner, name, version = 'alpha') => {
     setAutoSaveStatus('idle');
@@ -978,6 +978,12 @@ xatra.TitleBox("<b>My Map</b>")
         // Load draft; don't call /maps/default-name afterwards (it would overwrite the draft's map name)
         (async () => {
           const hasDraft = await loadDraft();
+          if (hasDraft && currentUser.is_authenticated) {
+            // Mark hub as unsaved so the user sees "Unsaved changes" immediately.
+            // This handles the guest-login transition: the backend may have returned the guest
+            // draft (fallback) and the user's hub artifact hasn't been updated yet.
+            setTimeout(() => setAutoSaveStatus('unsaved'), 400);
+          }
           if (!hasDraft) {
             if (currentUser.is_authenticated) {
               // Logged-in users with no draft go to their profile page
@@ -1960,8 +1966,10 @@ xatra.TitleBox("<b>My Map</b>")
       const data = await resp.json();
       if (!resp.ok) throw new Error(data?.detail || 'Disassociation failed');
       setDisassociateConfirm({ open: false, kind: 'map', name: '', nameInput: '', loading: false, error: null });
-      // Navigate away since we no longer own this map
+      // Navigate to profile and reload map list (navigateTo is a no-op if already on profile page,
+      // so always call loadProfile explicitly to ensure the map disappears from the grid)
       navigateTo(`/${normalizedHubUsername}`);
+      loadProfile(normalizedHubUsername, profilePage, profileSearch);
     } catch (err) {
       setDisassociateConfirm((p) => ({ ...p, loading: false, error: err.message }));
     }
@@ -2614,17 +2622,17 @@ xatra.TitleBox("<b>My Map</b>")
   const currentMapVersionOptions = getImportVersionOptions({
     username: mapOwner,
     kind: 'map',
-    name: normalizedMapName,
+    name: route.map || '',
   });
   const currentLibraryVersionOptions = getImportVersionOptions({
     username: mapOwner,
     kind: 'lib',
-    name: normalizedMapName,
+    name: route.map || '',
   });
   const currentThemeVersionOptions = getImportVersionOptions({
     username: mapOwner,
     kind: 'css',
-    name: normalizedMapName,
+    name: route.map || '',
   });
   const importedBaseSet = new Set((hubImports || []).map((imp) => `${imp.kind}:${imp.username}:${imp.name}`));
   const renderExploreCatalogCard = (item) => (
@@ -2922,10 +2930,96 @@ xatra.TitleBox("<b>My Map</b>")
     );
   }
 
+  const renderGlobalModals = () => (
+    <>
+      {newMapDialogOpen && (
+        <div className="fixed inset-0 bg-black/40 z-[100] flex items-center justify-center" onClick={(e) => { if (e.target === e.currentTarget) setNewMapDialogOpen(false); }}>
+          <div className="bg-white rounded-lg border shadow-xl p-6 w-80">
+            <div className="font-semibold text-sm mb-3">Create new map</div>
+            <label className="block text-xs text-gray-600 mb-1">Map name <span className="text-gray-400">(lowercase letters, digits, _ or .)</span></label>
+            <input
+              autoFocus
+              type="text"
+              value={newMapDialogName}
+              onChange={(e) => setNewMapDialogName(e.target.value.toLowerCase().replace(/[^a-z0-9_.]/g, ''))}
+              onKeyDown={(e) => { if (e.key === 'Enter') handleNewMapConfirm(); else if (e.key === 'Escape') setNewMapDialogOpen(false); }}
+              placeholder="my_map"
+              className="w-full border rounded px-3 py-2 text-sm mb-1"
+            />
+            {newMapDialogName && !HUB_NAME_RE.test(newMapDialogName) && (
+              <div className="text-xs text-red-600 mb-2">Invalid name. Use only a–z, 0–9, _ or .</div>
+            )}
+            <div className="flex gap-2 mt-3 justify-end">
+              <button className="px-3 py-1.5 text-sm border rounded hover:bg-gray-50" onClick={() => setNewMapDialogOpen(false)}>Cancel</button>
+              <button
+                className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+                disabled={!newMapDialogName || !HUB_NAME_RE.test(newMapDialogName)}
+                onClick={handleNewMapConfirm}
+              >Create</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {disassociateConfirm.open && (
+        <div className="fixed inset-0 bg-black/50 z-[200] flex items-center justify-center" onClick={(e) => { if (e.target === e.currentTarget) setDisassociateConfirm((p) => ({ ...p, open: false })); }}>
+          <div className={`w-[420px] max-w-[95vw] rounded-xl border shadow-2xl p-6 flex flex-col gap-4 ${isDarkMode ? 'bg-slate-900 border-slate-700 text-slate-100' : 'bg-white border-gray-200 text-slate-800'}`}>
+            <div className="flex items-center gap-3">
+              <UserX size={20} className="text-red-500 flex-shrink-0"/>
+              <div className="font-semibold text-base">Disassociate map</div>
+            </div>
+            <div className={`text-sm leading-relaxed ${isDarkMode ? 'text-slate-300' : 'text-gray-600'}`}>
+              This will remove <span className="font-mono font-semibold">{disassociateConfirm.name}</span> from your account and transfer it to an anonymous user.
+              <br/><br/>
+              You will <strong>permanently lose all ownership and editing rights</strong> to this map (though you can fork it). Published versions will remain accessible.
+            </div>
+            <div className={`rounded-lg border px-3 py-2 text-xs ${isDarkMode ? 'bg-red-900/20 border-red-700/40 text-red-300' : 'bg-red-50 border-red-200 text-red-700'}`}>
+              This action cannot be undone.
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <label className={`text-xs font-medium ${isDarkMode ? 'text-slate-400' : 'text-gray-500'}`}>
+                Type <span className="font-mono font-semibold">{disassociateConfirm.name}</span> to confirm
+              </label>
+              <input
+                autoFocus
+                value={disassociateConfirm.nameInput}
+                onChange={(e) => setDisassociateConfirm((p) => ({ ...p, nameInput: e.target.value }))}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && disassociateConfirm.nameInput === disassociateConfirm.name) handleDisassociateMap();
+                  else if (e.key === 'Escape') setDisassociateConfirm((p) => ({ ...p, open: false }));
+                }}
+                className={`w-full border rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-red-400 ${isDarkMode ? 'bg-slate-800 border-slate-600 text-white' : 'bg-white border-gray-300'}`}
+                placeholder={disassociateConfirm.name}
+              />
+            </div>
+            {disassociateConfirm.error && (
+              <div className="text-xs text-red-500">{disassociateConfirm.error}</div>
+            )}
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setDisassociateConfirm((p) => ({ ...p, open: false }))}
+                className={`px-4 py-2 rounded-lg border text-sm transition-colors ${isDarkMode ? 'border-slate-600 text-slate-300 hover:bg-slate-800' : 'border-gray-300 text-gray-600 hover:bg-gray-50'}`}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDisassociateMap}
+                disabled={disassociateConfirm.nameInput !== disassociateConfirm.name || disassociateConfirm.loading}
+                className="px-4 py-2 rounded-lg text-sm font-medium bg-red-600 text-white hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              >
+                {disassociateConfirm.loading ? 'Disassociating…' : 'Disassociate'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+
   if (route.page === 'explore') {
     const totalPages = Math.max(1, Math.ceil((exploreData.total || 0) / (exploreData.per_page || 12)));
     const usersTotalPages = Math.max(1, Math.ceil((usersData.total || 0) / (usersData.per_page || 20)));
     return (
+      <>
       <div className={`h-screen w-full flex flex-col ${isDarkMode ? 'theme-dark bg-slate-950 text-slate-100' : 'bg-gray-50'}`}>
         {renderTopBar()}
         <div className="flex-1 flex min-w-0 overflow-hidden">
@@ -2972,6 +3066,8 @@ xatra.TitleBox("<b>My Map</b>")
           </div>
         </div>
       </div>
+      {renderGlobalModals()}
+      </>
     );
   }
 
@@ -2990,6 +3086,7 @@ xatra.TitleBox("<b>My Map</b>")
     const isOwn = authReady && profile?.username && profile.username === normalizedHubUsername && currentUser.is_authenticated;
     const profInputCls = `w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300 ${isDarkMode ? 'bg-slate-800 border-slate-600 text-white placeholder-slate-500 focus:border-blue-400' : 'bg-white border-gray-300 focus:border-blue-400'}`;
     return (
+      <>
       <div className={`h-screen w-full flex flex-col ${isDarkMode ? 'theme-dark bg-slate-950 text-slate-100' : 'bg-gray-50'}`}>
         {renderTopBar()}
         <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
@@ -3079,6 +3176,8 @@ xatra.TitleBox("<b>My Map</b>")
           </div>
         </div>
       </div>
+      {renderGlobalModals()}
+      </>
     );
   }
 
@@ -3186,11 +3285,15 @@ xatra.TitleBox("<b>My Map</b>")
                   <>
                     <span>·</span>
                     {autoSaveStatus === 'unsaved' && (
-                      <button
-                        onClick={async () => { const c = await buildMapArtifactContent().catch(() => null); if (c) performAutoSave(c); }}
-                        className="text-xs text-blue-600 hover:underline"
-                        title="Save now"
-                      >Save</button>
+                      <>
+                        <span className="text-xs text-red-500 font-medium">Unsaved changes</span>
+                        <span>·</span>
+                        <button
+                          onClick={async () => { const c = await buildMapArtifactContent().catch(() => null); if (c) performAutoSave(c); }}
+                          className="text-xs text-blue-600 hover:underline"
+                          title="Save now"
+                        >Save now</button>
+                      </>
                     )}
                     {autoSaveStatus === 'saving' && <span className="text-xs text-gray-500">Saving…</span>}
                     {autoSaveStatus === 'saved' && <span className="text-xs text-green-600">All changes saved</span>}
@@ -3518,34 +3621,7 @@ xatra.TitleBox("<b>My Map</b>")
             )}
         </div>
       </div>
-      {newMapDialogOpen && (
-        <div className="fixed inset-0 bg-black/40 z-[100] flex items-center justify-center" onClick={(e) => { if (e.target === e.currentTarget) setNewMapDialogOpen(false); }}>
-          <div className="bg-white rounded-lg border shadow-xl p-6 w-80">
-            <div className="font-semibold text-sm mb-3">Create new map</div>
-            <label className="block text-xs text-gray-600 mb-1">Map name <span className="text-gray-400">(lowercase letters, digits, _ or .)</span></label>
-            <input
-              autoFocus
-              type="text"
-              value={newMapDialogName}
-              onChange={(e) => setNewMapDialogName(e.target.value.toLowerCase().replace(/[^a-z0-9_.]/g, ''))}
-              onKeyDown={(e) => { if (e.key === 'Enter') handleNewMapConfirm(); else if (e.key === 'Escape') setNewMapDialogOpen(false); }}
-              placeholder="my_map"
-              className="w-full border rounded px-3 py-2 text-sm mb-1"
-            />
-            {newMapDialogName && !HUB_NAME_RE.test(newMapDialogName) && (
-              <div className="text-xs text-red-600 mb-2">Invalid name. Use only a–z, 0–9, _ or .</div>
-            )}
-            <div className="flex gap-2 mt-3 justify-end">
-              <button className="px-3 py-1.5 text-sm border rounded hover:bg-gray-50" onClick={() => setNewMapDialogOpen(false)}>Cancel</button>
-              <button
-                className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
-                disabled={!newMapDialogName || !HUB_NAME_RE.test(newMapDialogName)}
-                onClick={handleNewMapConfirm}
-              >Create</button>
-            </div>
-          </div>
-        </div>
-      )}
+      {renderGlobalModals()}
       {importModalOpen && (
         <div className="fixed inset-0 bg-black/40 z-[100] flex items-center justify-center">
           <div className="w-[980px] max-w-[96vw] h-[84vh] bg-white rounded-lg border shadow-xl flex flex-col">
@@ -3589,58 +3665,6 @@ xatra.TitleBox("<b>My Map</b>")
             </div>
             <div ref={importGridRef} className="flex-1 overflow-auto p-3 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
               {(hubSearchResults || []).map((item) => renderImportCatalogCard(item))}
-            </div>
-          </div>
-        </div>
-      )}
-      {disassociateConfirm.open && (
-        <div className="fixed inset-0 bg-black/50 z-[200] flex items-center justify-center" onClick={(e) => { if (e.target === e.currentTarget) setDisassociateConfirm((p) => ({ ...p, open: false })); }}>
-          <div className={`w-[420px] max-w-[95vw] rounded-xl border shadow-2xl p-6 flex flex-col gap-4 ${isDarkMode ? 'bg-slate-900 border-slate-700 text-slate-100' : 'bg-white border-gray-200 text-slate-800'}`}>
-            <div className="flex items-center gap-3">
-              <UserX size={20} className="text-red-500 flex-shrink-0"/>
-              <div className="font-semibold text-base">Disassociate map</div>
-            </div>
-            <div className={`text-sm leading-relaxed ${isDarkMode ? 'text-slate-300' : 'text-gray-600'}`}>
-              This will remove <span className="font-mono font-semibold">{disassociateConfirm.name}</span> from your account and transfer it to an anonymous user.
-              <br/><br/>
-              You will <strong>permanently lose all ownership and editing rights</strong> to this map (though you can fork it). Published versions will remain accessible.
-            </div>
-            <div className={`rounded-lg border px-3 py-2 text-xs ${isDarkMode ? 'bg-red-900/20 border-red-700/40 text-red-300' : 'bg-red-50 border-red-200 text-red-700'}`}>
-              This action cannot be undone.
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <label className={`text-xs font-medium ${isDarkMode ? 'text-slate-400' : 'text-gray-500'}`}>
-                Type <span className="font-mono font-semibold">{disassociateConfirm.name}</span> to confirm
-              </label>
-              <input
-                autoFocus
-                value={disassociateConfirm.nameInput}
-                onChange={(e) => setDisassociateConfirm((p) => ({ ...p, nameInput: e.target.value }))}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && disassociateConfirm.nameInput === disassociateConfirm.name) handleDisassociateMap();
-                  else if (e.key === 'Escape') setDisassociateConfirm((p) => ({ ...p, open: false }));
-                }}
-                className={`w-full border rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-red-400 ${isDarkMode ? 'bg-slate-800 border-slate-600 text-white' : 'bg-white border-gray-300'}`}
-                placeholder={disassociateConfirm.name}
-              />
-            </div>
-            {disassociateConfirm.error && (
-              <div className="text-xs text-red-500">{disassociateConfirm.error}</div>
-            )}
-            <div className="flex justify-end gap-2">
-              <button
-                onClick={() => setDisassociateConfirm((p) => ({ ...p, open: false }))}
-                className={`px-4 py-2 rounded-lg border text-sm transition-colors ${isDarkMode ? 'border-slate-600 text-slate-300 hover:bg-slate-800' : 'border-gray-300 text-gray-600 hover:bg-gray-50'}`}
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleDisassociateMap}
-                disabled={disassociateConfirm.nameInput !== disassociateConfirm.name || disassociateConfirm.loading}
-                className="px-4 py-2 rounded-lg text-sm font-medium bg-red-600 text-white hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-              >
-                {disassociateConfirm.loading ? 'Disassociating…' : 'Disassociate'}
-              </button>
             </div>
           </div>
         </div>

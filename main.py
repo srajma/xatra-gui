@@ -2252,6 +2252,17 @@ def draft_get(request: Request, response: Response):
         else:
             owner_key = f"guest:{_ensure_guest_id(request, response=response)}"
         row = conn.execute("SELECT project_json, updated_at FROM hub_drafts WHERE owner_key = ?", (owner_key,)).fetchone()
+        if row is None and user is not None:
+            # Authenticated user has no draft — fall back to guest draft if one exists.
+            # This handles the case where a guest logs in and their work should carry over.
+            guest_id = request.cookies.get(GUEST_COOKIE)
+            if guest_id and guest_id.strip():
+                guest_row = conn.execute(
+                    "SELECT project_json, updated_at FROM hub_drafts WHERE owner_key = ?",
+                    (f"guest:{guest_id}",)
+                ).fetchone()
+                if guest_row is not None:
+                    return {"exists": True, "updated_at": guest_row["updated_at"], "draft": _json_parse(guest_row["project_json"], {})}
         if row is None:
             return {"exists": False}
         return {"exists": True, "updated_at": row["updated_at"], "draft": _json_parse(row["project_json"], {})}
