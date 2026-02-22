@@ -1812,7 +1812,9 @@ def _require_write_identity(conn: sqlite3.Connection, request: Request, username
 
 
 def _transfer_guest_draft(conn: sqlite3.Connection, guest_id: str, user_id: int) -> None:
-    """Copy guest draft to user (overwriting any existing user draft), then delete guest draft."""
+    """Copy guest draft to user (overwriting any existing user draft), keeping the guest draft intact.
+    The guest draft is preserved so that if the user logs out without saving, their work
+    is still present the next time they log in as a guest."""
     guest_key = f"guest:{guest_id}"
     user_key = f"user:{user_id}"
     guest_row = conn.execute(
@@ -1831,7 +1833,6 @@ def _transfer_guest_draft(conn: sqlite3.Connection, guest_id: str, user_id: int)
         """,
         (user_key, guest_row["project_json"], now),
     )
-    conn.execute("DELETE FROM hub_drafts WHERE owner_key = ?", (guest_key,))
     # Note: caller must conn.commit()
 
 
