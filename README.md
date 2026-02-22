@@ -333,12 +333,24 @@ Bugs we still have
    reset to the default map (empty with just gadm("IND")), so when they log in again their unsaved draft will get replaced with this default map. Instead, when the guest logs in, that unsaved draft should get duplicated (so both the logged-in user and the guest have identical copies of it).
    - [x] Uh there's still a weird issue: a logged-in user editing any existing map or creating any new map seems to also overwrite the unsaved draft. This is wrong; like I said, nothing the logged-in user does should ever affect the unsaved draft. Go through things very thoroughly so this is guaranteed.
   - For the guest, the landing page should still be the map editor.
+  - [ ] Ok there is still a weird issue with "New Map": if a logged-in user has unsaved changes in a map he is editing and creates a new map, that new map gets loaded with the content of that unsaved map.
+  
+  I don't understand how such a simple thing can be so bugged, to the point that I wonder if the AI agents I'm asking to work on this simply do not understand the intended behaviour. All that New Map needs to do, is **create a new map with the standard, default initialization** with the name given by the user in response to the prompt. There is simply no reason why it should have any dependence on where it is clicked from. This bug (of initializing the content with that of the current map editor), the previous (now-resolved) issue of it not loading the relevant data when initialized from the Code editor, the previous (now-resolved) issue where it wouldn't work on any non-map-editor page, all suggest there is some totally wrong logic being used to implement it. 
+
 - [x] Anonymization is very buggy; sometimes an anonymized map reappears in the user's profile with some underscores.
 - [x] The New map button doesn't seem to bother checking if the name of the map entered already exists, and allows overwriting existing maps. This is bad!
 - [x] The New map prompt on the map page and on other pages seem to be slightly different? Why? E.g. the New map prompt on the other pages does not respect dark mode for some reason.
   - [x] Also the "Save map" dialog for saving an unsaved draft should respect night mode.
 - [x] For some reason, the "Published v1" message doesn't appear when the first version of a map is published. It appears for versions after v1 though.
 - [x] For some reason, when I click the "New map" button when I am on the code editor of another map, the resulting map does not have the default elements (the Flag with name India and territory gadm("IND"), the default base options and color sequences etc.) This is quite surprising behavior---how exactly does the New map button work? Why does it even depend on the page I am currently on?
+- [ ] In many fields, setting a value for it then resetting it to None/empty etc. doesn't correctly reset it but resets to the wrong thing. One example is "Inherit Color from" in Flag territories, but there may be other examples.
+- [ ] Drawing Paths, Polygons, Points with the Picker has become very buggy:
+  - [ ] Simply clicking the picker icon sometimes randomly loads some existing points into the field. I have no idea why or how this would happen---it sometimes even happens with totally fresh new maps! In fact, sometimes the points just infinitely keep getting added! (this also makes my computer overheat) 
+  - [ ] The previewed path/polygon on the map doesn't even properly reflect the co-ordinates in the co-ordinates field. Sometimes there will be a whole bunch of co-ordinates in the co-ordinates field, and yet only one point will show up in the preview.
+  - [ ] Holding Ctrl/Cmd to drag free-hand does not behave as intended in polygons. Say we already have points a, b, c and then draw freehand x1 x2 x3 x4 ... You would expect lines from c to x1, x1 to x2, x2 to x3, ... but instead the preview shows lines from c to x1, c to x2, c to x3, c to x4 etc. And when I click Render map, the polygon doesn't even render! WTF?
+  - [ ] Backspace does not remove the previous point.
+  The whole thing is a mess, and it used to work perfectly, so I don't know what went wrong.
+
 
 Random misc
 - [x] On the new map creating editor, non logged-in user should see a red "Unsaved changes" message on the second line (i.e. below the name field etc.) as soon as they make any change worth saving, and a "Login to save/publish" link after it (this should be visible whether or not the user has made any changes).
