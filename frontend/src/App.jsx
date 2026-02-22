@@ -45,13 +45,22 @@ const parsePath = (pathname) => {
   if (parts[0] === 'new-map') return { page: 'editor', newMap: true };
   if (parts[0] === 'explore' || parts[0] === 'users') return { page: 'explore' };
   if (parts[0] === 'login') return { page: 'login' };
+  // New: /user/{username} → profile
+  if (parts[0] === 'user' && parts.length >= 2) return { page: 'profile', username: parts[1] };
+  // Old format (backwards compat): /{username}/map/{name}[/{version}]
   if (parts.length >= 3 && parts[1] === 'map') {
     let version = 'alpha';
     if (parts[3] && /^v\d+$/i.test(parts[3])) version = parts[3].slice(1);
-    if (parts[3] && String(parts[3]).toLowerCase() === 'alpha') version = 'alpha';
+    else if (parts[3] && String(parts[3]).toLowerCase() === 'alpha') version = 'alpha';
     return { page: 'editor', owner: parts[0], map: parts[2], version };
   }
-  if (parts.length === 1) return { page: 'profile', username: parts[0] };
+  // New format: /{name} or /{name}/{version}
+  if (parts.length === 1) return { page: 'editor', map: parts[0], version: 'alpha' };
+  if (parts.length === 2) {
+    const v = parts[1];
+    if (/^v\d+$/i.test(v)) return { page: 'editor', map: parts[0], version: v.slice(1) };
+    if (v.toLowerCase() === 'alpha') return { page: 'editor', map: parts[0], version: 'alpha' };
+  }
   return { page: 'editor' };
 };
 
@@ -345,9 +354,9 @@ ${DEFAULT_MAP_CODE}
   const viewedMapVersion = String(route?.version || 'alpha');
   const isMapAuthor = !!(currentUser.is_authenticated && normalizedHubUsername === mapOwner);
   const hasLikedMap = isMapAuthor || mapUserVoted;
-  const isReadOnlyMap = !!(route.owner && route.map) && (!isMapAuthor || viewedMapVersion !== 'alpha');
-  const showMapMetaLine = !!(route.owner && route.map) || currentUser.is_authenticated;
-  const editorContextReady = route.page !== 'editor' || !!route.owner || authReady;
+  const isReadOnlyMap = !!(route.map) && (!isMapAuthor || viewedMapVersion !== 'alpha');
+  const showMapMetaLine = !!(route.map) || currentUser.is_authenticated;
+  const editorContextReady = route.page !== 'editor' || !!route.map || authReady;
 
   useEffect(() => {
     try {
@@ -473,7 +482,7 @@ ${DEFAULT_MAP_CODE}
       () => setIsDarkMode((prev) => !prev),
       () => window.open('/explore', '_blank'),
       () => window.open('/users', '_blank'),
-      () => (currentUser.is_authenticated ? window.open(`/${normalizedHubUsername}`, '_blank') : navigateTo('/login')),
+      () => (currentUser.is_authenticated ? window.open(`/user/${normalizedHubUsername}`, '_blank') : navigateTo('/login')),
       () => handleNewMapClick(),
       () => (currentUser.is_authenticated ? handleLogout() : navigateTo('/login')),
     ];
@@ -487,7 +496,7 @@ ${DEFAULT_MAP_CODE}
   const artifactKey = (username, kind, name) => `${username}:${kind}:${name}`;
   const buildImportPath = (entry, versionOverride = null) => {
     const v = String(versionOverride ?? entry.selected_version ?? 'alpha');
-    return `/${entry.username}/${entry.kind}/${entry.name}/${v}`;
+    return `/${entry.kind}/${entry.name}/${v}`;
   };
 
   const serializeHubImports = (imports) => {
@@ -510,6 +519,7 @@ ${DEFAULT_MAP_CODE}
   const parseImportsCodeToItems = (raw) => {
     const items = [];
     const lines = String(raw || '').split('\n');
+    const HUB_KINDS_SET = new Set(['lib', 'map', 'css']);
     lines.forEach((line) => {
       const trimmed = line.trim();
       if (!trimmed || !trimmed.includes('xatrahub(')) return;
@@ -518,9 +528,23 @@ ${DEFAULT_MAP_CODE}
       const path = assignMatch?.[2] || callMatch?.[1];
       if (!path) return;
       const parts = path.split('/').filter(Boolean);
-      if (parts.length < 3) return;
-      const kind = parts[1];
-      const selectedVersion = parts[3] || 'alpha';
+      let kind, name, username, selectedVersion;
+      if (parts.length >= 2 && HUB_KINDS_SET.has(parts[0])) {
+        // New format: /kind/name[/version]
+        kind = parts[0];
+        name = parts[1];
+        username = null;
+        selectedVersion = parts[2] || 'alpha';
+      } else if (parts.length >= 3) {
+        // Old format: /username/kind/name[/version]
+        username = parts[0];
+        kind = parts[1];
+        name = parts[2];
+        selectedVersion = parts[3] || 'alpha';
+      } else {
+        return;
+      }
+      const canonicalPath = `/${kind}/${name}/${selectedVersion}`;
       const filterNotMatch = trimmed.match(/filter_not\s*=\s*(\[[^\]]*\])/);
       let filterNot = [];
       if (filterNotMatch?.[1]) {
@@ -533,9 +557,9 @@ ${DEFAULT_MAP_CODE}
       }
       items.push({
         kind,
-        username: parts[0],
-        name: parts[2],
-        path: `/${parts[0]}/${kind}/${parts[2]}/${selectedVersion}`,
+        username,
+        name,
+        path: canonicalPath,
         selected_version: selectedVersion,
         _draft_version: selectedVersion,
         alias: assignMatch?.[1] || '',
@@ -547,7 +571,7 @@ ${DEFAULT_MAP_CODE}
 
   const ensureDefaultIndicImport = (items) => {
     const list = Array.isArray(items) ? [...items] : [];
-    const exists = list.some((imp) => imp.kind === 'lib' && imp.username === 'srajma' && imp.name === 'indic');
+    const exists = list.some((imp) => imp.kind === 'lib' && imp.name === 'dtl');
     if (!exists) list.unshift({ ...DEFAULT_INDIC_IMPORT });
     return list;
   };
@@ -572,7 +596,7 @@ ${DEFAULT_MAP_CODE}
     }
     const owner = opts.owner || normalizedHubUsername;
     const targetName = opts.name || normalizedMapName;
-    const response = await apiFetch(`/hub/${owner}/${kind}/${targetName}/publish`, {
+    const response = await apiFetch(`/hub/${kind}/${targetName}/publish`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -617,29 +641,29 @@ ${DEFAULT_MAP_CODE}
       ensureArtifactVersions(owner, targetName, 'map', true);
       ensureArtifactVersions(owner, targetName, 'lib', true);
       ensureArtifactVersions(owner, targetName, 'css', true);
-      navigateTo(`/${owner}/map/${targetName}`);
+      navigateTo(`/${targetName}`);
       setTimeout(() => setStatusNotice(''), 5000);
     }
     return data;
   };
 
   const addHubImportLine = async (item) => {
-    if (!item || !item.username || !item.name || !item.kind) return;
-    const key = artifactKey(item.username, item.kind, item.name);
+    if (!item || !item.name || !item.kind) return;
+    const key = artifactKey(item.username || '', item.kind, item.name);
     const options = artifactVersionOptions[key] || [{ value: (item.latest_version ? String(item.latest_version) : 'alpha'), label: item.latest_version ? `v${item.latest_version}` : 'alpha' }];
     const selectedVersion = importVersionDraft[key] || (options[0]?.value || 'alpha');
-    const path = `/${item.username}/${item.kind}/${item.name}/${selectedVersion}`;
+    const path = `/${item.kind}/${item.name}/${selectedVersion}`;
     try {
-      const verifyResp = await apiFetch(`/hub/${item.username}/${item.kind}/${item.name}`);
+      const verifyResp = await apiFetch(`/hub/${item.kind}/${item.name}`);
       if (!verifyResp.ok) {
-        setError(`Cannot import ${item.kind}: /${item.username}/${item.kind}/${item.name} does not exist.`);
+        setError(`Cannot import ${item.kind}: /${item.kind}/${item.name} does not exist.`);
         return;
       }
     } catch (err) {
       setError(`Cannot import ${item.kind}: ${err.message}`);
       return;
     }
-    const exists = (hubImports || []).some((imp) => imp.username === item.username && imp.kind === item.kind && imp.name === item.name);
+    const exists = (hubImports || []).some((imp) => imp.kind === item.kind && imp.name === item.name);
     if (exists) return;
     const next = [
       ...(hubImports || []),
@@ -716,11 +740,14 @@ ${DEFAULT_MAP_CODE}
     lastAutoSavedContentRef.current = null;
     setForkedFrom(null);
     try {
-      const resp = await apiFetch(`/maps/${owner}/${name}?version=${encodeURIComponent(version || 'alpha')}`);
+      const endpoint = owner
+        ? `/maps/${owner}/${name}?version=${encodeURIComponent(version || 'alpha')}`
+        : `/maps/${name}?version=${encodeURIComponent(version || 'alpha')}`;
+      const resp = await apiFetch(endpoint);
       const data = await resp.json();
       if (!resp.ok) {
         // If the map doesn't exist yet and the user is creating their own new map, initialize with defaults
-        const isOwner = currentUser.is_authenticated && owner === currentUser?.user?.username;
+        const isOwner = currentUser.is_authenticated && (owner === null || owner === currentUser?.user?.username);
         if (resp.status === 404 && isOwner && version === 'alpha') {
           const defElements = createDefaultBuilderElements();
           const defOptions = createDefaultBuilderOptions();
@@ -768,8 +795,9 @@ ${DEFAULT_MAP_CODE}
           setPickerOptions(parsed.picker_options);
         }
       }
+      const actualOwner = data.username || owner || 'guest';
       setMapName(name);
-      setMapOwner(owner);
+      setMapOwner(actualOwner);
       setMapUserVoted(false);
       // Trigger initial render with fresh data (state updates are async, so pass data directly)
       if (parsed?.project?.elements && parsed?.project?.options) {
@@ -783,13 +811,20 @@ ${DEFAULT_MAP_CODE}
           runtimeCode: parsed.runtime_code || '',
         });
       }
-      setSourceMapRef(`/${owner}/map/${name}`);
-      const viewResp = await apiFetch(`/maps/${owner}/${name}/view`, { method: 'POST' });
+      setSourceMapRef(`/${name}`);
+      // Update URL to canonical form if loaded via old-format URL
+      if (owner) {
+        const canonicalUrl = `/${name}${version !== 'alpha' ? `/v${version}` : ''}`;
+        if (window.location.pathname !== canonicalUrl) {
+          window.history.replaceState({}, '', canonicalUrl);
+        }
+      }
+      const viewResp = await apiFetch(`/maps/${actualOwner}/${name}/view`, { method: 'POST' });
       const viewData = await viewResp.json();
       if (viewResp.ok) setMapViews(Number(viewData.views || 0));
       setMapVotes(Number(data.votes || 0));
       setMapUserVoted(!!data.viewer_voted);
-      const artifactResp = await apiFetch(`/hub/${owner}/map/${name}`);
+      const artifactResp = await apiFetch(`/hub/map/${name}`);
       const artifactData = await artifactResp.json();
       if (artifactResp.ok) {
         setMapVotes(Number(artifactData.votes || 0));
@@ -985,7 +1020,7 @@ ${DEFAULT_MAP_CODE}
     setNewMapDialogChecking(true);
     setNewMapDialogError('');
     try {
-      const resp = await apiFetch(`/hub/${normalizedHubUsername}/map/${name}`);
+      const resp = await apiFetch(`/hub/map/${name}`);
       if (resp.ok) {
         setNewMapDialogError(`Map '${name}' already exists. Choose a different name.`);
         return;
@@ -996,7 +1031,7 @@ ${DEFAULT_MAP_CODE}
       }
       setNewMapDialogOpen(false);
       applyNewMapDefaults({ name, owner: normalizedHubUsername });
-      navigateTo(`/${normalizedHubUsername}/map/${name}`);
+      navigateTo(`/${name}`);
     } catch (err) {
       setNewMapDialogError(err.message || 'Failed to validate map name');
     } finally {
@@ -1018,7 +1053,7 @@ ${DEFAULT_MAP_CODE}
       if (!resp.ok) throw new Error(data.detail || 'Failed to save map');
       setPromoteDraftDialogOpen(false);
       setUserDraftMeta({ exists: false });
-      navigateTo(`/${normalizedHubUsername}/map/${promoteDraftName}`);
+      navigateTo(`/${promoteDraftName}`);
     } catch (err) {
       setPromoteDraftError(err.message);
     } finally {
@@ -1050,13 +1085,13 @@ ${DEFAULT_MAP_CODE}
     if (route.page === 'profile') loadProfile(route.username, profilePage, profileSearch);
     // Reset editor init key when leaving editor so re-entry always reloads draft
     if (route.page !== 'editor') { editorInitKeyRef.current = ''; return; }
-    if (route.page === 'editor' && route.owner && route.map) {
+    if (route.page === 'editor' && route.map) {
       editorInitKeyRef.current = '';
-      setMapOwner(route.owner);
-      loadMapFromHub(route.owner, route.map, route.version || 'alpha');
+      if (route.owner) setMapOwner(route.owner);
+      loadMapFromHub(route.owner || null, route.map, route.version || 'alpha');
       return;
     }
-    if (route.page === 'editor' && !route.owner) {
+    if (route.page === 'editor' && !route.map) {
       if (!authReady) return;
       // Logged-in users never edit a draft — redirect to explore
       if (currentUser.is_authenticated) {
@@ -1125,9 +1160,9 @@ ${DEFAULT_MAP_CODE}
   };
 
   const handleVoteMap = async () => {
-    if (!route.owner || !route.map) return;
+    if (!mapOwner || !route.map) return;
     try {
-      const resp = await apiFetch(`/maps/${route.owner}/${route.map}/vote`, { method: 'POST' });
+      const resp = await apiFetch(`/maps/${mapOwner}/${route.map}/vote`, { method: 'POST' });
       const data = await resp.json();
       if (!resp.ok) throw new Error(data.detail || 'Vote failed');
       setMapVotes(Number(data.votes || 0));
@@ -2027,7 +2062,7 @@ ${DEFAULT_MAP_CODE}
       // (i.e. route.map is set — an existing map was loaded — but mapName was changed to something different)
       const isRename = !!(route.map && route.map !== normalizedMapName);
       if (isRename) {
-        const check = await apiFetch(`/hub/${normalizedHubUsername}/map/${normalizedMapName}`);
+        const check = await apiFetch(`/hub/map/${normalizedMapName}`);
         if (check.ok) {
           setAutoSaveStatus('conflict');
           return;
@@ -2059,7 +2094,7 @@ ${DEFAULT_MAP_CODE}
       setTimeout(() => setAutoSaveStatus((s) => s === 'saved' ? 'idle' : s), 3000);
       // After a successful rename, update the URL to reflect the new map name
       if (isRename) {
-        navigateTo(`/${normalizedHubUsername}/map/${normalizedMapName}`);
+        navigateTo(`/${normalizedMapName}`);
       }
     } catch {
       setAutoSaveStatus('unsaved');
@@ -2078,11 +2113,11 @@ ${DEFAULT_MAP_CODE}
         return;
       }
       let targetName = normalizedMapName;
-      const check = await apiFetch(`/hub/${normalizedHubUsername}/map/${targetName}`);
+      const check = await apiFetch(`/hub/map/${targetName}`);
       const exists = check.ok;
-      const isSameCurrent = !!(route.owner === normalizedHubUsername && route.map === targetName);
+      const isSameCurrent = !!(mapOwner === normalizedHubUsername && route.map === targetName);
       if (exists && !isSameCurrent) {
-        setError(`Map name '${targetName}' already exists in your account. Choose a different name.`);
+        setError(`Map name '${targetName}' already exists. Choose a different name.`);
         return;
       }
       const content = await buildMapArtifactContent();
@@ -2097,7 +2132,7 @@ ${DEFAULT_MAP_CODE}
       navigateTo('/login');
       return;
     }
-    const forkSourceOwner = route.owner;
+    const forkSourceOwner = mapOwner;
     const forkSourceMap = route.map;
     try {
       const base = normalizedMapName || 'new_map';
@@ -2123,13 +2158,13 @@ ${DEFAULT_MAP_CODE}
     if (nameInput !== name) return;
     setDisassociateConfirm((p) => ({ ...p, loading: true, error: null }));
     try {
-      const resp = await apiFetch(`/hub/${normalizedHubUsername}/${kind}/${name}/disassociate`, { method: 'POST' });
+      const resp = await apiFetch(`/hub/${kind}/${name}/disassociate`, { method: 'POST' });
       const data = await resp.json();
       if (!resp.ok) throw new Error(data?.detail || 'Disassociation failed');
       setDisassociateConfirm({ open: false, kind: 'map', name: '', nameInput: '', loading: false, error: null });
       // Navigate to profile and reload map list (navigateTo is a no-op if already on profile page,
       // so always call loadProfile explicitly to ensure the map disappears from the grid)
-      navigateTo(`/${normalizedHubUsername}`);
+      navigateTo(`/user/${normalizedHubUsername}`);
       loadProfile(normalizedHubUsername, profilePage, profileSearch);
     } catch (err) {
       setDisassociateConfirm((p) => ({ ...p, loading: false, error: err.message }));
@@ -2137,10 +2172,10 @@ ${DEFAULT_MAP_CODE}
   };
 
   const handleMapVersionSelect = (version) => {
-    if (!route.owner || !route.map) return;
+    if (!route.map) return;
     setMapVersionLabel(String(version || 'alpha'));
     const next = String(version || 'alpha');
-    navigateTo(`/${route.owner}/map/${route.map}/${next === 'alpha' ? 'alpha' : `v${next}`}`);
+    navigateTo(`/${route.map}/${next === 'alpha' ? 'alpha' : `v${next}`}`);
   };
 
   const handleLibraryVersionSelect = async (version) => {
@@ -2159,7 +2194,7 @@ ${DEFAULT_MAP_CODE}
       localPredefinedAlphaRef.current = predefinedCode;
     }
     setSelectedLibraryVersion(v);
-    if (!route.owner || !route.map || !mapOwner || !normalizedMapName) return;
+    if (!route.map || !mapOwner || !normalizedMapName) return;
     try {
       const resp = await apiFetch(`/hub/${mapOwner}/lib/${normalizedMapName}/${v}`);
       const data = await resp.json();
@@ -2193,7 +2228,7 @@ ${DEFAULT_MAP_CODE}
       localThemeAlphaRef.current = themeCode;
     }
     setSelectedThemeVersion(v);
-    if (!route.owner || !route.map || !mapOwner || !normalizedMapName) return;
+    if (!route.map || !mapOwner || !normalizedMapName) return;
     try {
       const resp = await apiFetch(`/hub/${mapOwner}/css/${normalizedMapName}/${v}`);
       const data = await resp.json();
@@ -2705,7 +2740,7 @@ ${DEFAULT_MAP_CODE}
   // for root/new-map, the route effect handles rendering after draft load or defaults.
   useEffect(() => {
     if (!editorContextReady) return;
-    if (!route.owner) return; // root/new-map: handled by route effect
+    if (!route.map) return; // root/new-map: handled by route effect
     // Hub map without explicit map name (shouldn't happen per parsePath, but guard anyway)
     if (!route.map) renderMap();
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2799,7 +2834,7 @@ ${DEFAULT_MAP_CODE}
   const renderExploreCatalogCard = (item) => (
     <a
       key={`${item.username}-${item.name}`}
-      href={`/${item.username}/map/${item.name}`}
+      href={item.slug || `/${item.name}`}
       className={`block rounded-xl border overflow-hidden shadow-sm hover:shadow-md transition-shadow group ${isDarkMode ? 'bg-slate-800 border-slate-700 hover:border-slate-600' : 'bg-white border-gray-200 hover:border-gray-300'}`}
     >
       <img src={item.thumbnail || '/vite.svg'} alt="" className={`w-full h-28 object-cover ${isDarkMode ? 'bg-slate-700' : 'bg-gray-100'}`} />
@@ -2864,9 +2899,9 @@ ${DEFAULT_MAP_CODE}
       >
         <img src={item.thumbnail || '/vite.svg'} alt="" className="w-full h-20 object-cover bg-gray-100 rounded-t" />
         <div className="p-2">
-          <a href={`/${item.username}/map/${item.name}`} target="_blank" rel="noreferrer" className="font-mono text-[11px] text-blue-700 hover:underline">{item.name}</a>
+          <a href={item.slug || `/${item.name}`} target="_blank" rel="noreferrer" className="font-mono text-[11px] text-blue-700 hover:underline">{item.name}</a>
           <div className="text-[10px] text-gray-500 truncate">
-            by <a href={`/${item.username}`} target="_blank" rel="noreferrer" className="text-blue-700 hover:underline">{item.username}</a> · {item.votes || 0} votes · {item.views || 0} views
+            by <a href={`/user/${item.username}`} target="_blank" rel="noreferrer" className="text-blue-700 hover:underline">{item.username}</a> · {item.votes || 0} votes · {item.views || 0} views
           </div>
           <div className="mt-2 space-y-1 border rounded border-gray-200 bg-gray-50 p-1.5">
             <div className="text-[10px] font-semibold text-gray-700 px-0.5">Import actions</div>
@@ -3001,7 +3036,7 @@ ${DEFAULT_MAP_CODE}
       {currentUser.is_authenticated ? (
         <>
           <a
-            href={`/${normalizedHubUsername}`}
+            href={`/user/${normalizedHubUsername}`}
             className={`px-2 py-1 text-xs rounded font-mono ${isDarkMode ? 'text-slate-300 hover:bg-slate-800' : 'text-gray-700 hover:bg-gray-100'}`}
             title="My profile"
           >{normalizedHubUsername}</a>
@@ -3029,7 +3064,7 @@ ${DEFAULT_MAP_CODE}
       <nav className="px-2 py-3 flex-1 space-y-0.5">
         <button className={`w-full text-left px-3 py-2 rounded-lg text-sm inline-flex items-center gap-2.5 transition-colors ${activePage === 'explore' ? (isDarkMode ? 'bg-slate-800 text-white font-medium' : 'bg-blue-50 text-blue-700 font-medium') : (isDarkMode ? 'text-slate-300 hover:bg-slate-800 hover:text-white' : 'text-gray-600 hover:bg-gray-100')}`} onClick={() => navigateTo('/explore')}><Search size={14}/> Explore</button>
         <button className={`w-full text-left px-3 py-2 rounded-lg text-sm inline-flex items-center gap-2.5 transition-colors ${activePage === 'users' ? (isDarkMode ? 'bg-slate-800 text-white font-medium' : 'bg-blue-50 text-blue-700 font-medium') : (isDarkMode ? 'text-slate-300 hover:bg-slate-800 hover:text-white' : 'text-gray-600 hover:bg-gray-100')}`} onClick={() => navigateTo('/explore')}><Users size={14}/> Users</button>
-        <button className={`w-full text-left px-3 py-2 rounded-lg text-sm inline-flex items-center gap-2.5 transition-colors ${activePage === 'profile' ? (isDarkMode ? 'bg-slate-800 text-white font-medium' : 'bg-blue-50 text-blue-700 font-medium') : (isDarkMode ? 'text-slate-300 hover:bg-slate-800 hover:text-white' : 'text-gray-600 hover:bg-gray-100')}`} onClick={() => (currentUser.is_authenticated ? navigateTo(`/${normalizedHubUsername}`) : navigateTo('/login'))}><User size={14}/> {currentUser.is_authenticated ? normalizedHubUsername : 'My Profile'}</button>
+        <button className={`w-full text-left px-3 py-2 rounded-lg text-sm inline-flex items-center gap-2.5 transition-colors ${activePage === 'profile' ? (isDarkMode ? 'bg-slate-800 text-white font-medium' : 'bg-blue-50 text-blue-700 font-medium') : (isDarkMode ? 'text-slate-300 hover:bg-slate-800 hover:text-white' : 'text-gray-600 hover:bg-gray-100')}`} onClick={() => (currentUser.is_authenticated ? navigateTo(`/user/${normalizedHubUsername}`) : navigateTo('/login'))}><User size={14}/> {currentUser.is_authenticated ? normalizedHubUsername : 'My Profile'}</button>
         <button className={`w-full text-left px-3 py-2 rounded-lg text-sm inline-flex items-center gap-2.5 transition-colors ${isDarkMode ? 'text-slate-300 hover:bg-slate-800 hover:text-white' : 'text-gray-600 hover:bg-gray-100'}`} onClick={handleNewMapClick}><FilePlus2 size={14}/> New map…</button>
       </nav>
       <div className={`px-2 pb-3 pt-2 border-t space-y-0.5 ${isDarkMode ? 'border-slate-700' : 'border-gray-100'}`}>
@@ -3253,7 +3288,7 @@ ${DEFAULT_MAP_CODE}
                   {(profileData?.maps || []).slice(0, 5).map((item) => (
                     <a
                       key={item.name}
-                      href={`/${normalizedHubUsername}/map/${item.name}`}
+                      href={item.slug || `/${item.name}`}
                       className={`flex-shrink-0 min-w-[130px] h-28 rounded-xl border overflow-hidden shadow-sm hover:shadow-md transition-shadow group ${isDarkMode ? 'bg-slate-800 border-slate-700 hover:border-slate-600' : 'bg-white border-gray-200 hover:border-gray-300'}`}
                     >
                       <img src={item.thumbnail || '/vite.svg'} alt="" className={`w-full h-16 object-cover ${isDarkMode ? 'bg-slate-700' : 'bg-gray-100'}`} />
@@ -3265,7 +3300,7 @@ ${DEFAULT_MAP_CODE}
                   {/* More → link */}
                   {(profileData?.total || 0) > 5 && (
                     <a
-                      href={`/${normalizedHubUsername}`}
+                      href={`/user/${normalizedHubUsername}`}
                       className={`flex-shrink-0 min-w-[80px] h-28 rounded-xl border flex items-center justify-center text-xs font-medium transition-colors ${isDarkMode ? 'bg-slate-800 border-slate-700 text-slate-400 hover:text-blue-400 hover:border-blue-500' : 'bg-white border-gray-200 text-gray-400 hover:text-blue-600 hover:border-blue-400'}`}
                     >
                       More →
@@ -3298,7 +3333,7 @@ ${DEFAULT_MAP_CODE}
             </div>
             <div className="space-y-1.5">
               {(usersData.items || []).map((u) => (
-                <a key={u.username} href={`/${u.username}`} className={`block rounded-lg border px-3 py-2 hover:shadow-sm transition-shadow ${isDarkMode ? 'bg-slate-800 border-slate-700 hover:border-slate-600' : 'bg-gray-50 border-gray-200 hover:border-gray-300 hover:bg-white'}`}>
+                <a key={u.username} href={`/user/${u.username}`} className={`block rounded-lg border px-3 py-2 hover:shadow-sm transition-shadow ${isDarkMode ? 'bg-slate-800 border-slate-700 hover:border-slate-600' : 'bg-gray-50 border-gray-200 hover:border-gray-300 hover:bg-white'}`}>
                   <div className={`font-mono text-xs font-medium ${isDarkMode ? 'text-blue-400' : 'text-blue-700'}`}>{u.username}</div>
                   {u.full_name && <div className={`text-[11px] mt-0.5 truncate ${isDarkMode ? 'text-slate-300' : 'text-gray-600'}`}>{u.full_name}</div>}
                   <div className={`text-[10px] mt-1 ${isDarkMode ? 'text-slate-500' : 'text-gray-400'}`}>{u.maps_count || 0} maps</div>
@@ -3506,15 +3541,15 @@ ${DEFAULT_MAP_CODE}
             <>
               <div className="text-xs text-gray-600 flex items-center gap-2">
                 <span>by</span>
-                <a href={`/${mapOwner}`} className="text-blue-700 hover:underline">{mapOwner}</a>
+                <a href={`/user/${mapOwner}`} className="text-blue-700 hover:underline">{mapOwner}</a>
                 <span>·</span>
                 <button
                   onClick={isMapAuthor ? undefined : handleVoteMap}
-                  disabled={!(route.owner && route.map) || isMapAuthor}
+                  disabled={!route.map || isMapAuthor}
                   className={`inline-flex items-center gap-1 px-2 py-0.5 rounded border transition-colors ${
                     isMapAuthor
                       ? 'cursor-default border-blue-600 bg-blue-600 text-white'
-                      : !(route.owner && route.map)
+                      : !route.map
                         ? 'opacity-40'
                         : hasLikedMap
                           ? 'border-blue-600 bg-blue-600 text-white hover:bg-blue-700'

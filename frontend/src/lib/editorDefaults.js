@@ -1,15 +1,15 @@
 export const DEFAULT_INDIC_IMPORT = {
   kind: 'lib',
-  username: 'srajma',
-  name: 'indic',
-  path: '/srajma/lib/indic/alpha',
+  username: null,
+  name: 'dtl',
+  path: '/lib/dtl/alpha',
   selected_version: 'alpha',
   _draft_version: 'alpha',
   alias: 'indic',
   filter_not: [],
 };
 
-export const DEFAULT_INDIC_IMPORT_CODE = 'indic = xatrahub("/srajma/lib/indic/alpha")\n';
+export const DEFAULT_INDIC_IMPORT_CODE = 'indic = xatrahub("/lib/dtl/alpha")\n';
 
 export const createDefaultBuilderOptions = () => ({
   basemaps: [{ url_or_provider: 'Esri.WorldTopoMap', default: true }],

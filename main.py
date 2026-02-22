@@ -87,6 +87,9 @@ HUB_RESERVED_USERNAMES = {
     "new-map",
     "new_map",
     "map",
+    "lib",
+    "css",
+    "user",
     "hub",
     "auth",
     "registry",
@@ -305,6 +308,12 @@ def _init_hub_db():
             CREATE INDEX IF NOT EXISTS idx_hub_views_artifact ON hub_map_views(artifact_id);
             """
         )
+        # Schema migration: move from UNIQUE(user_id, kind, name) to UNIQUE(kind, name).
+        schema_row = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type='table' AND name='hub_artifacts'"
+        ).fetchone()
+        if schema_row and 'UNIQUE(kind, name)' not in (schema_row['sql'] or ''):
+            _migrate_to_global_names(conn)
         # Lightweight migration for existing DBs.
         existing_cols = {
             row["name"]
@@ -338,24 +347,23 @@ def _init_hub_db():
             territory_seed = _territory_library_seed_code()
             seed_content = json.dumps({
                 "predefined_code": territory_seed or "from xatra.territory_library import *\n",
-                "map_name": "indic",
-                "description": "Default Indic territory library",
+                "map_name": "dtl",
+                "description": "Default territory library",
             })
             conn.execute(
                 """
                 INSERT OR IGNORE INTO hub_artifacts(user_id, kind, name, alpha_content, alpha_metadata, created_at, updated_at)
-                VALUES(?, 'lib', 'indic', ?, ?, ?, ?)
+                VALUES(?, 'lib', 'dtl', ?, ?, ?, ?)
                 """,
-                (user_row["id"], seed_content, json.dumps({"description": "Default Indic territory library"}), now, now),
+                (user_row["id"], seed_content, json.dumps({"description": "Default territory library"}), now, now),
             )
-            # Migration: normalize /srajma/lib/indic if it still has placeholder/import-only content.
+            # Refresh lib 'dtl' if it still has placeholder/import-only content.
             existing_lib = conn.execute(
                 """
                 SELECT id, alpha_content, alpha_metadata
                 FROM hub_artifacts
-                WHERE user_id = ? AND kind = 'lib' AND name = 'indic'
+                WHERE kind = 'lib' AND name = 'dtl'
                 """,
-                (user_row["id"],),
             ).fetchone()
             if existing_lib is not None and territory_seed.strip():
                 try:
@@ -363,22 +371,22 @@ def _init_hub_db():
                     old_pre = str(parsed_lib.get("predefined_code") or "")
                     meta = _json_parse(existing_lib["alpha_metadata"], {})
                     placeholderish = (
-                        ('xatrahub("/srajma/lib/indic"' in old_pre)
+                        ('xatrahub(' in old_pre)
                         or old_pre.strip() in {"", "from xatra.territory_library import *"}
-                        or str(meta.get("description", "")) == "Default Indic territory library"
+                        or str(meta.get("description", "")) in ("Default Indic territory library", "Default territory library")
                     )
                     if placeholderish:
                         parsed_lib["predefined_code"] = territory_seed
-                        parsed_lib["map_name"] = "indic"
+                        parsed_lib["map_name"] = "dtl"
                         conn.execute(
                             "UPDATE hub_artifacts SET alpha_content = ?, updated_at = ? WHERE id = ?",
                             (json.dumps(parsed_lib, ensure_ascii=False), now, existing_lib["id"]),
                         )
                 except Exception:
                     pass
-            # Seed default public map /srajma/map/indic if missing.
+            # Seed default public map 'indic' if missing (uses new /lib/dtl/alpha import path).
             map_seed_content = json.dumps({
-                "imports_code": 'indic = xatrahub("/srajma/lib/indic/alpha")\n',
+                "imports_code": 'indic = xatrahub("/lib/dtl/alpha")\n',
                 "theme_code": "",
                 "predefined_code": territory_seed,
                 "map_code": 'import xatra\nxatra.TitleBox("<b>Indic Map</b>")\n',
@@ -392,7 +400,7 @@ def _init_hub_db():
                         "data_colormap": {"type": "LinearSegmented", "colors": "yellow,orange,red"},
                     },
                     "predefinedCode": territory_seed,
-                    "importsCode": 'indic = xatrahub("/srajma/lib/indic/alpha")\n',
+                    "importsCode": 'indic = xatrahub("/lib/dtl/alpha")\n',
                     "themeCode": "",
                     "runtimeCode": "",
                 },
@@ -404,24 +412,16 @@ def _init_hub_db():
                 """,
                 (user_row["id"], map_seed_content, json.dumps({}), now, now),
             )
-            # Migration: if existing indic map is still the default seed with empty predefined_code,
-            # refresh it with territory_library body (imports removed).
+            # Refresh indic map predefined_code if it was left empty.
             existing_map = conn.execute(
-                """
-                SELECT id, alpha_content, alpha_metadata
-                FROM hub_artifacts
-                WHERE user_id = ? AND kind = 'map' AND name = 'indic'
-                """,
-                (user_row["id"],),
+                "SELECT id, alpha_content FROM hub_artifacts WHERE kind = 'map' AND name = 'indic'"
             ).fetchone()
             if existing_map is not None:
                 try:
                     parsed = _json_parse(existing_map["alpha_content"], {})
                     old_pre = str(parsed.get("predefined_code") or "")
                     old_project_pre = str((parsed.get("project") or {}).get("predefinedCode") or "")
-                    defaultish = (
-                        (not old_pre.strip() and not old_project_pre.strip())
-                    )
+                    defaultish = (not old_pre.strip() and not old_project_pre.strip())
                     if defaultish and territory_seed.strip():
                         parsed["predefined_code"] = territory_seed
                         project = parsed.get("project")
@@ -521,6 +521,155 @@ def _hub_get_artifact(conn: sqlite3.Connection, username: str, kind: str, name: 
     ).fetchone()
 
 
+def _hub_get_artifact_by_name(conn: sqlite3.Connection, kind: str, name: str) -> Optional[sqlite3.Row]:
+    """Look up artifact by kind+name only (globally unique after migration)."""
+    kind = _normalize_hub_kind(kind)
+    name = _normalize_hub_name(name)
+    return conn.execute(
+        """
+        SELECT
+            a.id, a.user_id, a.kind, a.name, a.alpha_content, a.alpha_metadata, a.created_at, a.updated_at,
+            u.username
+        FROM hub_artifacts a
+        JOIN hub_users u ON u.id = a.user_id
+        WHERE a.kind = ? AND a.name = ?
+        """,
+        (kind, name),
+    ).fetchone()
+
+
+def _update_xatrahub_paths_in_code(text: str, rename_map: Dict[tuple, str]) -> str:
+    """Replace old /username/kind/name[/version] xatrahub paths with new /kind/name[/version] format."""
+    if not text:
+        return text or ""
+    pattern = re.compile(r'(xatrahub\s*\(\s*["\'])(/[^"\']+)(["\'])')
+    def sub(m):
+        path = m.group(2).strip()
+        parts = [p for p in path.split('/') if p]
+        if len(parts) < 3:
+            return m.group(0)
+        username = parts[0].lower()
+        kind = parts[1].lower()
+        old_name = parts[2]
+        version = parts[3] if len(parts) > 3 else None
+        key = (username, kind, old_name)
+        if key not in rename_map:
+            return m.group(0)
+        new_name = rename_map[key]
+        version_part = f'/{version}' if version else ''
+        return f'{m.group(1)}/{kind}/{new_name}{version_part}{m.group(3)}'
+    return pattern.sub(sub, text)
+
+
+def _update_content_paths(content: str, rename_map: Dict[tuple, str]) -> str:
+    """Update xatrahub paths in artifact content JSON."""
+    if not content:
+        return content or ""
+    try:
+        parsed = json.loads(content)
+    except Exception:
+        return _update_xatrahub_paths_in_code(content, rename_map)
+    modified = False
+    for key in ('imports_code', 'map_code', 'predefined_code', 'runtime_code', 'theme_code'):
+        if isinstance(parsed.get(key), str):
+            nv = _update_xatrahub_paths_in_code(parsed[key], rename_map)
+            if nv != parsed[key]:
+                parsed[key] = nv
+                modified = True
+    project = parsed.get('project')
+    if isinstance(project, dict):
+        for key in ('importsCode', 'predefinedCode', 'themeCode', 'runtimeCode'):
+            if isinstance(project.get(key), str):
+                nv = _update_xatrahub_paths_in_code(project[key], rename_map)
+                if nv != project[key]:
+                    project[key] = nv
+                    modified = True
+    if modified:
+        return json.dumps(parsed, ensure_ascii=False)
+    return content
+
+
+def _migrate_to_global_names(conn: sqlite3.Connection) -> None:
+    """Migrate hub_artifacts from UNIQUE(user_id, kind, name) to UNIQUE(kind, name).
+    - indic lib (admin) → 'dtl'
+    - all others → str(artifact_id)
+    - Update all xatrahub path references in content/drafts
+    - Recreate hub_artifacts table with new constraint
+    """
+    rows = conn.execute(
+        "SELECT a.id, a.kind, a.name, u.username FROM hub_artifacts a JOIN hub_users u ON u.id = a.user_id"
+    ).fetchall()
+    # Build rename maps
+    id_to_new: Dict[int, str] = {}
+    rename_map: Dict[tuple, str] = {}  # (username, kind, old_name) -> new_name
+    for row in rows:
+        if (str(row['username']).lower() == ADMIN_USERNAME.lower()
+                and row['kind'] == 'lib'
+                and row['name'] == 'indic'):
+            new_name = 'dtl'
+        else:
+            new_name = str(int(row['id']))
+        id_to_new[int(row['id'])] = new_name
+        rename_map[(str(row['username']).lower(), row['kind'], row['name'])] = new_name
+
+    # Create new table with UNIQUE(kind, name)
+    conn.execute("""
+        CREATE TABLE hub_artifacts_new (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL REFERENCES hub_users(id) ON DELETE CASCADE,
+            kind TEXT NOT NULL,
+            name TEXT NOT NULL,
+            alpha_content TEXT NOT NULL DEFAULT '',
+            alpha_metadata TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(kind, name)
+        )
+    """)
+    # Insert with new names and updated content
+    all_arts = conn.execute("SELECT * FROM hub_artifacts").fetchall()
+    for art in all_arts:
+        new_name = id_to_new[int(art['id'])]
+        new_content = _update_content_paths(art['alpha_content'], rename_map)
+        conn.execute(
+            "INSERT INTO hub_artifacts_new(id, user_id, kind, name, alpha_content, alpha_metadata, created_at, updated_at)"
+            " VALUES(?, ?, ?, ?, ?, ?, ?, ?)",
+            (art['id'], art['user_id'], art['kind'], new_name, new_content, art['alpha_metadata'], art['created_at'], art['updated_at'])
+        )
+    # Update version content
+    for ver in conn.execute("SELECT id, content FROM hub_artifact_versions").fetchall():
+        if ver['content']:
+            new_content = _update_content_paths(ver['content'], rename_map)
+            if new_content != ver['content']:
+                conn.execute("UPDATE hub_artifact_versions SET content = ? WHERE id = ?", (new_content, ver['id']))
+    # Update drafts
+    for draft in conn.execute("SELECT id, project_json FROM hub_drafts").fetchall():
+        if draft['project_json']:
+            try:
+                parsed = json.loads(draft['project_json'])
+            except Exception:
+                continue
+            modified = False
+            project = parsed.get('project')
+            if isinstance(project, dict):
+                for key in ('importsCode', 'predefinedCode', 'themeCode', 'runtimeCode', 'code'):
+                    if isinstance(project.get(key), str):
+                        nv = _update_xatrahub_paths_in_code(project[key], rename_map)
+                        if nv != project[key]:
+                            project[key] = nv
+                            modified = True
+            if modified:
+                conn.execute("UPDATE hub_drafts SET project_json = ? WHERE id = ?",
+                             (json.dumps(parsed, ensure_ascii=False), draft['id']))
+    # Swap tables
+    conn.execute("DROP TABLE hub_artifacts")
+    conn.execute("ALTER TABLE hub_artifacts_new RENAME TO hub_artifacts")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_hub_artifacts_lookup ON hub_artifacts(user_id, kind, name)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_hub_artifacts_kind_name ON hub_artifacts(kind, name)")
+    conn.execute("PRAGMA foreign_keys = ON")
+    print(f"[xatra] Migrated hub_artifacts to globally-unique names (UNIQUE(kind, name)); renamed {len(id_to_new)} artifacts.")
+
+
 def _ensure_owner_vote(conn: sqlite3.Connection, artifact_id: int, owner_user_id: int) -> None:
     """Ensure map owner has a canonical upvote on their own map."""
     conn.execute(
@@ -559,6 +708,12 @@ def _hub_upsert_alpha(
     user = _hub_ensure_user(conn, username)
     now = _utc_now_iso()
     metadata_json = _json_text(_sanitize_artifact_metadata(kind, metadata))
+    # Check for global name conflict (names are globally unique per kind after migration)
+    existing_global = conn.execute(
+        "SELECT id, user_id FROM hub_artifacts WHERE kind = ? AND name = ?", (kind, name)
+    ).fetchone()
+    if existing_global and int(existing_global['user_id']) != int(user['id']):
+        raise HTTPException(status_code=409, detail="A map with this name already exists")
     conn.execute(
         """
         INSERT OR IGNORE INTO hub_artifacts(
@@ -571,9 +726,9 @@ def _hub_upsert_alpha(
         """
         UPDATE hub_artifacts
         SET alpha_content = ?, alpha_metadata = ?, updated_at = ?
-        WHERE user_id = ? AND kind = ? AND name = ?
+        WHERE kind = ? AND name = ?
         """,
-        (content or "", metadata_json, now, user["id"], kind, name),
+        (content or "", metadata_json, now, kind, name),
     )
     row = _hub_get_artifact(conn, username, kind, name)
     if row is None:
@@ -927,7 +1082,7 @@ def _hub_artifact_response(conn: sqlite3.Connection, artifact: sqlite3.Row, requ
         "username": artifact["username"],
         "kind": _hub_kind_label(artifact["kind"]),
         "name": artifact["name"],
-        "slug": f'/{artifact["username"]}/{_hub_kind_label(artifact["kind"])}/{artifact["name"]}',
+        "slug": f'/{_hub_kind_label(artifact["kind"])}/{artifact["name"]}',
         "alpha": {
             "version": "alpha",
             "content": artifact["alpha_content"] or "",
@@ -1044,18 +1199,10 @@ def _request_actor_username(conn: sqlite3.Connection, request: Request, response
     return GUEST_USERNAME
 
 
-def _next_available_map_name(conn: sqlite3.Connection, username: str, base_name: str = "new_map") -> str:
-    username = _normalize_hub_user(username, allow_reserved=True)
+def _next_available_map_name(conn: sqlite3.Connection, username: str = "", base_name: str = "new_map") -> str:
+    # Names are globally unique per kind now; check across all users.
     base = _normalize_hub_name(base_name)
-    existing_rows = conn.execute(
-        """
-        SELECT a.name
-        FROM hub_artifacts a
-        JOIN hub_users u ON u.id = a.user_id
-        WHERE u.username = ? AND a.kind = 'map'
-        """,
-        (username,),
-    ).fetchall()
+    existing_rows = conn.execute("SELECT name FROM hub_artifacts WHERE kind = 'map'").fetchall()
     existing = {row["name"] for row in existing_rows}
     if base not in existing:
         return base
@@ -2076,6 +2223,22 @@ def maps_resolve_name(request: Request, base: str = "new_map"):
         conn.close()
 
 
+@app.get("/maps/{name}")
+def maps_get_by_name(name: str, version: str = "alpha", http_request: Request = None):
+    """Load a map by name only (no username required; globally unique)."""
+    conn = _hub_db_conn()
+    try:
+        artifact = _hub_get_artifact_by_name(conn, "map", name)
+        if artifact is None:
+            raise HTTPException(status_code=404, detail="Map not found")
+        return hub_get_artifact_version(
+            username=artifact['username'], kind="map", name=name,
+            version=version, http_request=http_request
+        )
+    finally:
+        conn.close()
+
+
 @app.get("/maps/{username}/{map_name}")
 def maps_get(username: str, map_name: str, version: str = "alpha", http_request: Request = None):
     return hub_get_artifact_version(username=username, kind="map", name=map_name, version=version, http_request=http_request)
@@ -2191,7 +2354,7 @@ def maps_explore(
             items.append({
                 "username": row["username"],
                 "name": row["name"],
-                "slug": f"/{row['username']}/map/{row['name']}",
+                "slug": f"/{row['name']}",
                 "forked_from": meta.get("forked_from"),
                 "votes": _map_vote_count(conn, row["id"]),
                 "views": _map_view_count(conn, row["id"]),
@@ -2279,7 +2442,7 @@ def user_profile(username: str, q: Optional[str] = None, page: int = 1, per_page
             meta = _json_parse(row["alpha_metadata"], {})
             maps.append({
                 "name": row["name"],
-                "slug": f"/{uname}/map/{row['name']}",
+                "slug": f"/{row['name']}",
                 "votes": _map_vote_count(conn, row["id"]),
                 "views": _map_view_count(conn, row["id"]),
                 "updated_at": row["updated_at"],
@@ -2288,6 +2451,12 @@ def user_profile(username: str, q: Optional[str] = None, page: int = 1, per_page
         return {"profile": profile, "maps": maps, "page": safe_page, "per_page": safe_per_page, "total": int(total or 0)}
     finally:
         conn.close()
+
+
+@app.get("/user/{username}")
+def user_profile_by_prefix(username: str, q: Optional[str] = None, page: int = 1, per_page: int = 10):
+    """User profile accessible at /user/{username} (new canonical URL)."""
+    return user_profile(username=username, q=q, page=page, per_page=per_page)
 
 
 @app.put("/draft/current")
@@ -2371,7 +2540,7 @@ def draft_promote(body: DraftPromoteRequest, request: Request):
         row = conn.execute("SELECT project_json FROM hub_drafts WHERE owner_key = ?", (owner_key,)).fetchone()
         if row is None:
             raise HTTPException(status_code=404, detail="No draft found")
-        existing = _hub_get_artifact(conn, username, "map", name)
+        existing = _hub_get_artifact_by_name(conn, "map", name)
         if existing is not None:
             raise HTTPException(status_code=409, detail="Map already exists")
         draft = _json_parse(row["project_json"], {})
@@ -2397,7 +2566,161 @@ def draft_promote(body: DraftPromoteRequest, request: Request):
         _hub_upsert_alpha(conn, username, "map", name, content, metadata)
         conn.execute("DELETE FROM hub_drafts WHERE owner_key = ?", (owner_key,))
         conn.commit()
-        return {"ok": True, "url": f"/{username}/map/{name}"}
+        return {"ok": True, "url": f"/{name}"}
+    finally:
+        conn.close()
+
+
+@app.post("/hub/map/create")
+def hub_create_map(http_request: Request):
+    """Pre-create a new map artifact with an auto-assigned numeric ID as name."""
+    conn = _hub_db_conn()
+    try:
+        user = _request_user(conn, http_request)
+        if user is None:
+            raise HTTPException(status_code=401, detail="Login required")
+        now = _utc_now_iso()
+        user_row = _hub_ensure_user(conn, user['username'])
+        placeholder = f"_new_{secrets.token_hex(8)}"
+        conn.execute(
+            "INSERT INTO hub_artifacts(user_id, kind, name, alpha_content, alpha_metadata, created_at, updated_at)"
+            " VALUES(?, 'map', ?, '', '{}', ?, ?)",
+            (user_row['id'], placeholder, now, now)
+        )
+        artifact_id = conn.execute("SELECT last_insert_rowid() AS id").fetchone()['id']
+        id_name = str(artifact_id)
+        conn.execute("UPDATE hub_artifacts SET name = ? WHERE id = ?", (id_name, artifact_id))
+        _ensure_owner_vote(conn, artifact_id, user_row['id'])
+        conn.commit()
+        return {"username": user['username'], "name": id_name, "id": artifact_id}
+    finally:
+        conn.close()
+
+
+@app.put("/hub/{kind}/{name}/alpha")
+def hub_save_alpha_by_name(kind: str, name: str, request: HubArtifactWriteRequest, http_request: Request, response: Response):
+    """Save alpha by kind+name (no username required; globally unique)."""
+    if kind not in HUB_KINDS:
+        raise HTTPException(status_code=404, detail="Not found")
+    conn = _hub_db_conn()
+    try:
+        artifact = _hub_get_artifact_by_name(conn, kind, name)
+        if artifact is None:
+            raise HTTPException(status_code=404, detail="Artifact not found")
+        _require_write_identity(conn, http_request, artifact['username'])
+        content = request.content or ""
+        if len(content.encode("utf-8")) > MAX_ARTIFACT_BYTES:
+            raise HTTPException(status_code=413, detail="Content too large (max 10 MB)")
+        md = dict(request.metadata or {})
+        md["owner"] = artifact['username']
+        md["updated_at"] = _utc_now_iso()
+        art = _hub_upsert_alpha(conn, artifact['username'], kind, name, content, md)
+        conn.commit()
+        return _hub_artifact_response(conn, art, request=http_request)
+    finally:
+        conn.close()
+
+
+@app.post("/hub/{kind}/{name}/publish")
+def hub_publish_by_name(kind: str, name: str, request: HubArtifactWriteRequest, http_request: Request):
+    """Publish a version by kind+name (no username required; globally unique)."""
+    if kind not in HUB_KINDS:
+        raise HTTPException(status_code=404, detail="Not found")
+    conn = _hub_db_conn()
+    try:
+        artifact = _hub_get_artifact_by_name(conn, kind, name)
+        if artifact is None:
+            raise HTTPException(status_code=404, detail="Artifact not found")
+        user_row = _require_write_identity(conn, http_request, artifact['username'])
+        content = request.content or ""
+        if len(content.encode("utf-8")) > MAX_ARTIFACT_BYTES:
+            raise HTTPException(status_code=413, detail="Content too large (max 10 MB)")
+        md = dict(request.metadata or {})
+        md["owner"] = artifact['username']
+        md["updated_at"] = _utc_now_iso()
+        latest_row = conn.execute(
+            "SELECT content FROM hub_artifact_versions WHERE artifact_id = ? ORDER BY version DESC LIMIT 1",
+            (artifact["id"],),
+        ).fetchone()
+        latest_content = latest_row["content"] if latest_row else ""
+        if latest_content == content:
+            resp = _hub_artifact_response(conn, artifact, request=http_request)
+            resp["published"] = None
+            resp["no_changes"] = True
+            return resp
+        publish_result = _hub_publish_version(conn, artifact['username'], kind, name, content, md)
+        art = _hub_get_artifact_by_name(conn, kind, name)
+        if art is None:
+            raise HTTPException(status_code=500, detail="Artifact missing after publish")
+        if kind == "map" and user_row is not None:
+            _ensure_owner_vote(conn, art["id"], user_row["id"])
+            conn.commit()
+        response = _hub_artifact_response(conn, art, request=http_request)
+        response["published"] = publish_result
+        response["no_changes"] = False
+        return response
+    finally:
+        conn.close()
+
+
+@app.post("/hub/{kind}/{name}/disassociate")
+def hub_disassociate_by_name(kind: str, name: str, http_request: Request):
+    """Disassociate by kind+name (no username required)."""
+    if kind not in HUB_KINDS:
+        raise HTTPException(status_code=404, detail="Not found")
+    conn = _hub_db_conn()
+    try:
+        artifact = _hub_get_artifact_by_name(conn, kind, name)
+        if artifact is None:
+            raise HTTPException(status_code=404, detail="Artifact not found")
+        _require_write_identity(conn, http_request, artifact['username'])
+        anon_row = conn.execute("SELECT id FROM hub_users WHERE username = ?", (ANONYMOUS_USERNAME,)).fetchone()
+        if anon_row is None:
+            raise HTTPException(status_code=500, detail="Anonymous user missing")
+        artifact_id = artifact["id"]
+        new_name = f"{name}_{artifact_id}"
+        while conn.execute("SELECT id FROM hub_artifacts WHERE kind = ? AND name = ?", (kind, new_name)).fetchone():
+            new_name = f"{new_name}_{artifact_id}"
+        conn.execute(
+            "UPDATE hub_artifacts SET user_id = ?, name = ?, updated_at = ? WHERE id = ?",
+            (anon_row["id"], new_name, _utc_now_iso(), artifact_id),
+        )
+        conn.commit()
+        return {"ok": True, "new_slug": f"/{kind}/{new_name}"}
+    finally:
+        conn.close()
+
+
+@app.get("/hub/{kind}/{name}")
+def hub_get_artifact_by_kind_name(kind: str, name: str, http_request: Request):
+    """Get artifact by kind+name (no username required; globally unique)."""
+    if kind not in HUB_KINDS:
+        raise HTTPException(status_code=404, detail="Not found")
+    conn = _hub_db_conn()
+    try:
+        artifact = _hub_get_artifact_by_name(conn, kind, name)
+        if artifact is None:
+            raise HTTPException(status_code=404, detail="Artifact not found")
+        return _hub_artifact_response(conn, artifact, request=http_request)
+    finally:
+        conn.close()
+
+
+@app.get("/hub/{kind}/{name}/{version}")
+def hub_get_artifact_version_by_name(kind: str, name: str, version: str, http_request: Request):
+    """Get a specific version of an artifact by kind+name (globally unique)."""
+    if kind not in HUB_KINDS:
+        raise HTTPException(status_code=404, detail="Not found")
+    conn = _hub_db_conn()
+    try:
+        artifact = _hub_get_artifact_by_name(conn, kind, name)
+        if artifact is None:
+            raise HTTPException(status_code=404, detail="Artifact not found")
+        # Delegate to the existing version handler with resolved username
+        return hub_get_artifact_version(
+            username=artifact['username'], kind=kind, name=name,
+            version=version, http_request=http_request
+        )
     finally:
         conn.close()
 
@@ -2492,12 +2815,12 @@ def hub_disassociate(username: str, kind: str, name: str, http_request: Request)
         ).fetchone()
         if anon_row is None:
             raise HTTPException(status_code=500, detail="Anonymous user missing")
-        # Choose a unique name under the anonymous user to avoid collisions.
+        # Choose a globally unique name (names are globally unique per kind now).
         artifact_id = artifact["id"]
         new_name = f"{name}_{artifact_id}"
         while conn.execute(
-            "SELECT id FROM hub_artifacts WHERE user_id = ? AND kind = ? AND name = ?",
-            (anon_row["id"], kind, new_name),
+            "SELECT id FROM hub_artifacts WHERE kind = ? AND name = ?",
+            (kind, new_name),
         ).fetchone():
             new_name = f"{new_name}_{artifact_id}"
         # Update the artifact's owner and name.
@@ -2506,7 +2829,7 @@ def hub_disassociate(username: str, kind: str, name: str, http_request: Request)
             (anon_row["id"], new_name, _utc_now_iso(), artifact_id),
         )
         conn.commit()
-        return {"ok": True, "new_slug": f"/{ANONYMOUS_USERNAME}/{kind}/{new_name}"}
+        return {"ok": True, "new_slug": f"/{kind}/{new_name}"}
     finally:
         conn.close()
 
@@ -2542,7 +2865,7 @@ def hub_get_artifact_version(username: str, kind: str, name: str, version: str, 
                 "content": artifact["alpha_content"] or "",
                 "metadata": _sanitize_artifact_metadata(artifact["kind"], artifact["alpha_metadata"]),
                 "updated_at": artifact["updated_at"],
-                "slug": f'/{artifact["username"]}/{_hub_kind_label(artifact["kind"])}/{artifact["name"]}/alpha',
+                "slug": f'/{_hub_kind_label(artifact["kind"])}/{artifact["name"]}/alpha',
                 "votes": _map_vote_count(conn, artifact["id"]) if artifact["kind"] == "map" else 0,
                 "views": _map_view_count(conn, artifact["id"]) if artifact["kind"] == "map" else 0,
                 "viewer_voted": _viewer_has_voted(conn, artifact["id"], http_request) if artifact["kind"] == "map" else False,
@@ -2567,7 +2890,7 @@ def hub_get_artifact_version(username: str, kind: str, name: str, version: str, 
             "content": row["content"] or "",
             "metadata": _sanitize_artifact_metadata(artifact["kind"], row["metadata"]),
             "created_at": row["created_at"],
-            "slug": f'/{artifact["username"]}/{_hub_kind_label(artifact["kind"])}/{artifact["name"]}/{int(row["version"])}',
+            "slug": f'/{_hub_kind_label(artifact["kind"])}/{artifact["name"]}/{int(row["version"])}',
             "votes": _map_vote_count(conn, artifact["id"]) if artifact["kind"] == "map" else 0,
             "views": _map_view_count(conn, artifact["id"]) if artifact["kind"] == "map" else 0,
             "viewer_voted": _viewer_has_voted(conn, artifact["id"], http_request) if artifact["kind"] == "map" else False,
@@ -2639,7 +2962,7 @@ def hub_registry(
                 "username": row["username"],
                 "kind": kind_label,
                 "name": row["name"],
-                "slug": f'/{row["username"]}/{kind_label}/{row["name"]}',
+                "slug": f'/{kind_label}/{row["name"]}',
                 "latest_version": latest,
                 "updated_at": row["updated_at"],
                 "votes": int(row["votes_count"] or 0),
@@ -2694,8 +3017,17 @@ def _parse_xatrahub_path(path: str) -> Dict[str, Any]:
         raise ValueError("xatrahub path must be a path string, not xatrahub(...)")
     cleaned = raw.strip().strip('"').strip("'")
     parts = [p for p in cleaned.split("/") if p]
+    # New format: /kind/name[/version]  (2-3 parts, kind is first)
+    if len(parts) >= 2 and parts[0].lower() in HUB_KINDS:
+        kind = _normalize_hub_kind(parts[0])
+        name = _normalize_hub_name(parts[1])
+        version = "alpha"
+        if len(parts) >= 3 and parts[2]:
+            version = parts[2].strip()
+        return {"username": None, "kind": kind, "name": name, "version": version}
+    # Old format: /username/kind/name[/version]  (3-4 parts)
     if len(parts) < 3:
-        raise ValueError("xatrahub path must be /username/{map|lib|css}/name[/version]")
+        raise ValueError("xatrahub path must be /{kind}/name[/version] or /username/{kind}/name[/version]")
     username = _normalize_hub_user(parts[0])
     kind = _normalize_hub_kind(parts[1])
     name = _normalize_hub_name(parts[2])
@@ -2705,12 +3037,16 @@ def _parse_xatrahub_path(path: str) -> Dict[str, Any]:
     return {"username": username, "kind": kind, "name": name, "version": version}
 
 
-def _hub_load_content(username: str, kind: str, name: str, version: str = "alpha") -> Dict[str, Any]:
+def _hub_load_content(username: Optional[str], kind: str, name: str, version: str = "alpha") -> Dict[str, Any]:
     conn = _hub_db_conn()
     try:
-        artifact = _hub_get_artifact(conn, username, kind, name)
+        if username is None:
+            artifact = _hub_get_artifact_by_name(conn, kind, name)
+        else:
+            artifact = _hub_get_artifact(conn, username, kind, name)
         if artifact is None:
-            raise ValueError(f"xatrahub artifact not found: /{username}/{kind}/{name}")
+            path = f"/{kind}/{name}" if username is None else f"/{username}/{kind}/{name}"
+            raise ValueError(f"xatrahub artifact not found: {path}")
         if str(version).lower() == "alpha":
             return {
                 "username": artifact["username"],
@@ -2731,7 +3067,8 @@ def _hub_load_content(username: str, kind: str, name: str, version: str = "alpha
             (artifact["id"], int(version)),
         ).fetchone()
         if row is None:
-            raise ValueError(f"xatrahub published version not found: /{username}/{kind}/{name}/{version}")
+            path = f"/{kind}/{name}" if username is None else f"/{username}/{kind}/{name}"
+            raise ValueError(f"xatrahub published version not found: {path}/{version}")
         return {
             "username": artifact["username"],
             "kind": _hub_kind_label(artifact["kind"]),
