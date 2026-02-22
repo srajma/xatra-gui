@@ -293,6 +293,19 @@ This is a flat subset of the builder state (no top-level code fields, no picker 
 3. **Structural changes**: Treat like a rename — add a version field (`"format_version": 2`) to the JSON and branch on it in all loaders.
 4. **Keep this section updated**: After any format change, update the field listing above and bump the version label.
 
+## Intentional Behaviour (Do Not "Fix")
+
+These behaviors are deliberate product decisions and easy to misread as bugs:
+
+- **Render endpoints are intentionally usable by guests**: Do not add `_require_write_identity` to `/render/*`. Guest users are allowed to render maps; auth is required for writing named hub artifacts, not for rendering.
+- **Draft auto-save and alpha auto-save are intentionally separate**: They hit different endpoints (`/draft/current` vs `/hub/.../alpha`) and serve different purposes. Do not merge them just because they watch similar state.
+- **Draft and alpha are distinct models**: A draft is one per identity (user or guest), server-stored scratch state; alpha is the mutable tip of a named artifact. They can both update while editing a named map, and this separation is intentional.
+- **All named maps are public, including alpha**: This is by design. Privacy boundaries apply to drafts, not hub artifacts.
+- **Multiple Flag layers may share the same label**: This is an important feature. Avoid UI/data-model changes that assume flag labels are unique keys.
+- **Picker tools are mutually exclusive by design**: Activating one picker should disable others (paths/points/polygons/texts/territory pickers) to prevent conflicting selection modes.
+- **GADM `_1` handling is asymmetric on purpose**: Normalize/strip `_1` in search index/listing logic for discoverability, but do not silently rewrite user-entered input values.
+- **`srcdoc` iframe messaging uses null-origin behavior**: Do not "fix" postMessage target origin to `'null'` or parent origin; rely on strict receive-side checks and known message sources.
+
 ## Drafts & Map Access — How It Works
 
 ### Are drafts distinguished from alpha versions of maps?
