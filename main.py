@@ -64,6 +64,8 @@ _gadm_lock = threading.Lock()
 
 MAX_ARTIFACT_BYTES = 10 * 1024 * 1024  # 10 MB per-artifact content size limit
 
+GADM_INDEX_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gadm_index.json")
+
 HUB_DB_PATH = Path(__file__).parent / "xatra_hub.db"
 HUB_NAME_PATTERN = re.compile(r"^[a-z0-9_.]+$")
 HUB_USER_PATTERN = re.compile(r"^[a-z0-9_.-]+$")
@@ -657,7 +659,7 @@ def build_gadm_index():
         with _gadm_lock:
             GADM_INDEX = index
             rebuild_country_indexes()
-        with open("gadm_index.json", "w") as f:
+        with open(GADM_INDEX_PATH, "w") as f:
             json.dump(index, f)
         print(f"GADM index built: {len(index)} entries")
 
@@ -667,9 +669,9 @@ def build_gadm_index():
         with _gadm_lock:
             INDEX_BUILDING = False
 
-if os.path.exists("gadm_index.json"):
+if os.path.exists(GADM_INDEX_PATH):
     try:
-        with open("gadm_index.json", "r") as f:
+        with open(GADM_INDEX_PATH, "r") as f:
             _loaded_index = json.load(f)
         with _gadm_lock:
             GADM_INDEX = _loaded_index
@@ -2105,8 +2107,9 @@ def users_list(
         where = []
         params: List[Any] = []
         if query:
-            like = f"%{query}%"
-            where.append("(LOWER(u.username) LIKE ? OR LOWER(u.full_name) LIKE ? OR LOWER(u.bio) LIKE ?)")
+            escaped = query.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
+            like = f"%{escaped}%"
+            where.append("(LOWER(u.username) LIKE ? ESCAPE '\\' OR LOWER(u.full_name) LIKE ? ESCAPE '\\' OR LOWER(u.bio) LIKE ? ESCAPE '\\')")
             params.extend([like, like, like])
         where_sql = ("WHERE " + " AND ".join(where)) if where else ""
         total = conn.execute(
@@ -2145,8 +2148,9 @@ def user_profile(username: str, q: Optional[str] = None, page: int = 1, per_page
         where = "WHERE a.user_id = ? AND a.kind = 'map'"
         params: List[Any] = [user["id"]]
         if query:
-            where += " AND (LOWER(a.name) LIKE ? OR LOWER(a.alpha_metadata) LIKE ?)"
-            like = f"%{query}%"
+            escaped = query.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
+            like = f"%{escaped}%"
+            where += " AND (LOWER(a.name) LIKE ? ESCAPE '\\' OR LOWER(a.alpha_metadata) LIKE ? ESCAPE '\\')"
             params.extend([like, like])
         total = conn.execute(f"SELECT COUNT(*) AS c FROM hub_artifacts a {where}", tuple(params)).fetchone()["c"]
         rows = conn.execute(
@@ -2189,6 +2193,8 @@ def draft_save(request: Request, response: Response, payload: DraftRequest):
             "map_name": _normalize_hub_name(payload.map_name or "new_map"),
             "project": payload.project or {},
         }, ensure_ascii=False)
+        if len(draft_json.encode("utf-8")) > MAX_ARTIFACT_BYTES:
+            raise HTTPException(status_code=413, detail="Content too large (max 10 MB)")
         conn.execute(
             """
             INSERT INTO hub_drafts(owner_key, project_json, updated_at)
@@ -2223,10 +2229,15 @@ def draft_get(request: Request, response: Response):
 
 
 @app.post("/hub/users/ensure")
-def hub_ensure_user(request: HubEnsureUserRequest):
+def hub_ensure_user(body: HubEnsureUserRequest, http_request: Request, response: Response):
+    ip = (http_request.client.host if http_request.client else "unknown")
+    _check_rate_limit(f"ensure_user:{ip}", limit=10, window_seconds=3600)
     conn = _hub_db_conn()
     try:
-        user = _hub_ensure_user(conn, request.username)
+        caller = _request_user(conn, http_request)
+        if caller is None and not http_request.cookies.get("xatra_guest"):
+            raise HTTPException(status_code=401, detail="Session required")
+        user = _hub_ensure_user(conn, body.username)
         conn.commit()
         return {"username": user["username"], "created_at": user["created_at"]}
     finally:
@@ -2372,8 +2383,9 @@ def hub_registry(
             where.append("LOWER(u.username) = ?")
             params.append(user_filter)
         for term in terms:
-            where.append("(LOWER(a.name) LIKE ? OR LOWER(u.username) LIKE ? OR LOWER(a.alpha_metadata) LIKE ?)")
-            like = f"%{term}%"
+            where.append("(LOWER(a.name) LIKE ? ESCAPE '\\' OR LOWER(u.username) LIKE ? ESCAPE '\\' OR LOWER(a.alpha_metadata) LIKE ? ESCAPE '\\')")
+            escaped = term.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
+            like = f"%{escaped}%"
             params.extend([like, like, like])
         where_sql = ("WHERE " + " AND ".join(where)) if where else ""
         rows = conn.execute(
@@ -2893,10 +2905,26 @@ def run_rendering_task(task_type, data, result_queue):
                         cmap = LinearSegmentedColormap.from_list("custom_cmap", colors)
                         m.DataColormap(cmap)
                     elif cmap_type:
-                        import matplotlib.pyplot as plt
-                        cmap = getattr(plt.cm, cmap_type, None)
-                        if cmap is not None:
-                            m.DataColormap(cmap)
+                        _VALID_CMAPS = {
+                            "viridis", "plasma", "inferno", "magma", "cividis",
+                            "RdYlGn", "RdYlBu", "Spectral",
+                            "Greys", "Purples", "Blues", "Greens", "Oranges", "Reds",
+                            "YlOrBr", "YlOrRd", "OrRd", "PuRd", "RdPu", "BuPu",
+                            "GnBu", "PuBu", "YlGnBu", "PuBuGn", "BuGn", "YlGn",
+                            "gray", "bone", "pink", "spring", "summer", "autumn", "winter",
+                            "cool", "hot", "afmhot", "gist_heat", "copper",
+                            "PiYG", "PRGn", "BrBG", "PuOr", "RdGy", "RdBu",
+                            "RdYlBu", "RdYlGn", "Spectral", "coolwarm", "bwr", "seismic",
+                            "twilight", "twilight_shifted", "hsv",
+                            "ocean", "gist_earth", "terrain", "gist_stern",
+                            "gnuplot", "gnuplot2", "CMRmap", "cubehelix", "brg",
+                            "rainbow", "jet", "turbo", "nipy_spectral",
+                        }
+                        if cmap_type in _VALID_CMAPS:
+                            import matplotlib.pyplot as plt
+                            cmap = getattr(plt.cm, cmap_type, None)
+                            if cmap is not None:
+                                m.DataColormap(cmap)
                 elif isinstance(dc, str):
                     m.DataColormap(dc)
 

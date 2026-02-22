@@ -1656,6 +1656,7 @@ xatra.TitleBox("<b>My Map</b>")
     a.href = URL.createObjectURL(file);
     a.download = filename;
     a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 0);
   };
 
   const handleExportHtml = () => {
@@ -1964,7 +1965,17 @@ xatra.TitleBox("<b>My Map</b>")
         }
         if (part.type === 'polygon') {
           if (part.value == null || String(part.value).trim() === '') return '';
-          return `polygon(${part.value})`;
+          try {
+            const parsed = JSON.parse(part.value);
+            if (!Array.isArray(parsed)) return '';
+            const sanitized = parsed
+              .map((coord) => Array.isArray(coord) && coord.length === 2 ? [Number(coord[0]), Number(coord[1])] : null)
+              .filter((c) => c !== null && !c.some(isNaN));
+            if (!sanitized.length) return '';
+            return `polygon(${JSON.stringify(sanitized)})`;
+          } catch {
+            return '';
+          }
         }
         if (part.type === 'gadm') {
           const values = normalizeValues(part.value);
