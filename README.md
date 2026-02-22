@@ -357,6 +357,9 @@ Random misc
   - [x] Instead of changing the color of the little triangle to show when the user has liked a map, the whole like-count box should be shaded blue (with white text) to show this. There should also be hover styling. 
 - [x] For maps the user can't edit (i.e. other users' maps, and even the own users' published versions), the whole Builder/Code side panel appears greyed out. While this makes sense, the "Render Map" button should not be greyed out; it should still be clickable---even for guests!
 - [x] Move the anonymize/disassociate button in the map editor to the top bar after the export button (obviously, the button should only appear on map editor pages, specifically only on the user's own maps) and change the icon to a red trash button.
+- [x] The right side of the top bar looks a bit cluttered.
+  - [x] Explore should not be icon-only, but should be a button with an icon followed by the text "Explore". The icon should also be changed back to the old compass icon instead of the search icon.
+  - [x] The Night mode toggle and keyboard shortcuts hint button should be to the Left of "New map".
 - [ ] it may make sense to go from map names being unique per-user to unique globally, and change map/territory/theme slugs to not use the username (i.e. be simply `lib/mapname` rather than `lib/username/mapname`; `map/mapname` rather than `map/username/mapname`; `css/mapname` rather than `css/username/mapname`)
   - [ ] This will have to be updated in the original xatra project's hub.py (I maintain it, it's in `../xatra.master`) as well as in the imports list here, etc.
   - [ ] putting a username in between should still work for backwards-compatibility

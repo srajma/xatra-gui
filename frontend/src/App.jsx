@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Layers, Code, Play, Upload, Download, Image, Plus, Trash2, Keyboard, Copy, Check, Moon, Sun, Menu, Search, User, Users, LogIn, LogOut, FilePlus2, Import, Save, Triangle, GitFork, CloudUpload, UserX, Settings } from 'lucide-react';
+import { Layers, Code, Play, Upload, Download, Image, Plus, Trash2, Keyboard, Copy, Check, Moon, Sun, Menu, Search, Compass, User, Users, LogIn, LogOut, FilePlus2, Import, Save, Triangle, GitFork, CloudUpload, UserX, Settings } from 'lucide-react';
 
 // Components (defined inline for simplicity first, can be split later)
 import Builder from './components/Builder';
@@ -2951,16 +2951,6 @@ ${DEFAULT_MAP_CODE}
       <div className="flex-1" />
       {/* Right: nav actions */}
       <button
-        onClick={handleNewMapClick}
-        className="px-3 py-1 text-xs font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 mr-1"
-        title="Create a new map"
-      >New map</button>
-      <button
-        onClick={() => navigateTo('/explore')}
-        title="Explore"
-        className={`p-1.5 rounded ${isDarkMode ? 'text-slate-300 hover:bg-slate-800' : 'text-gray-600 hover:bg-gray-100'}`}
-      ><Search size={14}/></button>
-      <button
         onClick={() => setIsDarkMode((p) => !p)}
         title={isDarkMode ? 'Switch to light mode' : 'Switch to night mode'}
         className={`p-1.5 rounded ${isDarkMode ? 'text-slate-300 hover:bg-slate-800' : 'text-gray-600 hover:bg-gray-100'}`}
@@ -2998,6 +2988,16 @@ ${DEFAULT_MAP_CODE}
           </div>
         )}
       </div>
+      <button
+        onClick={handleNewMapClick}
+        className="px-3 py-1 text-xs font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 ml-1 mr-1"
+        title="Create a new map"
+      >New map</button>
+      <button
+        onClick={() => navigateTo('/explore')}
+        title="Explore"
+        className={`px-2.5 py-1.5 text-xs rounded inline-flex items-center gap-1.5 ${isDarkMode ? 'text-slate-300 hover:bg-slate-800' : 'text-gray-600 hover:bg-gray-100'}`}
+      ><Compass size={14}/> Explore</button>
       {currentUser.is_authenticated ? (
         <>
           <a
