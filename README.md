@@ -321,7 +321,7 @@ Bugs we still have
   - [x] When a guest who has a draft logs in, that draft map should be loaded within their account with a red "Unsaved changes" and Save button.
   - [x] The "New map" button only seems to work from the map editor for some reason? It should work everywhere.
   - [x] The logic for the version dropdown seems to depend on the name entered in the name field rather than the actual identity of the map loaded. This is quite stupid, and must be fixed.
-- [ ] Actually I have a better idea for the whole drafts/landing page/saving flow: (don't do this now, I have to flesh it out)
+- [x] Actually I have a better idea for the whole drafts/landing page/saving flow: (don't do this now, I have to flesh it out)
   - Only for logged-in users, the Explore page will have a section above for the logged-in user's own maps. It will be a single-row grid, starting with an "Add New Map" entry (a nice big box the same size as all the other entries), then an "Unsaved Draft" entry _if it exists_ (again a nice big box, but the "Unsaved Draft" title should be in red), then the user's few recent maps---and then there should be a little "More >" link that takes the user to his profile page.
     - while we're changing the Explore page, you can also change the weird "box inside a box" design of the search bar.
   - For logged-in users, this new /explore should be the landing page. 
