@@ -305,40 +305,39 @@ Experiments I have to do
 - [ ] experiment with some different designs [NOT NOW]
 
 Bugs we still have
-- [ ] when I publish a new version of a map, it doesn't automatically add that version to the version dropdown---same thing with publishing new versions of Custom territory libraries or themes (in the Code editor). 
-- [ ] When I create a new map, it gets auto-saved after a few seconds even though I have not made any changes.
-- [ ] Any map I load immediately just shows the map for India in the Map Preview at the start until I click "Render Map". It should render the actual map on first load instead.
-- [ ] Not every map has a Territory library or Theme that can be imported from other maps (i.e. not even an alpha version may have been created) --- which leads to errors like "Cannot import css: /srajmabr/css/xatra_2_1 does not exist". In such case, the "Import CSS" and "Import Territories" buttons should be greyed out and not available to click.
-- [ ] When editing a new map, the save button no longer automatically appears (and autosave doesn't happen) when I make some changes---I need to publish a version first. This is not the intended behaviour; I should be able to save the alpha version without publishing any version.
-- [ ] When a map has no versions (e.g. if it's an unsaved map), the version dropdown appears empty. In this case, the version dropdown shouldn't appear at all.
-- [ ] Our current new map and landing page workflow causes an unnecessary proliferation of maps, because 
+- [x] when I publish a new version of a map, it doesn't automatically add that version to the version dropdown---same thing with publishing new versions of Custom territory libraries or themes (in the Code editor).
+- [x] When I create a new map, it gets auto-saved after a few seconds even though I have not made any changes.
+- [x] Any map I load immediately just shows the map for India in the Map Preview at the start until I click "Render Map". It should render the actual map on first load instead.
+- [x] Not every map has a Territory library or Theme that can be imported from other maps (i.e. not even an alpha version may have been created) --- which leads to errors like "Cannot import css: /srajmabr/css/xatra_2_1 does not exist". In such case, the "Import CSS" and "Import Territories" buttons should be greyed out and not available to click.
+- [x] When editing a new map, the save button no longer automatically appears (and autosave doesn't happen) when I make some changes---I need to publish a version first. This is not the intended behaviour; I should be able to save the alpha version without publishing any version.
+- [x] When a map has no versions (e.g. if it's an unsaved map), the version dropdown appears empty. In this case, the version dropdown shouldn't appear at all.
+- [ ] Our current new map and landing page workflow causes an unnecessary proliferation of maps, because
 
 Random misc
-- [ ] On the new map creating editor, non logged-in user should see a red "Unsaved changes" message on the second line (i.e. below the name field etc.) as soon as they make any change worth saving, and a "Login to save/publish" link after it (this should be visible whether or not the user has made any changes).
+- [x] On the new map creating editor, non logged-in user should see a red "Unsaved changes" message on the second line (i.e. below the name field etc.) as soon as they make any change worth saving, and a "Login to save/publish" link after it (this should be visible whether or not the user has made any changes).
   - And when the user logs in and is returned to the map editor, make sure it correctly shows "Unsaved changes" since the map has not yet been saved.
-- [ ] change "three-line menu" (on the map editor) and sidebar (on the explore and profile pages) to a unified top bar.
-  - [ ] On the left-most of the top-bar: "xatra" (the site title); Load JSON; Save JSON; Export HTML (keep the existing icons for these)
-    - [ ] Oh, the Load JSON; Save JSON; Export HTML buttons should only appear on Map pages. And Load JSON in particular should not even appear when looking at other users' maps.
-  - [ ] Right-aligned: New map (this should stand out); Explore; Users; Night mode toggle (should be literally just a nice toggle with night/day icons, no "Night mode" text); `[username](link to profile)` if logged in; Login/Signup or Logout (depending on whether logged in or not)
-  - `Ctrl/Cmd+;`, which currently clicks the triple-line menu, should instead focus the top bar allowing us to cycle through it with tab or left-right arrow keys. Make sure to update the keyboard shortcuts hint panel.
-    - [ ] The left-right arrow keys do not seem to be working for this.
+- [x] change "three-line menu" (on the map editor) and sidebar (on the explore and profile pages) to a unified top bar.
+  - [x] On the left-most of the top-bar: "xatra" (the site title); Load JSON; Save JSON; Export HTML (keep the existing icons for these)
+    - [x] Oh, the Load JSON; Save JSON; Export HTML buttons should only appear on Map pages. And Load JSON in particular should not even appear when looking at other users' maps.
+  - [x] Right-aligned: New map (this should stand out); Explore; Users; Night mode toggle (should be literally just a nice toggle with night/day icons, no "Night mode" text); `[username](link to profile)` if logged in; Login/Signup or Logout (depending on whether logged in or not)
+  - [x] `Ctrl/Cmd+;`, which currently clicks the triple-line menu, should instead focus the top bar allowing us to cycle through it with tab or left-right arrow keys. Make sure to update the keyboard shortcuts hint panel.
 - [ ] Use screenshot of map from last save as thumbnail (in Explore and Import from xatrahub interfaces)
-- [ ] improvements to forking and voting
-  - [ ] forks should show "fork of [...](link to original map)" under their page's byline (i.e. under "by <user> . likes . views")
-  - [ ] forking a map should automatically vote it up
-  - [ ] users should by default have liked their own maps, and should be unable to change this
+- [x] improvements to forking and voting
+  - [x] forks should show "fork of [...](link to original map)" under their page's byline (i.e. under "by <user> . likes . views")
+  - [x] forking a map should automatically vote it up
+  - [x] users should by default have liked their own maps, and should be unable to change this
 - [ ] it may make sense to go from map names being unique per-user to unique globally, and change map/territory/theme slugs to not use the username (i.e. be simply `lib/mapname` rather than `lib/username/mapname`; `map/mapname` rather than `map/username/mapname`; `css/mapname` rather than `css/username/mapname`)
   - [ ] This will have to be updated in the original xatra project's hub.py (I maintain it, it's in `../xatra.master`) as well as in the imports list here, etc.
   - [ ] putting a username in between should still work for backwards-compatibility
   - [ ] Since map names must now be unique globally, the default name counter cannot simply increment as `new_map_<n>`. Instead just let the default name be the ID of the map in the database (assuming such a numeric ID exists---if not, make one). The name of a map should never be allowed to entirely numeric _unless_ it happens to be that map's ID.
 - [ ] allow user to "disassociate" their maps from their usernames on their own user page, and on the map's page. This is better than allowing deletion, so that published maps/themes/territory libraries still exist and can be used; they're just not associated with that user's name. Use an icon for "Anonymous", if such an icon exists; otherwise just use a simple trash icon. It should prompt the user for confirmation before anonymizing; making it clear to him that he will **lose all ownership and editing rights** to this map (though he can fork it) and make him type in the name of the map before anonymizing it.
-- [ ] Make Import panel more keyboard-friendly.
-  - [ ] Pressing the down key from the search bar should focus the first entry in the grid of maps.
-  - [ ] We should be able to navigate the grid with arrow keys.
-  - [ ] Pressing the up key from a map in the top row of the grid should take us back to the search bar
-  - [ ] Oh one last thing: escape should close the import panel
-- [ ] Instead of having a separate "/users" page, merge it into "/explore" by using a column view and making Users (with its own search bar, like it has now) the little right column. Make sure this doesn't mess up the Import panel in maps, which may share some UI with /explore. Also update the top bar to remove the link to /users.
-- [ ] You know the little keyboard shortcuts panel? Move the button for that (which is currently inside the map preview for some reason) to the top-bar, next to the night mode toggle.
+- [x] Make Import panel more keyboard-friendly.
+  - [x] Pressing the down key from the search bar should focus the first entry in the grid of maps.
+  - [x] We should be able to navigate the grid with arrow keys.
+  - [x] Pressing the up key from a map in the top row of the grid should take us back to the search bar
+  - [x] Oh one last thing: escape should close the import panel
+- [x] Instead of having a separate "/users" page, merge it into "/explore" by using a column view and making Users (with its own search bar, like it has now) the little right column. Make sure this doesn't mess up the Import panel in maps, which may share some UI with /explore. Also update the top bar to remove the link to /users.
+- [x] You know the little keyboard shortcuts panel? Move the button for that (which is currently inside the map preview for some reason) to the top-bar, next to the night mode toggle.
 
 Development difficulties
 - [x] keeping synchrony between things---this should be documented, i.e. "if you change this, then change this too"
