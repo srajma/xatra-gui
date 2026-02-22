@@ -308,9 +308,16 @@ Bugs we still have
 - [ ] when I publish a new version of a map, it doesn't automatically add that version to the version dropdown---same thing with publishing new versions of Custom territory libraries or themes (in the Code editor). 
 - [ ] When I create a new map, it gets auto-saved after a few seconds even though I have not made any changes.
 - [ ] Any map I load immediately just shows the map for India in the Map Preview at the start until I click "Render Map". It should render the actual map on first load instead.
+- [ ] Not every map has a Territory library or Theme that can be imported from other maps (i.e. not even an alpha version may have been created) --- which leads to errors like "Cannot import css: /srajmabr/css/xatra_2_1 does not exist". In such case, the "Import CSS" and "Import Territories" buttons should be greyed out and not available to click.
 - [ ] Our current new map and landing page workflow causes an unnecessary proliferation of maps, because 
 
 Random misc
+- [ ] On the new map creating editor, non logged-in user should see a red "Unsaved changes" message on the second line (i.e. below the name field etc.) as soon as they make any change worth saving, and a "Login to save/publish" link after it (this should be visible whether or not the user has made any changes).
+  - And when the user logs in and is returned to the map editor, make sure it correctly shows "Unsaved changes" since the map has not yet been saved.
+- [ ] change "three-line menu" (on the map editor) and sidebar (on the explore and profile pages) to a unified top bar.
+  - On the left-most of the top-bar: "xatra" (the site title); Load JSON; Save JSON; Export HTML (keep the existing icons for these)
+  - Right-aligned: New map (this should stand out); Explore; Users; Night mode toggle (should be literally just a nice toggle with night/day icons, no "Night mode" text); `[username](link to profile)` if logged in; Login/Signup or Logout (depending on whether logged in or not)
+  - `Ctrl/Cmd+;`, which currently clicks the triple-line menu, should instead focus the top bar allowing us to cycle through it with tab or left-right arrow keys. Make sure to update the keyboard shortcuts hint panel.
 - [ ] Use screenshot of map from last save as thumbnail (in Explore and Import from xatrahub interfaces)
 - [ ] improvements to forking and voting
   - [ ] forks should show "fork of [...](link to original map)" under their page's byline (i.e. under "by <user> . likes . views")
