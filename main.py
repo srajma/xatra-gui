@@ -1682,6 +1682,16 @@ def sync_code_to_builder(request: CodeSyncRequest):
             elements.append({"type": "dataframe", "label": "Data", "value": "", "args": {}})
             continue
 
+        if method == "Music":
+            music_node = kwargs.get("value")
+            if music_node is None and call.args:
+                music_node = call.args[0]
+            music_value = _builder_value_from_node(source_code, music_node) if music_node is not None else ""
+            args_dict.pop("value", None)
+            label = args_dict.pop("label", None)
+            elements.append({"type": "music", "label": label, "value": music_value if music_value is not None else "", "args": args_dict})
+            continue
+
         append_python_layer(stmt=stmt)
 
     while comment_idx < len(comment_tokens):
@@ -3203,11 +3213,24 @@ def run_rendering_task(task_type, data, result_queue):
             if theme_code.strip():
                 exec(theme_code, builder_exec_globals)
 
+            def _is_empty_builder_arg(value):
+                if value is None:
+                    return True
+                if isinstance(value, str) and value.strip() == "":
+                    return True
+                if isinstance(value, (list, tuple, set, dict)) and len(value) == 0:
+                    return True
+                return False
+
+            def _clean_builder_args(arg_dict):
+                return {k: v for k, v in (arg_dict or {}).items() if not _is_empty_builder_arg(v)}
+
             for el in data.elements:
                 args = resolve_builder_value(el.args.copy(), builder_exec_globals) if isinstance(el.args, dict) else {}
                 resolved_label = resolve_builder_value(el.label, builder_exec_globals)
                 if resolved_label not in (None, ""):
                     args["label"] = resolved_label
+                args = _clean_builder_args(args)
                     
                 if el.type == "flag":
                     args.pop("parent", None)
@@ -3391,6 +3414,11 @@ def run_rendering_task(task_type, data, result_queue):
                     title_val = resolve_builder_value(el.value, builder_exec_globals)
                     html = title_val if isinstance(title_val, str) else str(title_val or "")
                     m.TitleBox(html, **args)
+                elif el.type == "music":
+                    music_val = resolve_builder_value(el.value, builder_exec_globals)
+                    if "label" in args:
+                        del args["label"]
+                    m.Music(value=music_val, **args)
                 elif el.type == "python":
                     code_line = el.value if isinstance(el.value, str) else str(el.value or "")
                     if code_line.strip():

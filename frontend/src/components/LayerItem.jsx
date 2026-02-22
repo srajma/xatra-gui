@@ -15,6 +15,7 @@ const LayerItem = ({
 }) => {
   const [showMore, setShowMore] = useState(false);
   const pickerTimeoutRef = useRef(null);
+  const lastHandledClickTsRef = useRef(null);
   const [builtinIconsList, setBuiltinIconsList] = useState([]);
   
   const isPicking = activePicker && activePicker.id === index && activePicker.context === 'layer';
@@ -38,6 +39,8 @@ const LayerItem = ({
 
   useEffect(() => {
       if (isPicking && lastMapClick) {
+        if (lastHandledClickTsRef.current === lastMapClick.ts) return;
+        lastHandledClickTsRef.current = lastMapClick.ts;
         const lat = parseFloat(lastMapClick.lat.toFixed(4));
         const lng = parseFloat(lastMapClick.lng.toFixed(4));
         const point = [lat, lng];
@@ -53,34 +56,25 @@ const LayerItem = ({
               setDraftPoints([]);
             }, 240);
         } else if (element.type === 'path') {
-            const newPoints = [...draftPoints, point];
-            setDraftPoints(newPoints);
-            updateElement(index, 'value', JSON.stringify(newPoints));
+            setDraftPoints((prev) => {
+              const next = [...prev, point];
+              updateElement(index, 'value', JSON.stringify(next));
+              return next;
+            });
         }
       }
       return () => {
         if (pickerTimeoutRef.current) clearTimeout(pickerTimeoutRef.current);
       };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lastMapClick, isPicking, element.type, index, updateElement, draftPoints, setActivePicker, setDraftPoints]);
-
-  // Sync draftPoints when entering picking mode for path
-  useEffect(() => {
-      if (isPicking && element.type === 'path') {
-          try {
-              const current = JSON.parse(element.value || '[]');
-              setDraftPoints(Array.isArray(current) ? current : []);
-          } catch {
-              setDraftPoints([]);
-          }
-      }
-  }, [isPicking]);
+  }, [lastMapClick, isPicking, element.type, index, updateElement, setActivePicker, setDraftPoints]);
 
   const togglePicking = () => {
       if (isPicking) {
           setActivePicker(null);
           setDraftPoints([]);
       } else {
+          lastHandledClickTsRef.current = null;
           setActivePicker({ id: index, type: element.type, context: 'layer' });
           // For point/text, show existing position as dot when entering picker mode
           if (element.type === 'point' || element.type === 'text') {
@@ -90,6 +84,15 @@ const LayerItem = ({
                       setDraftPoints([pos]);
                       return;
                   }
+              } catch {
+                // ignore malformed coordinates while entering picker mode
+              }
+          }
+          if (element.type === 'path') {
+              try {
+                const current = JSON.parse(element.value || '[]');
+                setDraftPoints(Array.isArray(current) ? current : []);
+                return;
               } catch {
                 // ignore malformed coordinates while entering picker mode
               }
@@ -478,6 +481,19 @@ const LayerItem = ({
             />
           </div>
         );
+      case 'music':
+        return (
+          <div className="mb-2">
+            <label className="block text-xs text-gray-500 mb-1">Music Source</label>
+            <PythonTextField
+              value={element.value || ''}
+              onChange={(val) => updateElement(index, 'value', val)}
+              data-focus-primary="true"
+              inputClassName="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:border-blue-500 outline-none font-mono"
+              placeholder='e.g. "/audio/theme.mp3"'
+            />
+          </div>
+        );
       case 'python':
         return (
           <div className="mb-2">
@@ -535,7 +551,7 @@ const LayerItem = ({
                     <label className="block text-xs text-gray-500 mb-1">Inherit Color From</label>
                     <select
                       value={element.args?.inherit || ''}
-                      onChange={(e) => updateArg(index, 'inherit', e.target.value)}
+                      onChange={(e) => updateArg(index, 'inherit', e.target.value || null)}
                       className="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:border-blue-500 outline-none"
                     >
                       <option value="">None</option>

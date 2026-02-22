@@ -26,7 +26,7 @@ xatra.TitleBox("<b>My Map</b>")
 `;
 const IMPORTABLE_LAYER_TYPES = [
   'Flag', 'River', 'Path', 'Point', 'Text', 'Admin', 'AdminRivers', 'Dataframe',
-  'TitleBox', 'CSS', 'BaseOption', 'FlagColorSequence', 'AdminColorSequence',
+  'TitleBox', 'Music', 'CSS', 'BaseOption', 'FlagColorSequence', 'AdminColorSequence',
   'DataColormap', 'zoom', 'focus', 'slider', 'Python',
 ];
 
@@ -757,9 +757,9 @@ ${DEFAULT_MAP_CODE}
         setImportsCode(parsed.imports_code || '');
         setHubImports(parseImportsCodeToItems(parsed.imports_code || ''));
         setThemeCode(parsed.theme_code || '');
-        setPredefinedCode(parsed.predefined_code || predefinedCode);
-        setCode(parsed.map_code || code);
-        setRuntimeCode(parsed.runtime_code || '');
+        setPredefinedCode(parsed.predefined_code ?? '');
+        setCode(parsed.map_code ?? '');
+        setRuntimeCode(parsed.runtime_code ?? '');
         if (parsed.project && parsed.project.elements && parsed.project.options) {
           setBuilderElements(parsed.project.elements);
           setBuilderOptions(parsed.project.options);
@@ -1228,14 +1228,21 @@ ${DEFAULT_MAP_CODE}
       if (!activePicker) return;
       if (activePicker.context === 'layer') {
           const idx = activePicker.id;
-          const newElements = [...builderElements];
-          newElements[idx].value = JSON.stringify(points);
-          setBuilderElements(newElements);
+          setBuilderElements((prev) => {
+            const next = [...prev];
+            const el = next[idx];
+            if (!el) return prev;
+            if (el.type === 'point' || el.type === 'text') {
+              const pt = points.length ? points[points.length - 1] : null;
+              next[idx] = { ...el, value: pt ? JSON.stringify(pt) : '' };
+            } else {
+              next[idx] = { ...el, value: JSON.stringify(points) };
+            }
+            return next;
+          });
       } else if (isTerritoryPolygonPicker(activePicker.context)) {
           const parentId = parseInt(activePicker.context.replace('territory-', ''), 10);
           if (Number.isNaN(parentId)) return;
-          const el = builderElements[parentId];
-          if (!el || el.type !== 'flag' || !Array.isArray(el.value)) return;
           const path = Array.isArray(activePicker.target?.partPath)
             ? activePicker.target.partPath
             : (Number.isInteger(activePicker.id) ? [activePicker.id] : []);
@@ -1255,9 +1262,13 @@ ${DEFAULT_MAP_CODE}
             next[idx] = { ...part, value: setPartAtPath(part.value, partPath, depth + 1) };
             return next;
           };
-          const newElements = [...builderElements];
-          newElements[parentId] = { ...el, value: setPartAtPath(el.value, path) };
-          setBuilderElements(newElements);
+          setBuilderElements((prev) => {
+            const next = [...prev];
+            const el = next[parentId];
+            if (!el || el.type !== 'flag' || !Array.isArray(el.value)) return prev;
+            next[parentId] = { ...el, value: setPartAtPath(el.value, path) };
+            return next;
+          });
       }
   };
 
@@ -1288,7 +1299,12 @@ ${DEFAULT_MAP_CODE}
       } else if (event.data && event.data.type === 'mapMouseMove') {
           const modifierPressed = !!(event.data.ctrlKey || event.data.metaKey || freehandModifierPressed);
           if (modifierPressed !== freehandModifierPressed) setFreehandModifierPressed(modifierPressed);
-          if (activePicker && modifierPressed && isMouseDown && (activePicker.context === 'layer' || isTerritoryPolygonPicker(activePicker.context))) {
+          const isFreehandEligible = !!(
+            activePicker &&
+            (activePicker.type === 'path' || activePicker.type === 'polygon') &&
+            (activePicker.context === 'layer' || isTerritoryPolygonPicker(activePicker.context))
+          );
+          if (isFreehandEligible && modifierPressed && isMouseDown) {
               const point = [parseFloat(event.data.lat.toFixed(4)), parseFloat(event.data.lng.toFixed(4))];
               setDraftPoints(prev => {
                   const last = prev[prev.length - 1];
@@ -1407,7 +1423,7 @@ ${DEFAULT_MAP_CODE}
     };
     window.addEventListener('message', handleMessage);
     return () => window.removeEventListener('message', handleMessage);
-  }, [activePreviewTab, activePicker, freehandModifierPressed, isMouseDown, referencePickTarget, builderElements]);
+  }, [activePreviewTab, activePicker, freehandModifierPressed, isMouseDown, referencePickTarget]);
 
   useEffect(() => {
     const uniqueCountries = Array.from(
@@ -1602,6 +1618,7 @@ ${DEFAULT_MAP_CODE}
       setReferencePickTarget(null);
       clearReferenceSelection();
       setFreehandModifierPressed(false);
+      setIsMouseDown(false);
     }
   }, [activePicker]);
 
@@ -1706,6 +1723,7 @@ ${DEFAULT_MAP_CODE}
           p: 'point',
           t: 'text',
           h: 'path',
+          m: 'music',
           a: 'admin',
           d: 'dataframe',
           b: 'titlebox',
@@ -1935,6 +1953,14 @@ ${DEFAULT_MAP_CODE}
     }
   };
 
+  const ensureLatestThumbnail = async () => {
+    if (!mapHtml) return;
+    const dataUrl = await captureMapThumbnail();
+    if (dataUrl) {
+      lastRenderedThumbnailRef.current = dataUrl;
+    }
+  };
+
   useEffect(() => {
     if (!mapHtml) {
       lastRenderedThumbnailRef.current = '';
@@ -2023,6 +2049,7 @@ ${DEFAULT_MAP_CODE}
     if (!HUB_NAME_RE.test(normalizedMapName)) return;
     setAutoSaveStatus('saving');
     try {
+      await ensureLatestThumbnail();
       // Only flag conflict when the user has renamed the map to something that already exists
       // (i.e. route.map is set — an existing map was loaded — but mapName was changed to something different)
       const isRename = !!(route.map && route.map !== normalizedMapName);
@@ -2078,6 +2105,7 @@ ${DEFAULT_MAP_CODE}
         return;
       }
       let targetName = normalizedMapName;
+      await ensureLatestThumbnail();
       const check = await apiFetch(`/hub/${normalizedHubUsername}/map/${targetName}`);
       const exists = check.ok;
       const isSameCurrent = !!(route.owner === normalizedHubUsername && route.map === targetName);
@@ -2100,6 +2128,7 @@ ${DEFAULT_MAP_CODE}
     const forkSourceOwner = route.owner;
     const forkSourceMap = route.map;
     try {
+      await ensureLatestThumbnail();
       const base = normalizedMapName || 'new_map';
       const resp = await apiFetch(`/maps/resolve-name?base=${encodeURIComponent(base)}`);
       const data = await resp.json();
@@ -2572,6 +2601,9 @@ ${DEFAULT_MAP_CODE}
         } else if (el.type === 'titlebox') {
             const titleHtml = (el.value != null && el.value !== '') ? pyVal(el.value) : 'None';
             lines.push(`xatra.TitleBox(${titleHtml}${argsStr})`);
+        } else if (el.type === 'music') {
+            const musicVal = (el.value != null && el.value !== '') ? pyVal(el.value) : 'None';
+            lines.push(`xatra.Music(value=${musicVal}${argsStr})`);
         } else if (el.type === 'python') {
             const raw = (el.value == null) ? '' : String(el.value);
             if (raw.trim()) lines.push(raw);
@@ -2981,6 +3013,7 @@ ${DEFAULT_MAP_CODE}
             <div>`Ctrl/Cmd+Shift+P` add Point</div>
             <div>`Ctrl/Cmd+Shift+T` add Text</div>
             <div>`Ctrl/Cmd+Shift+H` add Path</div>
+            <div>`Ctrl/Cmd+Shift+M` add Music</div>
             <div>`Ctrl/Cmd+Shift+A` add Admin</div>
             <div>`Ctrl/Cmd+Shift+D` add Data</div>
             <div>`Ctrl/Cmd+Shift+B` add TitleBox</div>
@@ -3386,6 +3419,26 @@ ${DEFAULT_MAP_CODE}
           {/* Maps grid */}
           <div className="flex-1 overflow-y-auto px-6 py-5">
             {profileLoading && <div className={`mb-4 text-xs px-3 py-2 border rounded-lg ${isDarkMode ? 'bg-blue-900/20 text-blue-300 border-blue-700' : 'bg-blue-50 text-blue-700 border-blue-200'}`}>Loading maps…</div>}
+            {isOwn && (
+              <div className="mb-5 flex gap-3 overflow-x-auto pb-1">
+                <button
+                  onClick={handleNewMapClick}
+                  className={`flex-shrink-0 min-w-[130px] h-28 rounded-xl border flex flex-col items-center justify-center gap-1.5 text-xs font-medium transition-colors ${isDarkMode ? 'bg-slate-800 border-slate-700 text-slate-300 hover:border-blue-500 hover:text-blue-400' : 'bg-white border-gray-200 text-gray-500 hover:border-blue-400 hover:text-blue-600'}`}
+                >
+                  <Plus size={18}/>
+                  New map
+                </button>
+                {userDraftMeta?.exists && (
+                  <button
+                    onClick={() => { setPromoteDraftName(''); setPromoteDraftError(''); setPromoteDraftDialogOpen(true); }}
+                    className={`flex-shrink-0 min-w-[130px] h-28 rounded-xl border flex flex-col items-center justify-center gap-1 text-xs transition-colors ${isDarkMode ? 'bg-slate-800 border-red-700/50 hover:border-red-500' : 'bg-white border-red-200 hover:border-red-400'}`}
+                  >
+                    <div className={`font-semibold ${isDarkMode ? 'text-red-400' : 'text-red-500'}`}>Unsaved Draft</div>
+                    <div className={`text-[10px] ${isDarkMode ? 'text-slate-400' : 'text-gray-400'}`}>{userDraftMeta.mapName}</div>
+                  </button>
+                )}
+              </div>
+            )}
             <div className="flex gap-2 mb-5">
               <input value={profileSearch} onChange={(e) => setProfileSearch(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { setProfilePage(1); loadProfile(route.username, 1, profileSearch); } }} className={`flex-1 rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300 ${isDarkMode ? 'bg-slate-800 border-slate-600 text-white placeholder-slate-500 focus:border-blue-400' : 'bg-white border-gray-300 focus:border-blue-400'}`} placeholder="Search maps…" />
               <button className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 transition-colors" onClick={() => { setProfilePage(1); loadProfile(route.username, 1, profileSearch); }}>Search</button>
