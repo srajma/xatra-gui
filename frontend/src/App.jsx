@@ -454,7 +454,7 @@ ${DEFAULT_MAP_CODE}
       ];
       for (const [kind, setter] of pairs) {
         try {
-          const resp = await apiFetch(`/hub/${normalizedHubUsername}/${kind}/${normalizedMapName}`);
+          const resp = await apiFetch(`/hub/${kind}/${normalizedMapName}`);
           if (!resp.ok) {
             setter('alpha');
             continue;
@@ -701,7 +701,7 @@ ${DEFAULT_MAP_CODE}
     const key = artifactKey(username, kind, name);
     if (!force && artifactVersionOptions[key] !== undefined) return artifactVersionOptions[key];
     try {
-      const resp = await apiFetch(`/hub/${username}/${kind}/${name}`);
+      const resp = await apiFetch(`/hub/${kind}/${name}`);
       if (!resp.ok) {
         setArtifactVersionOptions((prev) => ({ ...prev, [key]: null }));
         return null;
@@ -759,7 +759,7 @@ ${DEFAULT_MAP_CODE}
           const defaultImports = [{ ...DEFAULT_INDIC_IMPORT }];
           const defaultImportsCode = serializeHubImports(defaultImports);
           setMapName(name);
-          setMapOwner(owner);
+          setMapOwner(currentUser?.user?.username || owner || 'guest');
           setBuilderElements(defElements);
           setBuilderOptions(defOptions);
           setCode(DEFAULT_MAP_CODE);
