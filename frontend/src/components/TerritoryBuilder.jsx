@@ -1011,7 +1011,7 @@ const TerritoryBuilder = ({
               </div>
               {isRowSelected && (
                 <div className={`${rowIndent} text-[10px] text-blue-700 mt-1 px-2`}>
-                  Shift+Up/Down move • Shift+Left out above group • Shift+Right out below group • + / - / & add operation
+                  Shift+Up/Down move • Shift+Left out above group • Shift+Right out below group {/* • + / - / & add operation */}
                 </div>
               )}
             </React.Fragment>
@@ -1157,7 +1157,7 @@ const TerritoryBuilder = ({
             </div>
             {isRowSelected && (
               <div className={`${rowIndent} text-[10px] text-blue-700 mt-1 px-2`}>
-                Shift+Up/Down move • Shift+Left out above group • Shift+Right out below group • + / - / & add operation
+                Shift+Up/Down move • Shift+Left out above group • Shift+Right out below group {/* • + / - / & add operation */}
               </div>
             )}
           </React.Fragment>

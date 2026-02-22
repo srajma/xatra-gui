@@ -1960,25 +1960,25 @@ def maps_default_name(request: Request):
     try:
         user = _request_user(conn, request)
         owner = user["username"] if user else GUEST_USERNAME
-        # Reuse the most recently updated unpublished new_map_* artifact if one exists,
-        # rather than always incrementing (which causes proliferation).
-        scratch = conn.execute(
-            """
-            SELECT a.name
-            FROM hub_artifacts a
-            JOIN hub_users u ON u.id = a.user_id
-            LEFT JOIN hub_artifact_versions v ON v.artifact_id = a.id
-            WHERE u.username = ? AND a.kind = 'map'
-              AND (a.name = 'new_map' OR a.name LIKE 'new_map_%')
-            GROUP BY a.id
-            HAVING COUNT(v.id) = 0
-            ORDER BY a.updated_at DESC
-            LIMIT 1
-            """,
-            (owner,),
-        ).fetchone()
-        if scratch is not None:
-            return {"username": owner, "name": scratch["name"]}
+        # # Reuse the most recently updated unpublished new_map_* artifact if one exists,
+        # # rather than always incrementing (which causes proliferation).
+        # scratch = conn.execute(
+        #     """
+        #     SELECT a.name
+        #     FROM hub_artifacts a
+        #     JOIN hub_users u ON u.id = a.user_id
+        #     LEFT JOIN hub_artifact_versions v ON v.artifact_id = a.id
+        #     WHERE u.username = ? AND a.kind = 'map'
+        #       AND (a.name = 'new_map' OR a.name LIKE 'new_map_%')
+        #     GROUP BY a.id
+        #     HAVING COUNT(v.id) = 0
+        #     ORDER BY a.updated_at DESC
+        #     LIMIT 1
+        #     """,
+        #     (owner,),
+        # ).fetchone()
+        # if scratch is not None:
+        #     return {"username": owner, "name": scratch["name"]}
         return {"username": owner, "name": _next_available_map_name(conn, owner, "new_map")}
     finally:
         conn.close()
