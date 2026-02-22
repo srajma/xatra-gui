@@ -464,6 +464,16 @@ def _init_hub_db():
             "INSERT OR IGNORE INTO hub_users(username, created_at) VALUES(?, ?)",
             (ANONYMOUS_USERNAME, _utc_now_iso()),
         )
+        # Backfill owner votes for any map missing its canonical self-vote.
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO hub_votes(artifact_id, user_id, created_at)
+            SELECT a.id, a.user_id, ?
+            FROM hub_artifacts a
+            WHERE a.kind = 'map'
+            """,
+            (_utc_now_iso(),),
+        )
         # Purge stale guest drafts (older than 90 days).
         conn.execute(
             """
@@ -501,7 +511,7 @@ def _hub_get_artifact(conn: sqlite3.Connection, username: str, kind: str, name: 
     return conn.execute(
         """
         SELECT
-            a.id, a.kind, a.name, a.alpha_content, a.alpha_metadata, a.created_at, a.updated_at,
+            a.id, a.user_id, a.kind, a.name, a.alpha_content, a.alpha_metadata, a.created_at, a.updated_at,
             u.username
         FROM hub_artifacts a
         JOIN hub_users u ON u.id = a.user_id
@@ -509,6 +519,30 @@ def _hub_get_artifact(conn: sqlite3.Connection, username: str, kind: str, name: 
         """,
         (username, kind, name),
     ).fetchone()
+
+
+def _ensure_owner_vote(conn: sqlite3.Connection, artifact_id: int, owner_user_id: int) -> None:
+    """Ensure map owner has a canonical upvote on their own map."""
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO hub_votes(artifact_id, user_id, created_at)
+        VALUES(?, ?, ?)
+        """,
+        (int(artifact_id), int(owner_user_id), _utc_now_iso()),
+    )
+
+
+def _viewer_has_voted(conn: sqlite3.Connection, artifact_id: int, request: Optional[Request]) -> bool:
+    if request is None:
+        return False
+    user = _request_user(conn, request)
+    if user is None:
+        return False
+    row = conn.execute(
+        "SELECT id FROM hub_votes WHERE artifact_id = ? AND user_id = ?",
+        (int(artifact_id), int(user["id"])),
+    ).fetchone()
+    return row is not None
 
 
 def _hub_upsert_alpha(
@@ -544,6 +578,8 @@ def _hub_upsert_alpha(
     row = _hub_get_artifact(conn, username, kind, name)
     if row is None:
         raise HTTPException(status_code=500, detail="Failed to persist artifact")
+    if kind == "map":
+        _ensure_owner_vote(conn, row["id"], row["user_id"])
     return row
 
 
@@ -862,7 +898,7 @@ def _hub_kind_label(kind: str) -> str:
     return "css"
 
 
-def _hub_artifact_response(conn: sqlite3.Connection, artifact: sqlite3.Row) -> Dict[str, Any]:
+def _hub_artifact_response(conn: sqlite3.Connection, artifact: sqlite3.Row, request: Optional[Request] = None) -> Dict[str, Any]:
     versions_rows = conn.execute(
         """
         SELECT version, created_at
@@ -905,6 +941,7 @@ def _hub_artifact_response(conn: sqlite3.Connection, artifact: sqlite3.Row) -> D
         "created_at": artifact["created_at"],
         "updated_at": artifact["updated_at"],
         "votes": _map_vote_count(conn, artifact["id"]) if artifact["kind"] == "map" else 0,
+        "viewer_voted": _viewer_has_voted(conn, artifact["id"], request) if artifact["kind"] == "map" else False,
         "views": _map_view_count(conn, artifact["id"]) if artifact["kind"] == "map" else 0,
     }
 
@@ -2079,6 +2116,10 @@ def maps_vote(username: str, map_name: str, request: Request):
         artifact = _hub_get_artifact(conn, username, "map", map_name)
         if artifact is None:
             raise HTTPException(status_code=404, detail="Map not found")
+        if int(user["id"]) == int(artifact["user_id"]):
+            _ensure_owner_vote(conn, artifact["id"], artifact["user_id"])
+            conn.commit()
+            return {"voted": True, "votes": _map_vote_count(conn, artifact["id"])}
         existing = conn.execute(
             "SELECT id FROM hub_votes WHERE artifact_id = ? AND user_id = ?",
             (artifact["id"], user["id"]),
@@ -2389,7 +2430,7 @@ def hub_save_alpha(username: str, kind: str, name: str, request: HubArtifactWrit
         md["updated_at"] = _utc_now_iso()
         artifact = _hub_upsert_alpha(conn, username, kind, name, content, md)
         conn.commit()
-        return _hub_artifact_response(conn, artifact)
+        return _hub_artifact_response(conn, artifact, request=http_request)
     finally:
         conn.close()
 
@@ -2413,7 +2454,7 @@ def hub_publish(username: str, kind: str, name: str, request: HubArtifactWriteRe
             ).fetchone()
             latest_content = latest_row["content"] if latest_row else ""
             if latest_content == content:
-                resp = _hub_artifact_response(conn, current)
+                resp = _hub_artifact_response(conn, current, request=http_request)
                 resp["published"] = None
                 resp["no_changes"] = True
                 return resp
@@ -2423,17 +2464,9 @@ def hub_publish(username: str, kind: str, name: str, request: HubArtifactWriteRe
             raise HTTPException(status_code=500, detail="Artifact missing after publish")
         # Auto-like own map on publish (idempotent — only if not already voted)
         if kind == "map" and user_row is not None:
-            existing_vote = conn.execute(
-                "SELECT id FROM hub_votes WHERE artifact_id = ? AND user_id = ?",
-                (artifact["id"], user_row["id"]),
-            ).fetchone()
-            if not existing_vote:
-                conn.execute(
-                    "INSERT INTO hub_votes(artifact_id, user_id, created_at) VALUES(?, ?, ?)",
-                    (artifact["id"], user_row["id"], _utc_now_iso()),
-                )
-                conn.commit()
-        response = _hub_artifact_response(conn, artifact)
+            _ensure_owner_vote(conn, artifact["id"], user_row["id"])
+            conn.commit()
+        response = _hub_artifact_response(conn, artifact, request=http_request)
         response["published"] = publish_result
         response["no_changes"] = False
         return response
@@ -2477,13 +2510,13 @@ def hub_disassociate(username: str, kind: str, name: str, http_request: Request)
 
 
 @app.get("/hub/{username}/{kind}/{name}")
-def hub_get_artifact(username: str, kind: str, name: str):
+def hub_get_artifact(username: str, kind: str, name: str, http_request: Request):
     conn = _hub_db_conn()
     try:
         artifact = _hub_get_artifact(conn, username, kind, name)
         if artifact is None:
             raise HTTPException(status_code=404, detail="Artifact not found")
-        return _hub_artifact_response(conn, artifact)
+        return _hub_artifact_response(conn, artifact, request=http_request)
     finally:
         conn.close()
 
@@ -2496,6 +2529,9 @@ def hub_get_artifact_version(username: str, kind: str, name: str, version: str, 
         if artifact is None:
             raise HTTPException(status_code=404, detail="Artifact not found")
         if str(version).strip().lower() == "alpha":
+            if artifact["kind"] == "map":
+                _ensure_owner_vote(conn, artifact["id"], artifact["user_id"])
+                conn.commit()
             return {
                 "username": artifact["username"],
                 "kind": _hub_kind_label(artifact["kind"]),
@@ -2505,6 +2541,9 @@ def hub_get_artifact_version(username: str, kind: str, name: str, version: str, 
                 "metadata": _sanitize_artifact_metadata(artifact["kind"], artifact["alpha_metadata"]),
                 "updated_at": artifact["updated_at"],
                 "slug": f'/{artifact["username"]}/{_hub_kind_label(artifact["kind"])}/{artifact["name"]}/alpha',
+                "votes": _map_vote_count(conn, artifact["id"]) if artifact["kind"] == "map" else 0,
+                "views": _map_view_count(conn, artifact["id"]) if artifact["kind"] == "map" else 0,
+                "viewer_voted": _viewer_has_voted(conn, artifact["id"], http_request) if artifact["kind"] == "map" else False,
             }
         if not str(version).isdigit():
             raise HTTPException(status_code=400, detail="version must be 'alpha' or integer")
@@ -2527,6 +2566,9 @@ def hub_get_artifact_version(username: str, kind: str, name: str, version: str, 
             "metadata": _sanitize_artifact_metadata(artifact["kind"], row["metadata"]),
             "created_at": row["created_at"],
             "slug": f'/{artifact["username"]}/{_hub_kind_label(artifact["kind"])}/{artifact["name"]}/{int(row["version"])}',
+            "votes": _map_vote_count(conn, artifact["id"]) if artifact["kind"] == "map" else 0,
+            "views": _map_view_count(conn, artifact["id"]) if artifact["kind"] == "map" else 0,
+            "viewer_voted": _viewer_has_voted(conn, artifact["id"], http_request) if artifact["kind"] == "map" else False,
         }
     finally:
         conn.close()

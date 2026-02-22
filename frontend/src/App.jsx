@@ -156,6 +156,7 @@ function App() {
   const [sourceMapRef, setSourceMapRef] = useState(null);
   const [forkedFrom, setForkedFrom] = useState(null);
   const [mapVotes, setMapVotes] = useState(0);
+  const [mapUserVoted, setMapUserVoted] = useState(false);
   const [mapViews, setMapViews] = useState(0);
   const [importsCode, setImportsCode] = useState(DEFAULT_INDIC_IMPORT_CODE);
   const [hubImports, setHubImports] = useState([{ ...DEFAULT_INDIC_IMPORT }]);
@@ -341,6 +342,7 @@ xatra.TitleBox("<b>My Map</b>")
   const normalizedHubUsername = String(currentUser?.user?.username || 'guest').trim().toLowerCase() || 'guest';
   const viewedMapVersion = String(route?.version || 'alpha');
   const isMapAuthor = !!(currentUser.is_authenticated && normalizedHubUsername === mapOwner);
+  const hasLikedMap = isMapAuthor || mapUserVoted;
   const isReadOnlyMap = !!(route.owner && route.map) && (!isMapAuthor || viewedMapVersion !== 'alpha');
   const showMapMetaLine = !!(route.owner && route.map) || currentUser.is_authenticated;
   const editorContextReady = route.page !== 'editor' || !!route.owner || authReady;
@@ -755,6 +757,7 @@ xatra.TitleBox("<b>My Map</b>")
       }
       setMapName(name);
       setMapOwner(owner);
+      setMapUserVoted(false);
       // Trigger initial render with fresh data (state updates are async, so pass data directly)
       if (parsed?.project?.elements && parsed?.project?.options) {
         renderMapWithData({
@@ -771,11 +774,14 @@ xatra.TitleBox("<b>My Map</b>")
       const viewResp = await apiFetch(`/maps/${owner}/${name}/view`, { method: 'POST' });
       const viewData = await viewResp.json();
       if (viewResp.ok) setMapViews(Number(viewData.views || 0));
+      setMapVotes(Number(data.votes || 0));
+      setMapUserVoted(!!data.viewer_voted);
       const artifactResp = await apiFetch(`/hub/${owner}/map/${name}`);
       const artifactData = await artifactResp.json();
       if (artifactResp.ok) {
         setMapVotes(Number(artifactData.votes || 0));
         setMapViews(Number(artifactData.views || 0));
+        setMapUserVoted(!!artifactData.viewer_voted);
         setMapVersionLabel(version === 'alpha' ? 'alpha' : String(version));
         const forkSrc = artifactData?.alpha?.metadata?.forked_from;
         setForkedFrom(forkSrc ? String(forkSrc) : null);
@@ -1089,6 +1095,7 @@ xatra.TitleBox("<b>My Map</b>")
       const data = await resp.json();
       if (!resp.ok) throw new Error(data.detail || 'Vote failed');
       setMapVotes(Number(data.votes || 0));
+      setMapUserVoted(!!data.voted);
     } catch (err) {
       setError(err.message);
     }
@@ -3472,10 +3479,18 @@ xatra.TitleBox("<b>My Map</b>")
                 <button
                   onClick={isMapAuthor ? undefined : handleVoteMap}
                   disabled={!(route.owner && route.map) || isMapAuthor}
-                  className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded border ${isMapAuthor ? 'opacity-60 cursor-default' : route.owner && route.map ? 'hover:bg-gray-50' : 'opacity-40'}`}
+                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded border transition-colors ${
+                    isMapAuthor
+                      ? 'cursor-default border-blue-600 bg-blue-600 text-white'
+                      : !(route.owner && route.map)
+                        ? 'opacity-40'
+                        : hasLikedMap
+                          ? 'border-blue-600 bg-blue-600 text-white hover:bg-blue-700'
+                          : 'border-gray-300 text-gray-700 hover:bg-blue-50 hover:border-blue-300'
+                  }`}
                   title={isMapAuthor ? 'You always like your own map' : 'Like/unlike'}
                 >
-                  <Triangle size={12} className={(isMapAuthor || mapVotes > 0) ? 'text-rose-600 fill-rose-600' : 'text-gray-500'} />
+                  <Triangle size={12} className={hasLikedMap ? 'text-white fill-white' : 'text-gray-500'} />
                   <span>{mapVotes} likes</span>
                 </button>
                 <span>·</span>
@@ -3577,8 +3592,7 @@ xatra.TitleBox("<b>My Map</b>")
         <div className="p-4 border-t border-gray-200 bg-gray-50">
           <button
             onClick={renderMap}
-            disabled={isReadOnlyMap}
-            className="w-full py-2.5 px-4 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg shadow-sm flex items-center justify-center gap-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+            className="w-full py-2.5 px-4 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg shadow-sm flex items-center justify-center gap-2 transition-all"
           >
             <Play className="w-5 h-5 fill-current" /> Render Map
           </button>

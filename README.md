@@ -336,7 +336,9 @@ Bugs we still have
 - [x] The New map button doesn't seem to bother checking if the name of the map entered already exists, and allows overwriting existing maps. This is bad!
 - [x] The New map prompt on the map page and on other pages seem to be slightly different? Why? E.g. the New map prompt on the other pages does not respect dark mode for some reason.
   - [x] Also the "Save map" dialog for saving an unsaved draft should respect night mode.
-  
+- [ ] For some reason, the "Published v1" message doesn't appear when the first version of a map is published. It appears for versions after v1 though.
+- [ ] For some reason, when I click the "New map" button when I am on the code editor of another map, the resulting map does not have the default elements (the Flag with name India and territory gadm("IND"), the default base options and color sequences etc.) This is quite surprising behavior---how exactly does the New map button work? Why does it even depend on the page I am currently on?
+
 Random misc
 - [x] On the new map creating editor, non logged-in user should see a red "Unsaved changes" message on the second line (i.e. below the name field etc.) as soon as they make any change worth saving, and a "Login to save/publish" link after it (this should be visible whether or not the user has made any changes).
   - [x] And when the user logs in and is returned to the map editor, make sure it correctly shows "Unsaved changes" since the map has not yet been saved.
@@ -350,10 +352,11 @@ Random misc
   - [x] forks should show "fork of [...](link to original map)" under their page's byline (i.e. under "by <user> . likes . views")
   - [x] forking a map should automatically vote it up
   - [x] users should by default have liked their own maps, and should be unable to change this
-- [ ] voting
-  - [ ] Map vote counts are buggy---when loading a map, it shows "0 votes" (both on the map page and on the Explore and User profile pages) even though they are always supposed to start with 1 vote (from the map's author). But when I check out the published versions, the vote count updates to the correct vote count, even on the Explore and Profile pages.
-  - [ ] Instead of changing the color of the little triangle to show when the user has liked a map, the whole like-count box should be shaded blue (with white text) to show this. There should also be hover styling. 
-- [ ] For maps the user can't edit (i.e. other users' maps, and even the own users' published versions), the whole Builder/Code side panel appears greyed out. While this makes sense, the "Render Map" button should not be greyed out; it should still be clickable---even for guests!
+- [x] voting
+  - [x] Map vote counts are buggy---when loading a map, it shows "0 votes" (both on the map page and on the Explore and User profile pages) even though they are always supposed to start with 1 vote (from the map's author). But when I check out the published versions, the vote count updates to the correct vote count, even on the Explore and Profile pages.
+  - [x] Instead of changing the color of the little triangle to show when the user has liked a map, the whole like-count box should be shaded blue (with white text) to show this. There should also be hover styling. 
+- [x] For maps the user can't edit (i.e. other users' maps, and even the own users' published versions), the whole Builder/Code side panel appears greyed out. While this makes sense, the "Render Map" button should not be greyed out; it should still be clickable---even for guests!
+- [ ] Move the anonymize/disassociate button in the map editor to the top bar after the export button (obviously, the button should only appear on map editor pages, specifically only on the user's own maps) and change the icon to a red trash button.
 - [ ] it may make sense to go from map names being unique per-user to unique globally, and change map/territory/theme slugs to not use the username (i.e. be simply `lib/mapname` rather than `lib/username/mapname`; `map/mapname` rather than `map/username/mapname`; `css/mapname` rather than `css/username/mapname`)
   - [ ] This will have to be updated in the original xatra project's hub.py (I maintain it, it's in `../xatra.master`) as well as in the imports list here, etc.
   - [ ] putting a username in between should still work for backwards-compatibility
