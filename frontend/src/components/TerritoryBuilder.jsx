@@ -828,12 +828,17 @@ const TerritoryBuilder = ({
 
   const predefinedVariables = useMemo(() => {
     if (!predefinedCode) return [];
+    // Strip comment lines so variables mentioned only in comments are not picked up
+    const codeWithoutComments = predefinedCode
+      .split('\n')
+      .filter((line) => !/^\s*#/.test(line))
+      .join('\n');
     const regex = /^(\w+)\s*=/gm;
     const matches = [];
     let match;
     // Exclude variables that are hub lib import aliases (they're namespaces, not territories)
     const hubAliases = new Set(hubLibImports.map((imp) => imp.alias).filter(Boolean));
-    while ((match = regex.exec(predefinedCode)) !== null) {
+    while ((match = regex.exec(codeWithoutComments)) !== null) {
       if (!hubAliases.has(match[1])) matches.push(match[1]);
     }
     return matches;
