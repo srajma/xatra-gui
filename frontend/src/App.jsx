@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Layers, Code, Play, Upload, Download, Image, Plus, Trash2, Keyboard, Copy, Check, Moon, Sun, Menu, Compass, User, Users, LogIn, LogOut, FilePlus2, Import, Save, Heart, GitFork, CloudUpload } from 'lucide-react';
+import { Layers, Code, Play, Upload, Download, Image, Plus, Trash2, Keyboard, Copy, Check, Moon, Sun, Menu, Compass, User, Users, LogIn, LogOut, FilePlus2, Import, Save, Heart, GitFork, CloudUpload, UserX } from 'lucide-react';
 
 // Components (defined inline for simplicity first, can be split later)
 import Builder from './components/Builder';
@@ -97,6 +97,7 @@ function App() {
   const [usersLoading, setUsersLoading] = useState(false);
   const [importLoading, setImportLoading] = useState(false);
   const [authSubmitting, setAuthSubmitting] = useState(false);
+  const [disassociateConfirm, setDisassociateConfirm] = useState({ open: false, kind: 'map', name: '', nameInput: '', loading: false, error: null });
   // Auto-save state: 'idle' | 'unsaved' | 'saving' | 'saved' | 'conflict'
   const [autoSaveStatus, setAutoSaveStatus] = useState('idle');
   const autoSaveTimerRef = useRef(null);
@@ -1857,6 +1858,22 @@ xatra.TitleBox("<b>My Map</b>")
     }
   };
 
+  const handleDisassociateMap = async () => {
+    const { kind, name, nameInput } = disassociateConfirm;
+    if (nameInput !== name) return;
+    setDisassociateConfirm((p) => ({ ...p, loading: true, error: null }));
+    try {
+      const resp = await apiFetch(`/hub/${normalizedHubUsername}/${kind}/${name}/disassociate`, { method: 'POST' });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data?.detail || 'Disassociation failed');
+      setDisassociateConfirm({ open: false, kind: 'map', name: '', nameInput: '', loading: false, error: null });
+      // Navigate away since we no longer own this map
+      navigateTo(`/${normalizedHubUsername}`);
+    } catch (err) {
+      setDisassociateConfirm((p) => ({ ...p, loading: false, error: err.message }));
+    }
+  };
+
   const handleMapVersionSelect = (version) => {
     if (!route.owner || !route.map) return;
     setMapVersionLabel(String(version || 'alpha'));
@@ -2915,10 +2932,21 @@ xatra.TitleBox("<b>My Map</b>")
             </div>
             <div className="space-y-2">
               {maps.map((m) => (
-                <a key={m.slug} href={m.slug} className={`flex items-center justify-between rounded-xl border px-4 py-3 hover:shadow-sm transition-shadow ${isDarkMode ? 'bg-slate-800 border-slate-700 hover:border-slate-600' : 'bg-white border-gray-200 hover:border-gray-300'}`}>
-                  <div className={`font-mono text-xs font-medium ${isDarkMode ? 'text-slate-200' : 'text-slate-700'}`}>{m.name}</div>
-                  <span className={`text-xs px-2 py-0.5 rounded border ${isDarkMode ? 'border-slate-600 text-slate-400' : 'border-gray-200 text-gray-400'}`}>Open →</span>
-                </a>
+                <div key={m.slug} className={`flex items-center justify-between rounded-xl border px-4 py-3 hover:shadow-sm transition-shadow ${isDarkMode ? 'bg-slate-800 border-slate-700 hover:border-slate-600' : 'bg-white border-gray-200 hover:border-gray-300'}`}>
+                  <a href={m.slug} className={`font-mono text-xs font-medium flex-1 min-w-0 ${isDarkMode ? 'text-slate-200' : 'text-slate-700'}`}>{m.name}</a>
+                  <div className="flex items-center gap-2">
+                    <a href={m.slug} className={`text-xs px-2 py-0.5 rounded border ${isDarkMode ? 'border-slate-600 text-slate-400' : 'border-gray-200 text-gray-400'}`}>Open →</a>
+                    {isOwn && (
+                      <button
+                        onClick={(e) => { e.preventDefault(); setDisassociateConfirm({ open: true, kind: m.kind || 'map', name: m.name, nameInput: '', loading: false, error: null }); }}
+                        className={`p-1 rounded border hover:bg-red-50 hover:border-red-300 transition-colors ${isDarkMode ? 'border-slate-600' : 'border-gray-200'}`}
+                        title="Disassociate from your account"
+                      >
+                        <UserX size={12} className={`${isDarkMode ? 'text-slate-400' : 'text-gray-400'} hover:text-red-500`}/>
+                      </button>
+                    )}
+                  </div>
+                </div>
               ))}
             </div>
             <div className={`flex items-center gap-3 mt-5 ${isDarkMode ? 'text-slate-400' : 'text-gray-500'}`}>
@@ -2966,9 +2994,20 @@ xatra.TitleBox("<b>My Map</b>")
                   <GitFork size={13} className="text-gray-700"/>
                 </button>
               ) : (
-                <button onClick={handlePublishMap} className="p-1.5 bg-white border border-gray-300 rounded hover:bg-gray-50 inline-flex items-center justify-center" title="Publish new version">
-                  <CloudUpload size={13} className="text-gray-700"/>
-                </button>
+                <>
+                  <button onClick={handlePublishMap} className="p-1.5 bg-white border border-gray-300 rounded hover:bg-gray-50 inline-flex items-center justify-center" title="Publish new version">
+                    <CloudUpload size={13} className="text-gray-700"/>
+                  </button>
+                  {route.map && isMapAuthor && (
+                    <button
+                      onClick={() => setDisassociateConfirm({ open: true, kind: 'map', name: normalizedMapName, nameInput: '', loading: false, error: null })}
+                      className="p-1.5 bg-white border border-gray-300 rounded hover:bg-red-50 hover:border-red-300 inline-flex items-center justify-center"
+                      title="Disassociate map from your account"
+                    >
+                      <UserX size={13} className="text-gray-400 hover:text-red-500"/>
+                    </button>
+                  )}
+                </>
               )}
               {currentMapVersionOptions.length > 0 && (
                 <select
@@ -3400,6 +3439,58 @@ xatra.TitleBox("<b>My Map</b>")
             </div>
             <div ref={importGridRef} className="flex-1 overflow-auto p-3 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
               {(hubSearchResults || []).map((item) => renderImportCatalogCard(item))}
+            </div>
+          </div>
+        </div>
+      )}
+      {disassociateConfirm.open && (
+        <div className="fixed inset-0 bg-black/50 z-[200] flex items-center justify-center" onClick={(e) => { if (e.target === e.currentTarget) setDisassociateConfirm((p) => ({ ...p, open: false })); }}>
+          <div className={`w-[420px] max-w-[95vw] rounded-xl border shadow-2xl p-6 flex flex-col gap-4 ${isDarkMode ? 'bg-slate-900 border-slate-700 text-slate-100' : 'bg-white border-gray-200 text-slate-800'}`}>
+            <div className="flex items-center gap-3">
+              <UserX size={20} className="text-red-500 flex-shrink-0"/>
+              <div className="font-semibold text-base">Disassociate map</div>
+            </div>
+            <div className={`text-sm leading-relaxed ${isDarkMode ? 'text-slate-300' : 'text-gray-600'}`}>
+              This will remove <span className="font-mono font-semibold">{disassociateConfirm.name}</span> from your account and transfer it to an anonymous user.
+              <br/><br/>
+              You will <strong>permanently lose all ownership and editing rights</strong> to this map (though you can fork it). Published versions will remain accessible.
+            </div>
+            <div className={`rounded-lg border px-3 py-2 text-xs ${isDarkMode ? 'bg-red-900/20 border-red-700/40 text-red-300' : 'bg-red-50 border-red-200 text-red-700'}`}>
+              This action cannot be undone.
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <label className={`text-xs font-medium ${isDarkMode ? 'text-slate-400' : 'text-gray-500'}`}>
+                Type <span className="font-mono font-semibold">{disassociateConfirm.name}</span> to confirm
+              </label>
+              <input
+                autoFocus
+                value={disassociateConfirm.nameInput}
+                onChange={(e) => setDisassociateConfirm((p) => ({ ...p, nameInput: e.target.value }))}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && disassociateConfirm.nameInput === disassociateConfirm.name) handleDisassociateMap();
+                  else if (e.key === 'Escape') setDisassociateConfirm((p) => ({ ...p, open: false }));
+                }}
+                className={`w-full border rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-red-400 ${isDarkMode ? 'bg-slate-800 border-slate-600 text-white' : 'bg-white border-gray-300'}`}
+                placeholder={disassociateConfirm.name}
+              />
+            </div>
+            {disassociateConfirm.error && (
+              <div className="text-xs text-red-500">{disassociateConfirm.error}</div>
+            )}
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setDisassociateConfirm((p) => ({ ...p, open: false }))}
+                className={`px-4 py-2 rounded-lg border text-sm transition-colors ${isDarkMode ? 'border-slate-600 text-slate-300 hover:bg-slate-800' : 'border-gray-300 text-gray-600 hover:bg-gray-50'}`}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDisassociateMap}
+                disabled={disassociateConfirm.nameInput !== disassociateConfirm.name || disassociateConfirm.loading}
+                className="px-4 py-2 rounded-lg text-sm font-medium bg-red-600 text-white hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              >
+                {disassociateConfirm.loading ? 'Disassociating…' : 'Disassociate'}
+              </button>
             </div>
           </div>
         </div>

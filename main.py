@@ -71,8 +71,10 @@ HUB_NAME_PATTERN = re.compile(r"^[a-z0-9_.]+$")
 HUB_USER_PATTERN = re.compile(r"^[a-z0-9_.-]+$")
 HUB_KINDS = {"map", "lib", "css"}
 GUEST_USERNAME = "guest"
+ANONYMOUS_USERNAME = "anonymous"
 HUB_RESERVED_USERNAMES = {
     GUEST_USERNAME,
+    ANONYMOUS_USERNAME,
     "admin",
     "explore",
     "users",
@@ -453,6 +455,11 @@ def _init_hub_db():
                 "UPDATE hub_artifact_versions SET metadata = ? WHERE id = ?",
                 (_json_text(meta), row["id"]),
             )
+        # Ensure the anonymous user exists (for disassociated artifacts).
+        conn.execute(
+            "INSERT OR IGNORE INTO hub_users(username, created_at) VALUES(?, ?)",
+            (ANONYMOUS_USERNAME, _utc_now_iso()),
+        )
         # Purge stale guest drafts (older than 90 days).
         conn.execute(
             """
@@ -467,7 +474,8 @@ def _init_hub_db():
 
 
 def _hub_ensure_user(conn: sqlite3.Connection, username: str) -> sqlite3.Row:
-    username = _normalize_hub_user(username, allow_reserved=(str(username or "").strip().lower() == GUEST_USERNAME))
+    cleaned = str(username or "").strip().lower()
+    username = _normalize_hub_user(username, allow_reserved=(cleaned in (GUEST_USERNAME, ANONYMOUS_USERNAME)))
     now = _utc_now_iso()
     conn.execute(
         "INSERT OR IGNORE INTO hub_users(username, created_at) VALUES(?, ?)",
@@ -1952,6 +1960,25 @@ def maps_default_name(request: Request):
     try:
         user = _request_user(conn, request)
         owner = user["username"] if user else GUEST_USERNAME
+        # Reuse the most recently updated unpublished new_map_* artifact if one exists,
+        # rather than always incrementing (which causes proliferation).
+        scratch = conn.execute(
+            """
+            SELECT a.name
+            FROM hub_artifacts a
+            JOIN hub_users u ON u.id = a.user_id
+            LEFT JOIN hub_artifact_versions v ON v.artifact_id = a.id
+            WHERE u.username = ? AND a.kind = 'map'
+              AND (a.name = 'new_map' OR a.name LIKE 'new_map_%')
+            GROUP BY a.id
+            HAVING COUNT(v.id) = 0
+            ORDER BY a.updated_at DESC
+            LIMIT 1
+            """,
+            (owner,),
+        ).fetchone()
+        if scratch is not None:
+            return {"username": owner, "name": scratch["name"]}
         return {"username": owner, "name": _next_available_map_name(conn, owner, "new_map")}
     finally:
         conn.close()
@@ -2306,6 +2333,41 @@ def hub_publish(username: str, kind: str, name: str, request: HubArtifactWriteRe
         response["published"] = publish_result
         response["no_changes"] = False
         return response
+    finally:
+        conn.close()
+
+
+@app.post("/hub/{username}/{kind}/{name}/disassociate")
+def hub_disassociate(username: str, kind: str, name: str, http_request: Request):
+    """Transfer ownership of an artifact to the anonymous user, removing the author's ownership."""
+    conn = _hub_db_conn()
+    try:
+        _require_write_identity(conn, http_request, username)
+        kind = _normalize_hub_kind(kind)
+        artifact = _hub_get_artifact(conn, username, kind, name)
+        if artifact is None:
+            raise HTTPException(status_code=404, detail="Artifact not found")
+        # Ensure the anonymous user exists.
+        anon_row = conn.execute(
+            "SELECT id FROM hub_users WHERE username = ?", (ANONYMOUS_USERNAME,)
+        ).fetchone()
+        if anon_row is None:
+            raise HTTPException(status_code=500, detail="Anonymous user missing")
+        # Choose a unique name under the anonymous user to avoid collisions.
+        artifact_id = artifact["id"]
+        new_name = f"{name}_{artifact_id}"
+        while conn.execute(
+            "SELECT id FROM hub_artifacts WHERE user_id = ? AND kind = ? AND name = ?",
+            (anon_row["id"], kind, new_name),
+        ).fetchone():
+            new_name = f"{new_name}_{artifact_id}"
+        # Update the artifact's owner and name.
+        conn.execute(
+            "UPDATE hub_artifacts SET user_id = ?, name = ?, updated_at = ? WHERE id = ?",
+            (anon_row["id"], new_name, _utc_now_iso(), artifact_id),
+        )
+        conn.commit()
+        return {"ok": True, "new_slug": f"/{ANONYMOUS_USERNAME}/{kind}/{new_name}"}
     finally:
         conn.close()
 
