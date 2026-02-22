@@ -102,6 +102,8 @@ function App() {
   const [autoSaveStatus, setAutoSaveStatus] = useState('idle');
   const autoSaveTimerRef = useRef(null);
   const lastAutoSavedContentRef = useRef(null);
+  const editorReadyRef = useRef(false); // true after initial load phase; guards against spurious auto-saves on first render
+  const [guestHasChanges, setGuestHasChanges] = useState(false);
   // Publish status for library and theme: null | 'publishing' | 'published:v{n}' | 'no_changes' | 'error'
   const [libraryPublishStatus, setLibraryPublishStatus] = useState(null);
   const [themePublishStatus, setThemePublishStatus] = useState(null);
@@ -141,6 +143,7 @@ function App() {
   const [selectedThemeVersion, setSelectedThemeVersion] = useState('alpha');
   const [mapOwner, setMapOwner] = useState('guest');
   const [sourceMapRef, setSourceMapRef] = useState(null);
+  const [forkedFrom, setForkedFrom] = useState(null);
   const [mapVotes, setMapVotes] = useState(0);
   const [mapViews, setMapViews] = useState(0);
   const [importsCode, setImportsCode] = useState(DEFAULT_INDIC_IMPORT_CODE);
@@ -200,7 +203,9 @@ xatra.TitleBox("<b>My Map</b>")
   const pickerIframeRef = useRef(null);
   const territoryLibraryIframeRef = useRef(null);
   const menuRef = useRef(null);
+  const topBarRef = useRef(null);
   const importSearchRef = useRef(null);
+  const importGridRef = useRef(null);
   const menuOpenRef = useRef(false);
   const menuFocusIndexRef = useRef(0);
   const librarySubTabsRef = useRef(null);
@@ -532,9 +537,11 @@ xatra.TitleBox("<b>My Map</b>")
     return list;
   };
 
-  const getImportVersionOptions = (imp) => (
-    artifactVersionOptions[artifactKey(imp.username, imp.kind, imp.name)] || [{ value: 'alpha', label: 'alpha' }]
-  );
+  const getImportVersionOptions = ({ username, kind, name }) => {
+    const v = artifactVersionOptions[artifactKey(username, kind, name)];
+    if (v === null) return [];
+    return v || [{ value: 'alpha', label: 'alpha' }];
+  };
 
   const buildHubMetadata = (kind) => ({
     kind,
@@ -572,8 +579,8 @@ xatra.TitleBox("<b>My Map</b>")
       const status = data.no_changes ? 'no_changes' : `published:v${latest}`;
       setLibraryPublishStatus(status);
       setTimeout(() => setLibraryPublishStatus(null), 3000);
-      // Refresh version options
-      ensureArtifactVersions(owner, targetName, 'lib');
+      // Force-refresh version options (bypass cache)
+      ensureArtifactVersions(owner, targetName, 'lib', true);
     }
     if (kind === 'css') {
       setThemeVersionLabel(latest || 'alpha');
@@ -581,13 +588,17 @@ xatra.TitleBox("<b>My Map</b>")
       const status = data.no_changes ? 'no_changes' : `published:v${latest}`;
       setThemePublishStatus(status);
       setTimeout(() => setThemePublishStatus(null), 3000);
-      // Refresh version options
-      ensureArtifactVersions(owner, targetName, 'css');
+      // Force-refresh version options (bypass cache)
+      ensureArtifactVersions(owner, targetName, 'css', true);
     }
     if (kind === 'map') {
       setMapOwner(owner);
       setMapName(targetName);
       setStatusNotice(data.no_changes ? 'No changes' : `Published v${latest}`);
+      // Force-refresh version options (bypass cache)
+      ensureArtifactVersions(owner, targetName, 'map', true);
+      ensureArtifactVersions(owner, targetName, 'lib', true);
+      ensureArtifactVersions(owner, targetName, 'css', true);
       navigateTo(`/${owner}/map/${targetName}`);
       setTimeout(() => setStatusNotice(''), 1800);
     }
@@ -639,15 +650,14 @@ xatra.TitleBox("<b>My Map</b>")
     }
   };
 
-  const ensureArtifactVersions = async (username, name, kind) => {
+  const ensureArtifactVersions = async (username, name, kind, force = false) => {
     const key = artifactKey(username, kind, name);
-    if (artifactVersionOptions[key]) return artifactVersionOptions[key];
+    if (!force && artifactVersionOptions[key] !== undefined) return artifactVersionOptions[key];
     try {
       const resp = await apiFetch(`/hub/${username}/${kind}/${name}`);
       if (!resp.ok) {
-        const fallback = [{ value: 'alpha', label: 'alpha' }];
-        setArtifactVersionOptions((prev) => ({ ...prev, [key]: fallback }));
-        return fallback;
+        setArtifactVersionOptions((prev) => ({ ...prev, [key]: null }));
+        return null;
       }
       const data = await resp.json();
       const published = Array.isArray(data.published_versions) ? data.published_versions.map((v) => String(v.version)) : [];
@@ -686,6 +696,7 @@ xatra.TitleBox("<b>My Map</b>")
   const loadMapFromHub = async (owner, name, version = 'alpha') => {
     setAutoSaveStatus('idle');
     lastAutoSavedContentRef.current = null;
+    setForkedFrom(null);
     try {
       const resp = await apiFetch(`/maps/${owner}/${name}?version=${encodeURIComponent(version || 'alpha')}`);
       const data = await resp.json();
@@ -711,6 +722,18 @@ xatra.TitleBox("<b>My Map</b>")
       }
       setMapName(name);
       setMapOwner(owner);
+      // Trigger initial render with fresh data (state updates are async, so pass data directly)
+      if (parsed?.project?.elements && parsed?.project?.options) {
+        renderMapWithData({
+          elements: parsed.project.elements,
+          options: parsed.project.options,
+          mapCode: parsed.map_code || '',
+          predCode: parsed.predefined_code || '',
+          importsCode: parsed.imports_code || '',
+          themeCode: parsed.theme_code || '',
+          runtimeCode: parsed.runtime_code || '',
+        });
+      }
       setSourceMapRef(`/${owner}/map/${name}`);
       const viewResp = await apiFetch(`/maps/${owner}/${name}/view`, { method: 'POST' });
       const viewData = await viewResp.json();
@@ -721,6 +744,8 @@ xatra.TitleBox("<b>My Map</b>")
         setMapVotes(Number(artifactData.votes || 0));
         setMapViews(Number(artifactData.views || 0));
         setMapVersionLabel(version === 'alpha' ? 'alpha' : String(version));
+        const forkSrc = artifactData?.alpha?.metadata?.forked_from;
+        setForkedFrom(forkSrc ? String(forkSrc) : null);
       }
     } catch (err) {
       setError(err.message);
@@ -1468,11 +1493,9 @@ xatra.TitleBox("<b>My Map</b>")
         }, 50);
       } else if (isMeta && e.key === ';') {
         e.preventDefault();
-        setMenuOpen((prev) => {
-          const next = !prev;
-          if (next) setMenuFocusIndex(0);
-          return next;
-        });
+        // Focus the top bar so the user can tab through it
+        const firstFocusable = topBarRef.current?.querySelector('button, a, [tabindex]');
+        if (firstFocusable) firstFocusable.focus();
       } else if (isMeta && e.shiftKey && lowerKey === 'x') {
         e.preventDefault();
         setImportModalOpen((prev) => {
@@ -1603,6 +1626,33 @@ xatra.TitleBox("<b>My Map</b>")
       }
   };
 
+  const renderMapWithData = async ({ elements, options, mapCode, predCode, importsCode: iCode, themeCode: tCode, runtimeCode: rCode }) => {
+    setActivePreviewTab('main');
+    setLoadingByView((prev) => ({ ...prev, main: true }));
+    setError(null);
+    try {
+      const endpoint = '/render/builder';
+      const body = { elements, options, predefined_code: predCode || undefined, imports_code: iCode || undefined, theme_code: tCode || undefined, runtime_code: rCode || undefined };
+      const response = await apiFetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = await response.json();
+      if (data.error) {
+        setError(data.error);
+        console.error(data.traceback);
+      } else {
+        setMapHtml(data.html);
+        setMapPayload(data.payload);
+      }
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setLoadingByView((prev) => ({ ...prev, main: false }));
+    }
+  };
+
   const renderMap = async () => {
     const taskType = activeTab === 'code' ? 'code' : 'builder';
     setActivePreviewTab('main');
@@ -1721,7 +1771,7 @@ xatra.TitleBox("<b>My Map</b>")
   };
 
   const performAutoSave = async (content) => {
-    if (!currentUser.is_authenticated || isReadOnlyMap || !mapOwner || !normalizedMapName) return;
+    if (!currentUser.is_authenticated || isReadOnlyMap || !normalizedMapName) return;
     if (!HUB_NAME_RE.test(normalizedMapName)) return;
     setAutoSaveStatus('saving');
     try {
@@ -1788,6 +1838,8 @@ xatra.TitleBox("<b>My Map</b>")
       navigateTo('/login');
       return;
     }
+    const forkSourceOwner = route.owner;
+    const forkSourceMap = route.map;
     try {
       const base = normalizedMapName || 'new_map';
       const resp = await apiFetch(`/maps/resolve-name?base=${encodeURIComponent(base)}`);
@@ -1798,6 +1850,10 @@ xatra.TitleBox("<b>My Map</b>")
         owner: normalizedHubUsername,
         name: data.name,
       });
+      // Auto-vote on the source map after forking
+      if (forkSourceOwner && forkSourceMap) {
+        apiFetch(`/maps/${forkSourceOwner}/${forkSourceMap}/vote`, { method: 'POST' }).catch(() => {});
+      }
     } catch (err) {
       setError(`Fork failed: ${err.message}`);
     }
@@ -2338,9 +2394,24 @@ xatra.TitleBox("<b>My Map</b>")
     return () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
   }, []);
 
+  // Mark editor as past its initial load phase after editorContextReady fires.
+  // This prevents the auto-save from treating the draft/default load as "user changes".
+  useEffect(() => {
+    if (!editorContextReady) { editorReadyRef.current = false; return; }
+    const t = setTimeout(() => { editorReadyRef.current = true; }, 300);
+    return () => clearTimeout(t);
+  }, [editorContextReady]);
+
   // Auto-save: trigger 'unsaved' status and schedule save whenever content changes
   useEffect(() => {
-    if (!currentUser.is_authenticated || isReadOnlyMap || !editorContextReady) return;
+    if (!editorContextReady) return;
+    // For new maps, skip during initial load phase (before user makes any change)
+    if (!route.map && !editorReadyRef.current) return;
+    if (!currentUser.is_authenticated) {
+      setGuestHasChanges(true);
+      return;
+    }
+    if (isReadOnlyMap) return;
     setAutoSaveStatus('unsaved');
     if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
     autoSaveTimerRef.current = setTimeout(async () => {
@@ -2353,9 +2424,10 @@ xatra.TitleBox("<b>My Map</b>")
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [builderElements, builderOptions, code, predefinedCode, importsCode, themeCode, runtimeCode]);
 
-  // Initial render
+  // Initial render — for hub maps, loadMapFromHub triggers the render directly
   useEffect(() => {
     if (!editorContextReady) return;
+    if (route.owner && route.map) return; // handled by loadMapFromHub
     renderMap();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editorContextReady]);
@@ -2470,6 +2542,8 @@ xatra.TitleBox("<b>My Map</b>")
     const mapOptions = artifactVersionOptions[mapKey] || [{ value: 'alpha', label: 'alpha' }];
     const cssOptions = artifactVersionOptions[cssKey] || [{ value: 'alpha', label: 'alpha' }];
     const libOptions = artifactVersionOptions[libKey] || [{ value: 'alpha', label: 'alpha' }];
+    const cssNotFound = artifactVersionOptions[cssKey] === null;
+    const libNotFound = artifactVersionOptions[libKey] === null;
     const mapVersion = importVersionDraft[mapKey] || mapOptions[0]?.value || 'alpha';
     const cssVersion = importVersionDraft[cssKey] || cssOptions[0]?.value || 'alpha';
     const libVersion = importVersionDraft[libKey] || libOptions[0]?.value || 'alpha';
@@ -2480,12 +2554,33 @@ xatra.TitleBox("<b>My Map</b>")
     return (
       <div
         key={`${item.username}-${item.name}`}
+        data-import-card="true"
         className={`border rounded bg-white focus-within:ring-2 ring-blue-500 shadow-sm min-h-[280px] ${isCurrentMap ? 'opacity-50 grayscale' : ''}`}
         tabIndex={0}
         onKeyDown={(e) => {
           if (e.key.toLowerCase() === 'm') addHubImportLine({ ...item, kind: 'map', latest_version: mapVersion });
           if (e.key.toLowerCase() === 'c') addHubImportLine({ ...item, kind: 'css', latest_version: cssVersion });
           if (e.key.toLowerCase() === 't') addHubImportLine({ ...item, kind: 'lib', latest_version: libVersion });
+          if (['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.key)) {
+            e.preventDefault();
+            const cards = Array.from(importGridRef.current?.querySelectorAll('[data-import-card]') || []);
+            const idx = cards.indexOf(e.currentTarget);
+            if (idx === -1) return;
+            if (e.key === 'ArrowRight') { cards[idx + 1]?.focus(); }
+            else if (e.key === 'ArrowLeft') {
+              if (idx === 0) importSearchRef.current?.focus();
+              else cards[idx - 1]?.focus();
+            } else {
+              const myTop = e.currentTarget.getBoundingClientRect().top;
+              const colCount = Math.max(1, cards.filter(c => Math.abs(c.getBoundingClientRect().top - myTop) < 10).length);
+              if (e.key === 'ArrowDown') { cards[idx + colCount]?.focus(); }
+              else { // ArrowUp
+                const prevIdx = idx - colCount;
+                if (prevIdx < 0) importSearchRef.current?.focus();
+                else cards[prevIdx]?.focus();
+              }
+            }
+          }
         }}
       >
         <img src={item.thumbnail || '/vite.svg'} alt="" className="w-full h-20 object-cover bg-gray-100 rounded-t" />
@@ -2506,13 +2601,13 @@ xatra.TitleBox("<b>My Map</b>")
               <select value={cssVersion} onChange={(e) => setImportVersionDraft((prev) => ({ ...prev, [cssKey]: e.target.value }))} className="text-[11px] border rounded px-1 py-1 min-w-[72px]">
                 {cssOptions.map((opt) => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
               </select>
-              <button disabled={cssImported || isCurrentMap} className={`flex-1 text-[11px] px-2 py-1 border rounded transition-colors ${cssImported ? 'bg-blue-600 text-white border-blue-600 cursor-not-allowed' : 'hover:bg-blue-50'}`} onClick={() => addHubImportLine({ ...item, kind: 'css', latest_version: cssVersion })}>{cssImported ? '✓ CSS Imported' : 'c Import CSS'}</button>
+              <button disabled={cssImported || isCurrentMap || cssNotFound} className={`flex-1 text-[11px] px-2 py-1 border rounded transition-colors ${cssImported ? 'bg-blue-600 text-white border-blue-600 cursor-not-allowed' : cssNotFound ? 'opacity-40 cursor-not-allowed' : 'hover:bg-blue-50'}`} onClick={() => !cssNotFound && addHubImportLine({ ...item, kind: 'css', latest_version: cssVersion })} title={cssNotFound ? 'This map has no theme' : 'Import CSS'}>{cssImported ? '✓ CSS Imported' : cssNotFound ? 'No theme' : 'c Import CSS'}</button>
             </div>
             <div className="flex gap-1 items-center">
               <select value={libVersion} onChange={(e) => setImportVersionDraft((prev) => ({ ...prev, [libKey]: e.target.value }))} className="text-[11px] border rounded px-1 py-1 min-w-[72px]">
                 {libOptions.map((opt) => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
               </select>
-              <button disabled={libImported || isCurrentMap} className={`flex-1 text-[11px] px-2 py-1 border rounded transition-colors ${libImported ? 'bg-blue-600 text-white border-blue-600 cursor-not-allowed' : 'hover:bg-blue-50'}`} onClick={() => addHubImportLine({ ...item, kind: 'lib', latest_version: libVersion })}>{libImported ? '✓ Territories Imported' : 't Import Territories'}</button>
+              <button disabled={libImported || isCurrentMap || libNotFound} className={`flex-1 text-[11px] px-2 py-1 border rounded transition-colors ${libImported ? 'bg-blue-600 text-white border-blue-600 cursor-not-allowed' : libNotFound ? 'opacity-40 cursor-not-allowed' : 'hover:bg-blue-50'}`} onClick={() => !libNotFound && addHubImportLine({ ...item, kind: 'lib', latest_version: libVersion })} title={libNotFound ? 'This map has no territory library' : 'Import Territories'}>{libImported ? '✓ Territories Imported' : libNotFound ? 'No territories' : 't Import Territories'}</button>
             </div>
           </div>
           {isCurrentMap && <div className="mt-1 text-[10px] text-gray-500">Current map cannot import itself.</div>}
@@ -2520,6 +2615,123 @@ xatra.TitleBox("<b>My Map</b>")
       </div>
     );
   };
+
+  const renderTopBar = () => (
+    <div
+      ref={topBarRef}
+      className={`flex items-center h-10 px-2 gap-0.5 border-b flex-shrink-0 ${isDarkMode ? 'bg-slate-900 border-slate-700' : 'bg-white border-gray-200'}`}
+      onKeyDown={(e) => {
+        if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+        const focusables = Array.from(topBarRef.current?.querySelectorAll('button:not([disabled]), a[href]') || []);
+        const idx = focusables.indexOf(document.activeElement);
+        if (idx === -1) return;
+        e.preventDefault();
+        const next = e.key === 'ArrowRight'
+          ? focusables[(idx + 1) % focusables.length]
+          : focusables[(idx - 1 + focusables.length) % focusables.length];
+        next?.focus();
+      }}
+    >
+      {/* Hidden file input for Load JSON */}
+      <input id="xatra-load-input" type="file" className="hidden" accept=".json" onChange={handleLoadProject} />
+      {/* Left: title + file actions */}
+      <button
+        onClick={() => navigateTo('/')}
+        className={`font-bold text-sm lowercase tracking-tight px-2 py-1 rounded mr-1 ${isDarkMode ? 'text-white hover:bg-slate-800' : 'text-slate-900 hover:bg-gray-100'}`}
+        title="Home"
+      >xatra</button>
+      <button
+        onClick={() => document.getElementById('xatra-load-input')?.click()}
+        title="Load JSON"
+        className={`p-1.5 rounded ${isDarkMode ? 'text-slate-300 hover:bg-slate-800' : 'text-gray-600 hover:bg-gray-100'}`}
+      ><Upload size={14}/></button>
+      <button
+        onClick={handleSaveProject}
+        title="Save JSON"
+        className={`p-1.5 rounded ${isDarkMode ? 'text-slate-300 hover:bg-slate-800' : 'text-gray-600 hover:bg-gray-100'}`}
+      ><Download size={14}/></button>
+      <button
+        onClick={handleExportHtml}
+        title="Export HTML (Download Map)"
+        className={`p-1.5 rounded ${isDarkMode ? 'text-slate-300 hover:bg-slate-800' : 'text-gray-600 hover:bg-gray-100'}`}
+      ><Image size={14}/></button>
+      {/* Spacer */}
+      <div className="flex-1" />
+      {/* Right: nav actions */}
+      <button
+        onClick={() => navigateTo('/new-map')}
+        className="px-3 py-1 text-xs font-medium bg-blue-600 text-white rounded-lg hover:bg-blue-700 mr-1"
+        title="Create a new map"
+      >New map</button>
+      <button
+        onClick={() => navigateTo('/explore')}
+        title="Explore"
+        className={`p-1.5 rounded ${isDarkMode ? 'text-slate-300 hover:bg-slate-800' : 'text-gray-600 hover:bg-gray-100'}`}
+      ><Compass size={14}/></button>
+      <button
+        onClick={() => navigateTo('/users')}
+        title="Users"
+        className={`p-1.5 rounded ${isDarkMode ? 'text-slate-300 hover:bg-slate-800' : 'text-gray-600 hover:bg-gray-100'}`}
+      ><Users size={14}/></button>
+      <button
+        onClick={() => setIsDarkMode((p) => !p)}
+        title={isDarkMode ? 'Switch to light mode' : 'Switch to night mode'}
+        className={`p-1.5 rounded ${isDarkMode ? 'text-slate-300 hover:bg-slate-800' : 'text-gray-600 hover:bg-gray-100'}`}
+      >{isDarkMode ? <Sun size={14}/> : <Moon size={14}/>}</button>
+      <div className="relative">
+        <button
+          onClick={() => setShowShortcutHelp((prev) => !prev)}
+          title="Toggle keyboard shortcuts"
+          className={`p-1.5 rounded ${isDarkMode ? 'text-slate-300 hover:bg-slate-800' : 'text-gray-600 hover:bg-gray-100'}`}
+        ><Keyboard size={14}/></button>
+        {showShortcutHelp && (
+          <div className={`absolute top-full right-0 mt-1 z-50 rounded-lg shadow-lg p-3 text-xs w-64 border ${shortcutsPanelClass}`}>
+            <div className="font-semibold mb-2">Shortcuts</div>
+            <div>`?` toggle this panel</div>
+            <div>`Ctrl/Cmd+1` Builder tab</div>
+            <div>`Ctrl/Cmd+2` Code tab</div>
+            <div>`Ctrl/Cmd+3` Map Preview</div>
+            <div>`Ctrl/Cmd+4` Reference Map</div>
+            <div>`Ctrl/Cmd+5` Territory Library</div>
+            <div>`Ctrl/Cmd+0` Focus Territory library sub-tabs</div>
+            <div>`Ctrl/Cmd+;` Focus top bar (←→ to navigate)</div>
+            <div>`Ctrl/Cmd+Enter` Render map</div>
+            <div>`Ctrl/Cmd+Shift+Enter` Stop active preview generation</div>
+            <div>`Ctrl/Cmd+Space` Update active picker map tab</div>
+            <div>`Ctrl/Cmd+Shift+X` Import from existing map</div>
+            <div className="mt-2 pt-2 border-t border-gray-200">`Ctrl/Cmd+Shift+F` add Flag</div>
+            <div>`Ctrl/Cmd+Shift+R` add River</div>
+            <div>`Ctrl/Cmd+Shift+P` add Point</div>
+            <div>`Ctrl/Cmd+Shift+T` add Text</div>
+            <div>`Ctrl/Cmd+Shift+H` add Path</div>
+            <div>`Ctrl/Cmd+Shift+A` add Admin</div>
+            <div>`Ctrl/Cmd+Shift+D` add Data</div>
+            <div>`Ctrl/Cmd+Shift+B` add TitleBox</div>
+            <div>`Ctrl/Cmd+Shift+Y` add Python</div>
+          </div>
+        )}
+      </div>
+      {currentUser.is_authenticated ? (
+        <>
+          <a
+            href={`/${normalizedHubUsername}`}
+            className={`px-2 py-1 text-xs rounded font-mono ${isDarkMode ? 'text-slate-300 hover:bg-slate-800' : 'text-gray-700 hover:bg-gray-100'}`}
+            title="My profile"
+          >{normalizedHubUsername}</a>
+          <button
+            onClick={handleLogout}
+            title="Logout"
+            className={`p-1.5 rounded ${isDarkMode ? 'text-slate-300 hover:bg-slate-800' : 'text-gray-600 hover:bg-gray-100'}`}
+          ><LogOut size={14}/></button>
+        </>
+      ) : (
+        <button
+          onClick={() => navigateTo('/login')}
+          className={`px-3 py-1 text-xs border rounded-lg ml-1 ${isDarkMode ? 'border-slate-600 text-slate-300 hover:bg-slate-800' : 'border-gray-300 text-gray-700 hover:bg-gray-50'}`}
+        >Login/Signup</button>
+      )}
+    </div>
+  );
 
   const renderNavSidebar = (activePage) => (
     <div className={`w-56 flex-shrink-0 flex flex-col border-r ${isDarkMode ? 'bg-slate-900 border-slate-700' : 'bg-white border-gray-200'}`}>
@@ -2547,7 +2759,9 @@ xatra.TitleBox("<b>My Map</b>")
   if (route.page === 'login') {
     const inputCls = `w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300 ${isDarkMode ? 'bg-slate-800 border-slate-600 text-white placeholder-slate-500 focus:border-blue-400' : 'bg-white border-gray-300 placeholder-gray-400 focus:border-blue-400'}`;
     return (
-      <div className={`h-screen w-full flex items-center justify-center ${isDarkMode ? 'theme-dark bg-slate-950' : 'bg-gradient-to-br from-slate-50 to-gray-100'}`}>
+      <div className={`h-screen w-full flex flex-col ${isDarkMode ? 'theme-dark bg-slate-950' : 'bg-gradient-to-br from-slate-50 to-gray-100'}`}>
+        {renderTopBar()}
+        <div className="flex-1 flex items-center justify-center">
         <div className={`w-full max-w-2xl mx-4 rounded-2xl shadow-xl overflow-hidden ${isDarkMode ? 'bg-slate-900 border border-slate-700' : 'bg-white border border-gray-200'}`}>
           <div className={`px-8 py-5 border-b ${isDarkMode ? 'border-slate-700 bg-slate-800/40' : 'border-gray-100 bg-gray-50'}`}>
             <div className={`text-2xl font-bold lowercase tracking-tight ${isDarkMode ? 'text-white' : 'text-slate-900'}`}>xatra</div>
@@ -2592,6 +2806,7 @@ xatra.TitleBox("<b>My Map</b>")
             {error && <div className={`flex-1 px-3 py-1.5 rounded-lg border text-xs ${isDarkMode ? 'border-red-700 bg-red-900/20 text-red-400' : 'border-red-200 bg-red-50 text-red-700'}`}>{error}</div>}
           </div>
         </div>
+        </div>
       </div>
     );
   }
@@ -2599,8 +2814,8 @@ xatra.TitleBox("<b>My Map</b>")
   if (route.page === 'explore') {
     const totalPages = Math.max(1, Math.ceil((exploreData.total || 0) / (exploreData.per_page || 12)));
     return (
-      <div className={`h-screen w-full flex ${isDarkMode ? 'theme-dark bg-slate-950 text-slate-100' : 'bg-gray-50'}`}>
-        {renderNavSidebar('explore')}
+      <div className={`h-screen w-full flex flex-col ${isDarkMode ? 'theme-dark bg-slate-950 text-slate-100' : 'bg-gray-50'}`}>
+        {renderTopBar()}
         <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
           <div className={`border-b px-6 py-4 flex-shrink-0 ${isDarkMode ? 'border-slate-800 bg-slate-900/50' : 'border-gray-200 bg-white'}`}>
             <div className={`text-base font-semibold ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>Explore maps</div>
@@ -2628,8 +2843,8 @@ xatra.TitleBox("<b>My Map</b>")
   if (route.page === 'users') {
     const totalPages = Math.max(1, Math.ceil((usersData.total || 0) / (usersData.per_page || 20)));
     return (
-      <div className={`h-screen w-full flex ${isDarkMode ? 'theme-dark bg-slate-950 text-slate-100' : 'bg-gray-50'}`}>
-        {renderNavSidebar('users')}
+      <div className={`h-screen w-full flex flex-col ${isDarkMode ? 'theme-dark bg-slate-950 text-slate-100' : 'bg-gray-50'}`}>
+        {renderTopBar()}
         <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
           <div className={`border-b px-6 py-4 flex-shrink-0 ${isDarkMode ? 'border-slate-800 bg-slate-900/50' : 'border-gray-200 bg-white'}`}>
             <div className={`text-base font-semibold ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>Users</div>
@@ -2675,8 +2890,8 @@ xatra.TitleBox("<b>My Map</b>")
     const isOwn = authReady && profile?.username && profile.username === normalizedHubUsername && currentUser.is_authenticated;
     const profInputCls = `w-full border rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300 ${isDarkMode ? 'bg-slate-800 border-slate-600 text-white placeholder-slate-500 focus:border-blue-400' : 'bg-white border-gray-300 focus:border-blue-400'}`;
     return (
-      <div className={`h-screen w-full flex ${isDarkMode ? 'theme-dark bg-slate-950 text-slate-100' : 'bg-gray-50'}`}>
-        {renderNavSidebar('profile')}
+      <div className={`h-screen w-full flex flex-col ${isDarkMode ? 'theme-dark bg-slate-950 text-slate-100' : 'bg-gray-50'}`}>
+        {renderTopBar()}
         <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
           <div className={`border-b px-6 py-4 flex-shrink-0 ${isDarkMode ? 'border-slate-800 bg-slate-900/50' : 'border-gray-200 bg-white'}`}>
             <div className="flex items-center gap-3">
@@ -2738,7 +2953,9 @@ xatra.TitleBox("<b>My Map</b>")
   }
 
   return (
-    <div className={`flex h-screen font-sans ${isDarkMode ? 'theme-dark bg-slate-950 text-slate-100' : 'bg-gray-100'}`}>
+    <div className={`flex flex-col h-screen font-sans ${isDarkMode ? 'theme-dark bg-slate-950 text-slate-100' : 'bg-gray-100'}`}>
+      {renderTopBar()}
+      <div className="flex flex-1 overflow-hidden">
       {/* Full-screen overlay during sidebar drag to prevent iframe capturing mouse events */}
       {sidebarDragging && <div className="fixed inset-0 z-50 cursor-col-resize" style={{ userSelect: 'none' }} />}
       {/* Sidebar */}
@@ -2746,37 +2963,6 @@ xatra.TitleBox("<b>My Map</b>")
         <div className="p-4 border-b border-gray-200 bg-gray-50 flex flex-col gap-2">
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-2 min-w-0 flex-wrap">
-              <div className="relative" ref={menuRef}>
-                <button
-                  type="button"
-                  onClick={() => setMenuOpen((m) => {
-                    const next = !m;
-                    if (next) setMenuFocusIndex(0);
-                    return next;
-                  })}
-                  className="p-1.5 bg-white border border-gray-300 rounded hover:bg-gray-50"
-                  title="xatra menu"
-                >
-                  <Menu size={14} className="text-gray-700" />
-                </button>
-                {menuOpen && (
-                  <div className="absolute left-0 top-9 w-52 bg-white border rounded shadow-lg z-50 text-xs">
-                    <label onMouseEnter={() => setMenuFocusIndex(0)} className={`flex items-center gap-2 px-3 py-2 cursor-pointer ${menuFocusIndex === 0 ? 'bg-blue-50 text-blue-700' : 'hover:bg-gray-50'}`}><Upload size={12}/> Load JSON<input id="xatra-load-input" type="file" className="hidden" accept=".json" onChange={handleLoadProject} /></label>
-                    <button onMouseEnter={() => setMenuFocusIndex(1)} onClick={handleSaveProject} className={`w-full flex items-center gap-2 px-3 py-2 ${menuFocusIndex === 1 ? 'bg-blue-50 text-blue-700' : 'hover:bg-gray-50'}`}><Download size={12}/> Save JSON</button>
-                    <button onMouseEnter={() => setMenuFocusIndex(2)} onClick={handleExportHtml} className={`w-full flex items-center gap-2 px-3 py-2 ${menuFocusIndex === 2 ? 'bg-blue-50 text-blue-700' : 'hover:bg-gray-50'}`}><Image size={12}/> Export HTML</button>
-                    <button onMouseEnter={() => setMenuFocusIndex(3)} onClick={() => setIsDarkMode((prev) => !prev)} className={`w-full flex items-center gap-2 px-3 py-2 ${menuFocusIndex === 3 ? 'bg-blue-50 text-blue-700' : 'hover:bg-gray-50'}`}>{isDarkMode ? <Sun size={12}/> : <Moon size={12}/>} Night mode</button>
-                    <button onMouseEnter={() => setMenuFocusIndex(4)} onClick={() => window.open('/explore', '_blank')} className={`w-full flex items-center gap-2 px-3 py-2 ${menuFocusIndex === 4 ? 'bg-blue-50 text-blue-700' : 'hover:bg-gray-50'}`}><Compass size={12}/> Explore</button>
-                    <button onMouseEnter={() => setMenuFocusIndex(5)} onClick={() => window.open('/users', '_blank')} className={`w-full flex items-center gap-2 px-3 py-2 ${menuFocusIndex === 5 ? 'bg-blue-50 text-blue-700' : 'hover:bg-gray-50'}`}><Users size={12}/> Users</button>
-                    <button onMouseEnter={() => setMenuFocusIndex(6)} onClick={() => (currentUser.is_authenticated ? window.open(`/${normalizedHubUsername}`, '_blank') : navigateTo('/login'))} className={`w-full flex items-center gap-2 px-3 py-2 ${menuFocusIndex === 6 ? 'bg-blue-50 text-blue-700' : 'hover:bg-gray-50'}`}><User size={12}/> {currentUser.is_authenticated ? normalizedHubUsername : 'My Profile'}</button>
-                    <button onMouseEnter={() => setMenuFocusIndex(7)} onClick={() => window.open('/new-map', '_blank')} className={`w-full flex items-center gap-2 px-3 py-2 ${menuFocusIndex === 7 ? 'bg-blue-50 text-blue-700' : 'hover:bg-gray-50'}`}><FilePlus2 size={12}/> New map...</button>
-                    {currentUser.is_authenticated ? (
-                      <button onMouseEnter={() => setMenuFocusIndex(8)} onClick={handleLogout} className={`w-full flex items-center gap-2 px-3 py-2 ${menuFocusIndex === 8 ? 'bg-blue-50 text-blue-700' : 'hover:bg-gray-50'}`}><LogOut size={12}/> Logout</button>
-                    ) : (
-                      <button onMouseEnter={() => setMenuFocusIndex(8)} onClick={() => navigateTo('/login')} className={`w-full flex items-center gap-2 px-3 py-2 ${menuFocusIndex === 8 ? 'bg-blue-50 text-blue-700' : 'hover:bg-gray-50'}`}><LogIn size={12}/> Login/Signup</button>
-                    )}
-                  </div>
-                )}
-              </div>
               <input
                 type="text"
                 value={mapName}
@@ -2796,14 +2982,16 @@ xatra.TitleBox("<b>My Map</b>")
                   <CloudUpload size={13} className="text-gray-700"/>
                 </button>
               )}
-              <select
-                value={viewedMapVersion}
-                onChange={(e) => handleMapVersionSelect(e.target.value)}
-                className="text-[11px] border rounded px-1.5 py-1 bg-white font-mono"
-                title="Map version"
-              >
-                {currentMapVersionOptions.map((opt) => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
-              </select>
+              {currentMapVersionOptions.length > 0 && (
+                <select
+                  value={viewedMapVersion}
+                  onChange={(e) => handleMapVersionSelect(e.target.value)}
+                  className="text-[11px] border rounded px-1.5 py-1 bg-white font-mono"
+                  title="Map version"
+                >
+                  {currentMapVersionOptions.map((opt) => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+                </select>
+              )}
             </div>
             <div className="flex items-center gap-2">
               <div className="flex bg-white rounded-lg border border-gray-300 p-0.5">
@@ -2829,16 +3017,22 @@ xatra.TitleBox("<b>My Map</b>")
                 <a href={`/${mapOwner}`} className="text-blue-700 hover:underline">{mapOwner}</a>
                 <span>·</span>
                 <button
-                  onClick={handleVoteMap}
-                  disabled={!(route.owner && route.map)}
-                  className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded border ${route.owner && route.map ? 'hover:bg-gray-50' : 'opacity-40'}`}
-                  title="Like/unlike"
+                  onClick={isMapAuthor ? undefined : handleVoteMap}
+                  disabled={!(route.owner && route.map) || isMapAuthor}
+                  className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded border ${isMapAuthor ? 'opacity-60 cursor-default' : route.owner && route.map ? 'hover:bg-gray-50' : 'opacity-40'}`}
+                  title={isMapAuthor ? 'You always like your own map' : 'Like/unlike'}
                 >
-                  <Heart size={12} className={mapVotes > 0 ? 'text-rose-600 fill-rose-600' : 'text-gray-500'} />
+                  <Heart size={12} className={(isMapAuthor || mapVotes > 0) ? 'text-rose-600 fill-rose-600' : 'text-gray-500'} />
                   <span>{mapVotes} likes</span>
                 </button>
                 <span>·</span>
                 <span>{mapViews} views</span>
+                {forkedFrom && (
+                  <>
+                    <span>·</span>
+                    <span>fork of <a href={forkedFrom} className="text-blue-700 hover:underline">{forkedFrom}</a></span>
+                  </>
+                )}
                 {!isReadOnlyMap && autoSaveStatus !== 'idle' && (
                   <>
                     <span>·</span>
@@ -2856,6 +3050,13 @@ xatra.TitleBox("<b>My Map</b>")
                 )}
               </div>
             </>
+          )}
+          {route.page === 'editor' && !currentUser.is_authenticated && (
+            <div className="text-xs flex items-center gap-2 mt-0.5">
+              {guestHasChanges && <span className="text-red-500 font-medium">Unsaved changes</span>}
+              {guestHasChanges && <span className="text-gray-400">·</span>}
+              <a href="/login" className="text-blue-600 hover:underline">Login to save/publish</a>
+            </div>
           )}
         </div>
 
@@ -3136,40 +3337,6 @@ xatra.TitleBox("<b>My Map</b>")
         )}
 
         <div className="flex-1 overflow-hidden relative">
-            <button
-                type="button"
-                onClick={() => setShowShortcutHelp((prev) => !prev)}
-                className={`absolute top-4 right-4 z-40 rounded-full shadow p-2 border ${shortcutsToggleClass}`}
-                title="Toggle keyboard shortcuts"
-            >
-                <Keyboard size={16} />
-            </button>
-            {showShortcutHelp && (
-                <div className={`absolute top-16 right-4 z-40 rounded-lg shadow-lg p-3 text-xs w-64 border ${shortcutsPanelClass}`}>
-                    <div className="font-semibold text-gray-800 mb-2">Shortcuts</div>
-                    <div>`?` toggle this panel</div>
-                    <div>`Ctrl/Cmd+1` Builder tab</div>
-                    <div>`Ctrl/Cmd+2` Code tab</div>
-                    <div>`Ctrl/Cmd+3` Map Preview</div>
-                    <div>`Ctrl/Cmd+4` Reference Map</div>
-                    <div>`Ctrl/Cmd+5` Territory Library</div>
-                    <div>`Ctrl/Cmd+0` Focus Territory library sub-tabs</div>
-                    <div>`Ctrl/Cmd+;` Toggle xatra menu</div>
-                    <div>`Ctrl/Cmd+Enter` Render map</div>
-                    <div>`Ctrl/Cmd+Shift+Enter` Stop active preview generation</div>
-                    <div>`Ctrl/Cmd+Space` Update active picker map tab</div>
-                    <div>`Ctrl/Cmd+Shift+X` Import from existing map</div>
-                    <div className="mt-2 pt-2 border-t border-gray-200">`Ctrl/Cmd+Shift+F` add Flag</div>
-                    <div>`Ctrl/Cmd+Shift+R` add River</div>
-                    <div>`Ctrl/Cmd+Shift+P` add Point</div>
-                    <div>`Ctrl/Cmd+Shift+T` add Text</div>
-                    <div>`Ctrl/Cmd+Shift+H` add Path</div>
-                    <div>`Ctrl/Cmd+Shift+A` add Admin</div>
-                    <div>`Ctrl/Cmd+Shift+D` add Data</div>
-                    <div>`Ctrl/Cmd+Shift+B` add TitleBox</div>
-                    <div>`Ctrl/Cmd+Shift+Y` add Python</div>
-                </div>
-            )}
             {activePicker && (activePicker.context === 'layer' || isTerritoryPolygonPicker(activePicker.context)) && (
                 <div className="absolute inset-0 z-30 pointer-events-none flex items-center justify-center">
                     <div className="bg-amber-500 text-white px-6 py-4 rounded-lg shadow-2xl border-2 border-amber-600 font-semibold text-center max-w-md animate-pulse">
@@ -3214,6 +3381,13 @@ xatra.TitleBox("<b>My Map</b>")
                 ref={importSearchRef}
                 value={hubQuery}
                 onChange={(e) => setHubQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') { e.preventDefault(); searchHubRegistry(); }
+                  else if (e.key === 'ArrowDown') {
+                    e.preventDefault();
+                    importGridRef.current?.querySelector('[data-import-card]')?.focus();
+                  }
+                }}
                 placeholder='Search maps/themes/libs, e.g. "indica user:srajma"'
                 className="flex-1 border rounded p-2 text-sm"
               />
@@ -3235,12 +3409,13 @@ xatra.TitleBox("<b>My Map</b>")
                 ))}
               </div>
             </div>
-            <div className="flex-1 overflow-auto p-3 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+            <div ref={importGridRef} className="flex-1 overflow-auto p-3 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
               {(hubSearchResults || []).map((item) => renderImportCatalogCard(item))}
             </div>
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 }
