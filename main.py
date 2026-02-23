@@ -1046,6 +1046,8 @@ class BuilderRequest(BaseModel):
     imports_code: Optional[str] = None
     theme_code: Optional[str] = None
     runtime_code: Optional[str] = None
+    runtime_elements: Optional[List[MapElement]] = None
+    runtime_options: Optional[Dict[str, Any]] = None
 
 class PickerEntry(BaseModel):
     country: str
@@ -2989,10 +2991,14 @@ def draft_promote(body: DraftPromoteRequest, request: Request):
             "predefined_code": project.get("predefinedCode", ""),
             "map_code":        project.get("code", ""),
             "runtime_code":    project.get("runtimeCode", ""),
+            "runtime_elements": project.get("runtimeElements", []),
+            "runtime_options":  project.get("runtimeOptions", {}),
             "picker_options":  project.get("pickerOptions", {"entries": [], "adminRivers": False}),
             "project": {
                 "elements":       project.get("elements", []),
                 "options":        project.get("options", {}),
+                "runtimeElements": project.get("runtimeElements", []),
+                "runtimeOptions":  project.get("runtimeOptions", {}),
                 "predefinedCode": project.get("predefinedCode", ""),
                 "importsCode":    project.get("importsCode", ""),
                 "themeCode":      project.get("themeCode", ""),
@@ -3580,7 +3586,7 @@ def _extract_python_payload_text(kind: str, content: str, metadata: Dict[str, An
                     return val
         if kind == "map":
             parts = []
-            for key in ("imports_code", "theme_code", "map_code", "runtime_code", "code"):
+            for key in ("imports_code", "theme_code", "map_code", "code"):
                 val = parsed.get(key)
                 if isinstance(val, str) and val.strip():
                     parts.append(val)
@@ -3625,6 +3631,47 @@ def _filter_xatra_code(code: str, filter_only: Optional[List[str]] = None, filte
         if keep_stmt:
             kept.append(segment)
     return "\n".join(kept)
+
+def _parse_imports_code_calls(imports_code: str) -> List[Dict[str, Any]]:
+    out: List[Dict[str, Any]] = []
+    if not isinstance(imports_code, str) or not imports_code.strip():
+        return out
+    try:
+        tree = ast.parse(imports_code)
+    except Exception:
+        return out
+    for stmt in tree.body:
+        alias: Optional[str] = None
+        call: Optional[ast.Call] = None
+        if isinstance(stmt, ast.Assign):
+            if len(stmt.targets) != 1 or not isinstance(stmt.targets[0], ast.Name):
+                continue
+            alias = stmt.targets[0].id
+            if isinstance(stmt.value, ast.Call):
+                call = stmt.value
+        elif isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call):
+            call = stmt.value
+        if call is None:
+            continue
+        if _call_name(call.func) != "xatrahub":
+            continue
+        if not call.args:
+            continue
+        path_val = _python_value(call.args[0])
+        if not isinstance(path_val, str) or not path_val.strip():
+            continue
+        kwargs = {kw.arg: kw.value for kw in call.keywords if kw.arg}
+        filter_only_val = _python_value(kwargs.get("filter_only")) if "filter_only" in kwargs else None
+        filter_not_val = _python_value(kwargs.get("filter_not")) if "filter_not" in kwargs else None
+        filter_only = [str(x) for x in filter_only_val] if isinstance(filter_only_val, list) else None
+        filter_not = [str(x) for x in filter_not_val] if isinstance(filter_not_val, list) else None
+        out.append({
+            "alias": alias if isinstance(alias, str) and alias.strip() else None,
+            "path": path_val.strip(),
+            "filter_only": filter_only,
+            "filter_not": filter_not,
+        })
+    return out
 
 def run_rendering_task(task_type, data, result_queue):
     music_temp_files: List[str] = []
@@ -3918,6 +3965,34 @@ def run_rendering_task(task_type, data, result_queue):
 
         exec_globals["xatrahub"] = xatrahub
 
+    def apply_imports_code_parsed(imports_code: str, exec_globals: Dict[str, Any]):
+        if not isinstance(imports_code, str) or not imports_code.strip():
+            return
+        imports = _parse_imports_code_calls(imports_code)
+        for item in imports:
+            path = item.get("path")
+            if not isinstance(path, str) or not path.strip():
+                continue
+            loaded = exec_globals["xatrahub"](
+                path,
+                filter_only=item.get("filter_only"),
+                filter_not=item.get("filter_not"),
+            )
+            alias = item.get("alias")
+            if isinstance(alias, str) and alias.strip() and loaded is not None:
+                exec_globals[alias.strip()] = loaded
+
+    def parse_code_segment_to_builder_payload(segment: str, predefined_code: str = "") -> Dict[str, Any]:
+        parsed = sync_code_to_builder(CodeSyncRequest(code=segment or "", predefined_code=predefined_code or ""))
+        if isinstance(parsed, dict) and parsed.get("error"):
+            raise ValueError(str(parsed.get("error")))
+        elements = parsed.get("elements", []) if isinstance(parsed, dict) else []
+        options = parsed.get("options", {}) if isinstance(parsed, dict) else {}
+        return {
+            "elements": elements if isinstance(elements, list) else [],
+            "options": options if isinstance(options, dict) else {"basemaps": []},
+        }
+
     def materialize_music_path(music_value):
         if not isinstance(music_value, str):
             return music_value
@@ -3947,14 +4022,34 @@ def run_rendering_task(task_type, data, result_queue):
         import xatra
         xatra.new_map()
         m = xatra.get_current_map()
+        effective_task_type = task_type
+
+        if task_type == "code":
+            imports_code = getattr(data, "imports_code", "") or ""
+            theme_code = getattr(data, "theme_code", "") or ""
+            runtime_code = getattr(data, "runtime_code", "") or ""
+            predefined_code = getattr(data, "predefined_code", "") or ""
+            main_payload = parse_code_segment_to_builder_payload(getattr(data, "code", "") or "", predefined_code)
+            runtime_payload = parse_code_segment_to_builder_payload(runtime_code or "", "")
+            data = SimpleNamespace(
+                elements=main_payload.get("elements", []),
+                options=main_payload.get("options", {}),
+                predefined_code=predefined_code,
+                imports_code=imports_code,
+                theme_code=theme_code,
+                runtime_code="",
+                runtime_elements=runtime_payload.get("elements", []),
+                runtime_options=runtime_payload.get("options", {}),
+            )
+            effective_task_type = "builder"
         
-        if task_type == 'picker':
+        if effective_task_type == 'picker':
             apply_basemaps(getattr(data, "basemaps", None))
             for entry in data.entries:
                 m.Admin(gadm=entry.country, level=entry.level)
             if data.adminRivers:
                 m.AdminRivers()
-        elif task_type == 'territory_library':
+        elif effective_task_type == 'territory_library':
             apply_basemaps(getattr(data, "basemaps", None))
             import xatra.territory_library as territory_library
             source = (getattr(data, "source", "builtin") or "builtin").strip().lower()
@@ -4010,44 +4105,7 @@ def run_rendering_task(task_type, data, result_queue):
                         except Exception:
                             continue
                 
-        elif task_type == 'code':
-            exec_globals = {
-                "xatra": xatra,
-                "gadm": xatra.loaders.gadm,
-                "naturalearth": xatra.loaders.naturalearth,
-                "polygon": xatra.loaders.polygon,
-                "overpass": xatra.loaders.overpass,
-                "map": m,
-                "Icon": Icon,
-                "Color": Color,
-                "ColorSequence": ColorSequence,
-                "LinearColorSequence": LinearColorSequence,
-                "LinearSegmentedColormap": __import__("matplotlib.colors", fromlist=["LinearSegmentedColormap"]).LinearSegmentedColormap,
-                "plt": __import__("matplotlib.pyplot", fromlist=["pyplot"]),
-            }
-            register_xatrahub(exec_globals)
-            imports_code = getattr(data, "imports_code", "") or ""
-            theme_code = getattr(data, "theme_code", "") or ""
-            runtime_code = getattr(data, "runtime_code", "") or ""
-            predefined_code = getattr(data, "predefined_code", "") or ""
-            if imports_code.strip():
-                exec(imports_code, exec_globals)
-            import xatra.territory_library as territory_library
-            for name in dir(territory_library):
-                if not name.startswith("_") and name not in exec_globals:
-                    exec_globals[name] = getattr(territory_library, name)
-            if predefined_code.strip():
-                struct = _extract_territory_library_struct(predefined_code)
-                _, custom_map = materialize_library_namespace(struct, exec_globals, include_builtin=True)
-                exec_globals.update(custom_map)
-            if theme_code.strip():
-                apply_theme_options(_parse_theme_code_to_options(theme_code))
-            exec(data.code, exec_globals)
-            if runtime_code.strip():
-                exec(runtime_code, exec_globals)
-            m = xatra.get_current_map() # Refresh in case they used map = xatra.Map()
-            
-        elif task_type == 'builder':
+        elif effective_task_type == 'builder':
             # Apply options
             if "basemaps" in data.options:
                 for bm in data.options["basemaps"]:
@@ -4185,14 +4243,51 @@ def run_rendering_task(task_type, data, result_queue):
             imports_code = getattr(data, "imports_code", "") or ""
             theme_code = getattr(data, "theme_code", "") or ""
             runtime_code = getattr(data, "runtime_code", "") or ""
-            if imports_code.strip():
-                exec(imports_code, builder_exec_globals)
+            runtime_elements = getattr(data, "runtime_elements", None)
+            runtime_options = getattr(data, "runtime_options", None)
+            if not isinstance(runtime_elements, list) or not isinstance(runtime_options, dict):
+                parsed_runtime = parse_code_segment_to_builder_payload(runtime_code or "", "")
+                runtime_elements = parsed_runtime.get("elements", [])
+                runtime_options = parsed_runtime.get("options", {})
+            apply_imports_code_parsed(imports_code, builder_exec_globals)
             if predefined_struct.get("territories"):
                 _, predefined_namespace = materialize_library_namespace(predefined_struct, builder_exec_globals, include_builtin=True)
                 if predefined_namespace:
                     builder_exec_globals.update(predefined_namespace)
             if theme_code.strip():
                 apply_theme_options(_parse_theme_code_to_options(theme_code))
+            if isinstance(runtime_options, dict):
+                if "zoom" in runtime_options and runtime_options["zoom"] is not None:
+                    try:
+                        m.zoom(int(runtime_options["zoom"]))
+                    except Exception as e:
+                        print(f"[xatra] Warning: invalid runtime zoom value: {e}", file=sys.stderr)
+                if "focus" in runtime_options and runtime_options["focus"]:
+                    focus = runtime_options["focus"]
+                    if isinstance(focus, list) and len(focus) == 2:
+                        try:
+                            m.focus(float(focus[0]), float(focus[1]))
+                        except Exception as e:
+                            print(f"[xatra] Warning: invalid runtime focus value: {e}", file=sys.stderr)
+                if "slider" in runtime_options:
+                    sl = runtime_options["slider"]
+                    if isinstance(sl, dict):
+                        start = sl.get("start")
+                        end = sl.get("end")
+                        speed = sl.get("speed")
+                        if isinstance(start, str) and start.strip():
+                            try: start = int(start)
+                            except: start = None
+                        elif isinstance(start, str):
+                            start = None
+                        if isinstance(end, str) and end.strip():
+                            try: end = int(end)
+                            except: end = None
+                        elif isinstance(end, str):
+                            end = None
+                        if start is not None or end is not None:
+                            m.slider(start=start, end=end, speed=speed if speed else 5.0)
+                apply_theme_options(_normalize_theme_options_struct(runtime_options))
 
             def _is_empty_builder_arg(value):
                 if value is None:
@@ -4206,208 +4301,226 @@ def run_rendering_task(task_type, data, result_queue):
             def _clean_builder_args(arg_dict):
                 return {k: v for k, v in (arg_dict or {}).items() if not _is_empty_builder_arg(v)}
 
-            for el in data.elements:
-                args = resolve_builder_value(el.args.copy(), builder_exec_globals) if isinstance(el.args, dict) else {}
-                resolved_label = resolve_builder_value(el.label, builder_exec_globals)
-                if resolved_label not in (None, ""):
-                    args["label"] = resolved_label
-                args = _clean_builder_args(args)
-                    
-                if el.type == "flag":
-                    args.pop("parent", None)
-                    def _eval_part(part):
-                        if not isinstance(part, dict):
-                            return None
-                        ptype = part.get("type", "gadm")
-                        val = part.get("value")
-                        if ptype == "group":
-                            if not isinstance(val, list):
-                                return None
-                            return _eval_parts(val)
-                        if ptype == "gadm":
-                            vals = val if isinstance(val, list) else [val]
-                            out = None
-                            for item in vals:
-                                if not item:
-                                    continue
-                                t = xatra.loaders.gadm(item)
-                                out = t if out is None else (out | t)
-                            return out
-                        if ptype == "polygon":
-                            try:
-                                coords = json.loads(val) if isinstance(val, str) else val
-                                return xatra.loaders.polygon(coords)
-                            except Exception:
-                                return None
-                        if ptype == "predefined":
-                            vals = val if isinstance(val, list) else [val]
-                            out = None
-                            for item in vals:
-                                if not item:
-                                    continue
-                                # Support dotted attribute access like "indic.KURU".
-                                # Use builder_exec_globals so hub lib namespaces (added by
-                                # imports_code) are also accessible, not just predefined_namespace.
-                                parts_list = str(item).split('.')
-                                obj = builder_exec_globals.get(parts_list[0])
-                                for attr in parts_list[1:]:
-                                    if obj is None:
-                                        break
-                                    obj = getattr(obj, attr, None)
-                                t = obj
-                                if t is not None:
-                                    out = t if out is None else (out | t)
-                            return out
-                        return None
-
-                    def _eval_parts(parts):
-                        territory_obj = None
-                        if not isinstance(parts, list):
-                            return None
-                        for part in parts:
-                            op = (part.get("op", "union") if isinstance(part, dict) else "union")
-                            part_terr = _eval_part(part)
-                            if part_terr is None:
-                                continue
-                            if territory_obj is None:
-                                territory_obj = part_terr
-                            else:
-                                if op == "difference":
-                                    territory_obj = territory_obj - part_terr
-                                elif op == "intersection":
-                                    territory_obj = territory_obj & part_terr
-                                else:
-                                    territory_obj = territory_obj | part_terr
-                        return territory_obj
-
-                    if isinstance(el.value, str):
-                        territory = xatra.loaders.gadm(el.value)
-                    elif isinstance(el.value, list):
-                        territory = _eval_parts(el.value) if (len(el.value) > 0 and isinstance(el.value[0], dict)) else None
-                        if territory is None and el.value and not isinstance(el.value[0], dict):
-                            # Fallback: treat bare string list as GADM codes
-                            for code in el.value:
-                                if not isinstance(code, str):
-                                    continue
-                                t = xatra.loaders.gadm(code)
-                                territory = t if territory is None else (territory | t)
+            def _apply_builder_elements(elements_list: Any):
+                if not isinstance(elements_list, list):
+                    return
+                for el in elements_list:
+                    if isinstance(el, dict):
+                        el_type = el.get("type")
+                        el_label = el.get("label")
+                        el_value = el.get("value")
+                        el_args = el.get("args")
                     else:
+                        el_type = getattr(el, "type", None)
+                        el_label = getattr(el, "label", None)
+                        el_value = getattr(el, "value", None)
+                        el_args = getattr(el, "args", None)
+                    if not isinstance(el_type, str) or not el_type:
                         continue
-                    m.Flag(value=territory, **args)
-                    
-                elif el.type == "river":
-                    source_type = args.get("source_type", "naturalearth")
-                    if "source_type" in args: del args["source_type"]
-                    river_value = resolve_builder_value(el.value, builder_exec_globals)
-                    if river_value is not None:
-                        if source_type == "overpass":
-                            geom = xatra.loaders.overpass(river_value)
+                    args = resolve_builder_value(dict(el_args), builder_exec_globals) if isinstance(el_args, dict) else {}
+                    resolved_label = resolve_builder_value(el_label, builder_exec_globals)
+                    if resolved_label not in (None, ""):
+                        args["label"] = resolved_label
+                    args = _clean_builder_args(args)
+
+                    if el_type == "flag":
+                        args.pop("parent", None)
+                        def _eval_part(part):
+                            if not isinstance(part, dict):
+                                return None
+                            ptype = part.get("type", "gadm")
+                            val = part.get("value")
+                            if ptype == "group":
+                                if not isinstance(val, list):
+                                    return None
+                                return _eval_parts(val)
+                            if ptype == "gadm":
+                                vals = val if isinstance(val, list) else [val]
+                                out = None
+                                for item in vals:
+                                    if not item:
+                                        continue
+                                    t = xatra.loaders.gadm(item)
+                                    out = t if out is None else (out | t)
+                                return out
+                            if ptype == "polygon":
+                                try:
+                                    coords = json.loads(val) if isinstance(val, str) else val
+                                    return xatra.loaders.polygon(coords)
+                                except Exception:
+                                    return None
+                            if ptype == "predefined":
+                                vals = val if isinstance(val, list) else [val]
+                                out = None
+                                for item in vals:
+                                    if not item:
+                                        continue
+                                    parts_list = str(item).split('.')
+                                    obj = builder_exec_globals.get(parts_list[0])
+                                    for attr in parts_list[1:]:
+                                        if obj is None:
+                                            break
+                                        obj = getattr(obj, attr, None)
+                                    t = obj
+                                    if t is not None:
+                                        out = t if out is None else (out | t)
+                                return out
+                            return None
+
+                        def _eval_parts(parts):
+                            territory_obj = None
+                            if not isinstance(parts, list):
+                                return None
+                            for part in parts:
+                                op = (part.get("op", "union") if isinstance(part, dict) else "union")
+                                part_terr = _eval_part(part)
+                                if part_terr is None:
+                                    continue
+                                if territory_obj is None:
+                                    territory_obj = part_terr
+                                else:
+                                    if op == "difference":
+                                        territory_obj = territory_obj - part_terr
+                                    elif op == "intersection":
+                                        territory_obj = territory_obj & part_terr
+                                    else:
+                                        territory_obj = territory_obj | part_terr
+                            return territory_obj
+
+                        if isinstance(el_value, str):
+                            territory = xatra.loaders.gadm(el_value)
+                        elif isinstance(el_value, list):
+                            territory = _eval_parts(el_value) if (len(el_value) > 0 and isinstance(el_value[0], dict)) else None
+                            if territory is None and el_value and not isinstance(el_value[0], dict):
+                                for code in el_value:
+                                    if not isinstance(code, str):
+                                        continue
+                                    t = xatra.loaders.gadm(code)
+                                    territory = t if territory is None else (territory | t)
                         else:
-                            geom = xatra.loaders.naturalearth(river_value)
-                        m.River(value=geom, **args)
-                        
-                elif el.type == "point":
-                    pos = resolve_builder_value(el.value, builder_exec_globals)
-                    if isinstance(pos, str):
-                        pos = _json_parse(pos, pos)
-                    icon_arg = args.pop("icon", None)
-                    if icon_arg is not None and icon_arg != "":
-                        try:
-                            if isinstance(icon_arg, str):
-                                args["icon"] = Icon.builtin(icon_arg)
-                            elif isinstance(icon_arg, dict):
-                                if "shape" in icon_arg:
-                                    args["icon"] = Icon.geometric(
-                                        icon_arg.get("shape", "circle"),
-                                        color=icon_arg.get("color", "#3388ff"),
-                                        size=int(icon_arg.get("size", 24)),
-                                        border_color=icon_arg.get("border_color"),
-                                        border_width=int(icon_arg.get("border_width", 0)),
-                                    )
-                                elif "icon_url" in icon_arg or "iconUrl" in icon_arg:
-                                    url = icon_arg.get("icon_url") or icon_arg.get("iconUrl")
-                                    args["icon"] = Icon(
-                                        icon_url=url,
-                                        icon_size=tuple(icon_arg.get("icon_size", icon_arg.get("iconSize", (25, 41)))),
-                                        icon_anchor=tuple(icon_arg.get("icon_anchor", icon_arg.get("iconAnchor", (12, 41)))),
-                                    )
+                            continue
+                        m.Flag(value=territory, **args)
+
+                    elif el_type == "river":
+                        source_type = args.get("source_type", "naturalearth")
+                        if "source_type" in args:
+                            del args["source_type"]
+                        river_value = resolve_builder_value(el_value, builder_exec_globals)
+                        if river_value is not None:
+                            if source_type == "overpass":
+                                geom = xatra.loaders.overpass(river_value)
                             else:
-                                args["icon"] = icon_arg
-                        except Exception:
-                            pass
-                    m.Point(position=pos, **args)
-                    
-                elif el.type == "text":
-                    pos = resolve_builder_value(el.value, builder_exec_globals)
-                    if isinstance(pos, str):
-                        try:
-                            pos = json.loads(pos)
-                        except Exception:
-                            pass
-                    m.Text(position=pos, **args)
-                
-                elif el.type == "path":
-                    val = resolve_builder_value(el.value, builder_exec_globals)
-                    if isinstance(val, str):
-                        try:
-                            val = json.loads(val)
-                        except Exception:
-                            pass
-                    m.Path(value=val, **args)
-                    
-                elif el.type == "admin":
-                    if "label" in args: del args["label"]
-                    m.Admin(gadm=resolve_builder_value(el.value, builder_exec_globals), **args)
-                
-                elif el.type == "admin_rivers":
-                    if "label" in args: del args["label"]
-                    sources = resolve_builder_value(el.value, builder_exec_globals)
-                    if isinstance(sources, str):
-                        try:
-                            sources = json.loads(sources)
-                        except Exception:
-                            sources = [sources]
-                    m.AdminRivers(sources=sources, **args)
+                                geom = xatra.loaders.naturalearth(river_value)
+                            m.River(value=geom, **args)
 
-                elif el.type == "dataframe":
-                    import pandas as pd
-                    import io
-                    val = resolve_builder_value(el.value, builder_exec_globals)
-                    if isinstance(val, str):
-                        # Always treat the value as CSV content (never as a file path)
-                        # to prevent path traversal attacks.
-                        df = pd.read_csv(io.StringIO(val))
-                        if "label" in args: del args["label"]
-                        if args.get("data_column") in (None, ""): args.pop("data_column", None)
-                        if args.get("year_columns") in (None, [], ""): args.pop("year_columns", None)
-                        m.Dataframe(df, **args)
-                    elif val is not None:
-                        if "label" in args: del args["label"]
-                        if args.get("data_column") in (None, ""): args.pop("data_column", None)
-                        if args.get("year_columns") in (None, [], ""): args.pop("year_columns", None)
-                        m.Dataframe(val, **args)
-                elif el.type == "titlebox":
-                    if "label" in args:
-                        del args["label"]
-                    title_val = resolve_builder_value(el.value, builder_exec_globals)
-                    html = title_val if isinstance(title_val, str) else str(title_val or "")
-                    m.TitleBox(html, **args)
-                elif el.type == "music":
-                    music_val = resolve_builder_value(el.value, builder_exec_globals)
-                    if "label" in args:
-                        del args["label"]
-                    if "filename" in args:
-                        del args["filename"]
-                    music_path = materialize_music_path(music_val)
-                    if music_path not in (None, ""):
-                        m.Music(path=music_path, **args)
-                elif el.type == "python":
-                    code_line = el.value if isinstance(el.value, str) else str(el.value or "")
-                    if code_line.strip():
-                        exec(code_line, builder_exec_globals)
+                    elif el_type == "point":
+                        pos = resolve_builder_value(el_value, builder_exec_globals)
+                        if isinstance(pos, str):
+                            pos = _json_parse(pos, pos)
+                        icon_arg = args.pop("icon", None)
+                        if icon_arg is not None and icon_arg != "":
+                            try:
+                                if isinstance(icon_arg, str):
+                                    args["icon"] = Icon.builtin(icon_arg)
+                                elif isinstance(icon_arg, dict):
+                                    if "shape" in icon_arg:
+                                        args["icon"] = Icon.geometric(
+                                            icon_arg.get("shape", "circle"),
+                                            color=icon_arg.get("color", "#3388ff"),
+                                            size=int(icon_arg.get("size", 24)),
+                                            border_color=icon_arg.get("border_color"),
+                                            border_width=int(icon_arg.get("border_width", 0)),
+                                        )
+                                    elif "icon_url" in icon_arg or "iconUrl" in icon_arg:
+                                        url = icon_arg.get("icon_url") or icon_arg.get("iconUrl")
+                                        args["icon"] = Icon(
+                                            icon_url=url,
+                                            icon_size=tuple(icon_arg.get("icon_size", icon_arg.get("iconSize", (25, 41)))),
+                                            icon_anchor=tuple(icon_arg.get("icon_anchor", icon_arg.get("iconAnchor", (12, 41)))),
+                                        )
+                                else:
+                                    args["icon"] = icon_arg
+                            except Exception:
+                                pass
+                        m.Point(position=pos, **args)
 
-            if runtime_code.strip():
-                exec(runtime_code, builder_exec_globals)
+                    elif el_type == "text":
+                        pos = resolve_builder_value(el_value, builder_exec_globals)
+                        if isinstance(pos, str):
+                            try:
+                                pos = json.loads(pos)
+                            except Exception:
+                                pass
+                        m.Text(position=pos, **args)
+
+                    elif el_type == "path":
+                        val = resolve_builder_value(el_value, builder_exec_globals)
+                        if isinstance(val, str):
+                            try:
+                                val = json.loads(val)
+                            except Exception:
+                                pass
+                        m.Path(value=val, **args)
+
+                    elif el_type == "admin":
+                        if "label" in args:
+                            del args["label"]
+                        m.Admin(gadm=resolve_builder_value(el_value, builder_exec_globals), **args)
+
+                    elif el_type == "admin_rivers":
+                        if "label" in args:
+                            del args["label"]
+                        sources = resolve_builder_value(el_value, builder_exec_globals)
+                        if isinstance(sources, str):
+                            try:
+                                sources = json.loads(sources)
+                            except Exception:
+                                sources = [sources]
+                        m.AdminRivers(sources=sources, **args)
+
+                    elif el_type == "dataframe":
+                        import pandas as pd
+                        import io
+                        val = resolve_builder_value(el_value, builder_exec_globals)
+                        if isinstance(val, str):
+                            df = pd.read_csv(io.StringIO(val))
+                            if "label" in args:
+                                del args["label"]
+                            if args.get("data_column") in (None, ""):
+                                args.pop("data_column", None)
+                            if args.get("year_columns") in (None, [], ""):
+                                args.pop("year_columns", None)
+                            m.Dataframe(df, **args)
+                        elif val is not None:
+                            if "label" in args:
+                                del args["label"]
+                            if args.get("data_column") in (None, ""):
+                                args.pop("data_column", None)
+                            if args.get("year_columns") in (None, [], ""):
+                                args.pop("year_columns", None)
+                            m.Dataframe(val, **args)
+                    elif el_type == "titlebox":
+                        if "label" in args:
+                            del args["label"]
+                        title_val = resolve_builder_value(el_value, builder_exec_globals)
+                        html = title_val if isinstance(title_val, str) else str(title_val or "")
+                        m.TitleBox(html, **args)
+                    elif el_type == "music":
+                        music_val = resolve_builder_value(el_value, builder_exec_globals)
+                        if "label" in args:
+                            del args["label"]
+                        if "filename" in args:
+                            del args["filename"]
+                        music_path = materialize_music_path(music_val)
+                        if music_path not in (None, ""):
+                            m.Music(path=music_path, **args)
+                    elif el_type == "python":
+                        code_line = el_value if isinstance(el_value, str) else str(el_value or "")
+                        if code_line.strip():
+                            exec(code_line, builder_exec_globals)
+
+            _apply_builder_elements(data.elements)
+            _apply_builder_elements(runtime_elements)
 
         m.TitleBox("<i>made with <a href='https://github.com/srajma/xatra'>xatra</a></i>")
         payload = m._export_json()

@@ -172,6 +172,8 @@ function App() {
     ...createDefaultBuilderElements()
   ]);
   const [builderOptions, setBuilderOptions] = useState(createDefaultBuilderOptions);
+  const [runtimeBuilderElements, setRuntimeBuilderElements] = useState([]);
+  const [runtimeBuilderOptions, setRuntimeBuilderOptions] = useState({});
   const [isDarkMode, setIsDarkMode] = useState(() => {
     try {
       return localStorage.getItem('xatra-theme') === 'dark';
@@ -802,6 +804,8 @@ ${DEFAULT_MAP_CODE}
           setMapOwner(currentUser?.user?.username || owner || 'guest');
           setBuilderElements(defElements);
           setBuilderOptions(defOptions);
+          setRuntimeBuilderElements([]);
+          setRuntimeBuilderOptions({});
           setCode(DEFAULT_MAP_CODE);
           setThemeCode('');
           setRuntimeCode('');
@@ -811,6 +815,8 @@ ${DEFAULT_MAP_CODE}
           renderMapWithData({
             elements: defElements,
             options: defOptions,
+            runtimeElements: [],
+            runtimeOptions: {},
             mapCode: DEFAULT_MAP_CODE,
             predCode: '',
             importsCode: defaultImportsCode,
@@ -836,9 +842,20 @@ ${DEFAULT_MAP_CODE}
         setPredefinedCode(parsed.predefined_code ?? '');
         setCode(parsed.map_code ?? '');
         setRuntimeCode(parsed.runtime_code ?? '');
+        if ((!parsed.project || !parsed.project.elements || !parsed.project.options) && Array.isArray(parsed.runtime_elements)) {
+          setRuntimeBuilderElements(parsed.runtime_elements);
+        }
+        if ((!parsed.project || !parsed.project.elements || !parsed.project.options) && parsed.runtime_options && typeof parsed.runtime_options === 'object') {
+          setRuntimeBuilderOptions(parsed.runtime_options);
+        }
         if (parsed.project && parsed.project.elements && parsed.project.options) {
           setBuilderElements(parsed.project.elements);
           setBuilderOptions(parsed.project.options);
+          setRuntimeBuilderElements(Array.isArray(parsed.project.runtimeElements) ? parsed.project.runtimeElements : []);
+          setRuntimeBuilderOptions(parsed.project.runtimeOptions && typeof parsed.project.runtimeOptions === 'object' ? parsed.project.runtimeOptions : {});
+        } else {
+          setRuntimeBuilderElements([]);
+          setRuntimeBuilderOptions({});
         }
         if (parsed.picker_options && typeof parsed.picker_options === 'object') {
           setPickerOptions(parsed.picker_options);
@@ -853,6 +870,8 @@ ${DEFAULT_MAP_CODE}
         renderMapWithData({
           elements: parsed.project.elements,
           options: parsed.project.options,
+          runtimeElements: Array.isArray(parsed.project.runtimeElements) ? parsed.project.runtimeElements : [],
+          runtimeOptions: parsed.project.runtimeOptions && typeof parsed.project.runtimeOptions === 'object' ? parsed.project.runtimeOptions : {},
           mapCode: parsed.map_code || '',
           predCode: parsed.predefined_code || '',
           importsCode: parsed.imports_code || '',
@@ -898,6 +917,8 @@ ${DEFAULT_MAP_CODE}
       if (draft.project?.elements && draft.project?.options) {
         setBuilderElements(draft.project.elements);
         setBuilderOptions(draft.project.options);
+        setRuntimeBuilderElements(Array.isArray(draft.project.runtimeElements) ? draft.project.runtimeElements : []);
+        setRuntimeBuilderOptions(draft.project.runtimeOptions && typeof draft.project.runtimeOptions === 'object' ? draft.project.runtimeOptions : {});
       }
       if (typeof draft.project?.code === 'string') setCode(draft.project.code);
       if (typeof draft.project?.predefinedCode === 'string') setPredefinedCode(draft.project.predefinedCode);
@@ -917,6 +938,8 @@ ${DEFAULT_MAP_CODE}
         renderMapWithData({
           elements: draft.project.elements,
           options: draft.project.options,
+          runtimeElements: Array.isArray(draft.project.runtimeElements) ? draft.project.runtimeElements : [],
+          runtimeOptions: draft.project.runtimeOptions && typeof draft.project.runtimeOptions === 'object' ? draft.project.runtimeOptions : {},
           mapCode: draft.project.code || '',
           predCode: draft.project.predefinedCode || '',
           importsCode: draft.project.importsCode || '',
@@ -942,6 +965,8 @@ ${DEFAULT_MAP_CODE}
           project: {
             elements: builderElements,
             options: builderOptions,
+            runtimeElements: runtimeBuilderElements,
+            runtimeOptions: runtimeBuilderOptions,
             code,
             predefinedCode,
             importsCode,
@@ -953,7 +978,7 @@ ${DEFAULT_MAP_CODE}
       }).catch(() => {});
     }, 800);
     return () => clearTimeout(t);
-  }, [normalizedMapName, builderElements, builderOptions, code, predefinedCode, importsCode, themeCode, runtimeCode, pickerOptions, currentUser.is_authenticated]);
+  }, [normalizedMapName, builderElements, builderOptions, runtimeBuilderElements, runtimeBuilderOptions, code, predefinedCode, importsCode, themeCode, runtimeCode, pickerOptions, currentUser.is_authenticated]);
 
   const loadExplore = async (page = 1, query = exploreQuery) => {
     setExploreLoading(true);
@@ -1029,6 +1054,8 @@ ${DEFAULT_MAP_CODE}
     setMapName(nextName);
     setBuilderElements(defElements);
     setBuilderOptions(defOptions);
+    setRuntimeBuilderElements([]);
+    setRuntimeBuilderOptions({});
     setCode(DEFAULT_MAP_CODE);
     setThemeCode('');
     setRuntimeCode('');
@@ -1044,6 +1071,8 @@ ${DEFAULT_MAP_CODE}
     renderMapWithData({
       elements: defElements,
       options: defOptions,
+      runtimeElements: [],
+      runtimeOptions: {},
       mapCode: DEFAULT_MAP_CODE,
       predCode: '',
       importsCode: defaultImportsCode,
@@ -1964,13 +1993,22 @@ ${DEFAULT_MAP_CODE}
       }
   };
 
-  const renderMapWithData = async ({ elements, options, mapCode, predCode, importsCode: iCode, themeCode: tCode, runtimeCode: rCode }) => {
+  const renderMapWithData = async ({ elements, options, runtimeElements = [], runtimeOptions = {}, mapCode, predCode, importsCode: iCode, themeCode: tCode, runtimeCode: rCode }) => {
     setActivePreviewTab('main');
     setLoadingByView((prev) => ({ ...prev, main: true }));
     setError(null);
     try {
       const endpoint = '/render/builder';
-      const body = { elements, options, predefined_code: predCode || undefined, imports_code: iCode || undefined, theme_code: tCode || undefined, runtime_code: rCode || undefined };
+      const body = {
+        elements,
+        options,
+        runtime_elements: runtimeElements,
+        runtime_options: runtimeOptions,
+        predefined_code: predCode || undefined,
+        imports_code: iCode || undefined,
+        theme_code: tCode || undefined,
+        runtime_code: rCode || undefined,
+      };
       const response = await apiFetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -2012,6 +2050,8 @@ ${DEFAULT_MAP_CODE}
         : {
             elements: builderElements,
             options: builderOptions,
+            runtime_elements: runtimeBuilderElements,
+            runtime_options: runtimeBuilderOptions,
             predefined_code: predefinedCode || undefined,
             imports_code: importsCode || undefined,
             theme_code: themeCode || undefined,
@@ -2177,10 +2217,13 @@ window.addEventListener('message', function(e) {
   const handleSaveProject = async () => {
     if (activeTab === 'code') {
       try {
-        const parsed = await parseCodeToBuilder();
+        const parsed = await parseMainCodeToBuilder();
+        const runtimeParsed = await parseRuntimeCodeToBuilder();
         const project = {
           elements: Array.isArray(parsed.elements) ? parsed.elements : [],
           options: parsed.options && typeof parsed.options === 'object' ? parsed.options : { basemaps: [] },
+          runtimeElements: Array.isArray(runtimeParsed.elements) ? runtimeParsed.elements : [],
+          runtimeOptions: runtimeParsed.options && typeof runtimeParsed.options === 'object' ? runtimeParsed.options : {},
           predefinedCode: typeof parsed.predefined_code === 'string' ? parsed.predefined_code : (predefinedCode || ''),
           importsCode,
           themeCode,
@@ -2192,21 +2235,45 @@ window.addEventListener('message', function(e) {
       }
       return;
     }
-    const project = { elements: builderElements, options: builderOptions, predefinedCode, importsCode, themeCode, runtimeCode };
+    const project = {
+      elements: builderElements,
+      options: builderOptions,
+      runtimeElements: runtimeBuilderElements,
+      runtimeOptions: runtimeBuilderOptions,
+      predefinedCode,
+      importsCode,
+      themeCode,
+      runtimeCode,
+    };
     downloadFile(JSON.stringify(project, null, 2), "project.json", "application/json");
   };
 
   const buildMapArtifactContent = async () => {
     let mapCodeText = code;
-    let projectPayload = { elements: builderElements, options: builderOptions, predefinedCode, importsCode, themeCode, runtimeCode };
+    let runtimeCodeText = runtimeCode;
+    let projectPayload = {
+      elements: builderElements,
+      options: builderOptions,
+      runtimeElements: runtimeBuilderElements,
+      runtimeOptions: runtimeBuilderOptions,
+      predefinedCode,
+      importsCode,
+      themeCode,
+      runtimeCode,
+    };
     if (activeTab === 'builder') {
-      mapCodeText = generatePythonCode() || '';
+      const mainGen = generatePythonCode();
+      mapCodeText = mainGen.code || '';
+      runtimeCodeText = generateRuntimeCodeFromBuilder() || '';
     } else {
       try {
-        const parsed = await parseCodeToBuilder();
+        const parsed = await parseMainCodeToBuilder();
+        const runtimeParsed = await parseRuntimeCodeToBuilder();
         projectPayload = {
           elements: Array.isArray(parsed.elements) ? parsed.elements : [],
           options: parsed.options && typeof parsed.options === 'object' ? parsed.options : { basemaps: [] },
+          runtimeElements: Array.isArray(runtimeParsed.elements) ? runtimeParsed.elements : [],
+          runtimeOptions: runtimeParsed.options && typeof runtimeParsed.options === 'object' ? runtimeParsed.options : {},
           predefinedCode: typeof parsed.predefined_code === 'string' ? parsed.predefined_code : (predefinedCode || ''),
           importsCode,
           themeCode,
@@ -2221,7 +2288,9 @@ window.addEventListener('message', function(e) {
       theme_code: themeCode || '',
       predefined_code: predefinedCode || '',
       map_code: mapCodeText || '',
-      runtime_code: runtimeCode || '',
+      runtime_code: runtimeCodeText || '',
+      runtime_elements: runtimeBuilderElements,
+      runtime_options: runtimeBuilderOptions,
       picker_options: pickerOptions,
       project: projectPayload,
     });
@@ -2549,6 +2618,8 @@ window.addEventListener('message', function(e) {
           if (project.elements && project.options) {
              setBuilderElements(project.elements);
              setBuilderOptions(project.options);
+             if (Array.isArray(project.runtimeElements)) setRuntimeBuilderElements(project.runtimeElements);
+             if (project.runtimeOptions && typeof project.runtimeOptions === 'object') setRuntimeBuilderOptions(project.runtimeOptions);
              if (project.predefinedCode) setPredefinedCode(project.predefinedCode);
              if (typeof project.importsCode === 'string') {
                setImportsCode(project.importsCode);
@@ -2558,6 +2629,8 @@ window.addEventListener('message', function(e) {
              if (typeof project.runtimeCode === 'string') setRuntimeCode(project.runtimeCode);
              if (project.pickerOptions && typeof project.pickerOptions === 'object') setPickerOptions(project.pickerOptions);
           }
+          if (Array.isArray(project.runtime_elements)) setRuntimeBuilderElements(project.runtime_elements);
+          if (project.runtime_options && typeof project.runtime_options === 'object') setRuntimeBuilderOptions(project.runtime_options);
           // Also check for picker_options at top-level (from buildMapArtifactContent format)
           if (project.picker_options && typeof project.picker_options === 'object') setPickerOptions(project.picker_options);
         } catch (err) {
@@ -2642,7 +2715,10 @@ window.addEventListener('message', function(e) {
       handleTabChange('code');
   };
 
-  const generatePythonCode = () => {
+  const generatePythonCode = (elementsOverride = builderElements, optionsOverride = builderOptions, opts = {}) => {
+    const commitMain = opts.commitMain !== false;
+    const builderOptions = optionsOverride || {};
+    const builderElements = elementsOverride || [];
     const dataColormapOpt = (builderOptions.data_colormap && typeof builderOptions.data_colormap === 'object')
       ? builderOptions.data_colormap
       : (typeof builderOptions.data_colormap === 'string' && builderOptions.data_colormap
@@ -2873,23 +2949,41 @@ window.addEventListener('message', function(e) {
     });
 
     const generated = lines.join('\n');
-    setThemeCode(themeLines.join('\n'));
-    setCode(generated);
-    return generated;
+    const generatedTheme = themeLines.join('\n');
+    if (commitMain) {
+      setThemeCode(generatedTheme);
+      setCode(generated);
+    }
+    return { code: generated, themeCode: generatedTheme };
   };
 
-  const parseCodeToBuilder = async () => {
-    const combinedCode = [importsCode || '', themeCode || '', code || '', runtimeCode || ''].filter((x) => String(x).trim()).join('\n\n');
+  const generateRuntimeCodeFromBuilder = () => {
+    const result = generatePythonCode(runtimeBuilderElements, runtimeBuilderOptions, { commitMain: false });
+    const runtimeText = [result.themeCode || '', result.code || ''].filter((x) => String(x).trim()).join('\n');
+    setRuntimeCode(runtimeText);
+    return runtimeText;
+  };
+
+  const parseCodeSegmentToBuilder = async (segmentCode, segmentPredefined = '') => {
     const response = await apiFetch('/sync/code_to_builder', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ code: combinedCode, predefined_code: predefinedCode }),
+      body: JSON.stringify({ code: segmentCode || '', predefined_code: segmentPredefined || '' }),
     });
     const data = await response.json();
     if (!response.ok || data.error) {
       throw new Error(data.error || 'Failed to parse code into Builder state');
     }
     return data;
+  };
+
+  const parseMainCodeToBuilder = async () => {
+    const combinedCode = [importsCode || '', themeCode || '', code || ''].filter((x) => String(x).trim()).join('\n\n');
+    return parseCodeSegmentToBuilder(combinedCode, predefinedCode);
+  };
+
+  const parseRuntimeCodeToBuilder = async () => {
+    return parseCodeSegmentToBuilder(runtimeCode || '', '');
   };
 
   const normalizePredefinedImports = () => {
@@ -2913,15 +3007,19 @@ window.addEventListener('message', function(e) {
     if (nextTab === 'code') {
       setImportsCode(serializeHubImports(hubImports));
       generatePythonCode();
+      generateRuntimeCodeFromBuilder();
       setActiveTab('code');
       return;
     }
     if (activeTab === 'code' && nextTab === 'builder') {
       normalizePredefinedImports();
       try {
-        const parsed = await parseCodeToBuilder();
+        const parsed = await parseMainCodeToBuilder();
+        const runtimeParsed = await parseRuntimeCodeToBuilder();
         if (Array.isArray(parsed.elements)) setBuilderElements(parsed.elements);
         if (parsed.options && typeof parsed.options === 'object') setBuilderOptions(parsed.options);
+        if (Array.isArray(runtimeParsed.elements)) setRuntimeBuilderElements(runtimeParsed.elements);
+        if (runtimeParsed.options && typeof runtimeParsed.options === 'object') setRuntimeBuilderOptions(runtimeParsed.options);
         if (typeof parsed.predefined_code === 'string') setPredefinedCode(parsed.predefined_code);
         setHubImports(parseImportsCodeToItems(importsCode));
       } catch (err) {
@@ -2993,7 +3091,7 @@ window.addEventListener('message', function(e) {
     }, 3000);
     return () => { if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [normalizedMapName, currentUser.is_authenticated, builderElements, builderOptions, code, predefinedCode, importsCode, themeCode, runtimeCode]);
+  }, [normalizedMapName, currentUser.is_authenticated, builderElements, builderOptions, runtimeBuilderElements, runtimeBuilderOptions, code, predefinedCode, importsCode, themeCode, runtimeCode]);
 
   // Initial render — for hub maps, loadMapFromHub triggers the render directly;
   // for root/new-map, the route effect handles rendering after draft load or defaults.
@@ -3983,6 +4081,10 @@ window.addEventListener('message', function(e) {
               }}
               getImportVersionOptions={getImportVersionOptions}
               onSwitchHubImportVersion={switchHubImportVersion}
+              runtimeElements={runtimeBuilderElements}
+              runtimeSetElements={setRuntimeBuilderElements}
+              runtimeOptions={runtimeBuilderOptions}
+              runtimeSetOptions={setRuntimeBuilderOptions}
               readOnly={isReadOnlyMap}
             />
           ) : (
