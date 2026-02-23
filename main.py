@@ -1975,6 +1975,20 @@ def _extract_assigned_names(code: str) -> List[str]:
     return names
 
 
+def _dedupe_str_list(values: List[str]) -> List[str]:
+    out: List[str] = []
+    seen: set = set()
+    for raw in values or []:
+        if not isinstance(raw, str):
+            continue
+        value = raw.strip()
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        out.append(value)
+    return out
+
+
 def _extract_territory_index(code: str) -> List[str]:
     """Extract __TERRITORY_INDEX__ value via AST literal_eval (no exec needed)."""
     if not code or not code.strip():
@@ -1990,7 +2004,7 @@ def _extract_territory_index(code: str) -> List[str]:
                     try:
                         value = ast.literal_eval(node.value)
                         if isinstance(value, (list, tuple)):
-                            return [str(x) for x in value if isinstance(x, str)]
+                            return _dedupe_str_list([str(x) for x in value if isinstance(x, str)])
                     except Exception:
                         pass
     return []
@@ -2019,15 +2033,15 @@ def _get_territory_catalog(source: str, predefined_code: str, hub_path: Optional
             parsed = _parse_xatrahub_path(hub_path)
             loaded = _hub_load_content(parsed["username"], parsed["kind"], parsed["name"], parsed["version"])
             code_text = _extract_python_payload_text(loaded["kind"], loaded.get("content", ""), loaded.get("metadata", {}))
-            names = [n for n in _extract_assigned_names(code_text) if n != "__TERRITORY_INDEX__" and not n.startswith("_")]
-            idx = _extract_territory_index(code_text)
+            names = _dedupe_str_list([n for n in _extract_assigned_names(code_text) if n != "__TERRITORY_INDEX__" and not n.startswith("_")])
+            idx = _dedupe_str_list(_extract_territory_index(code_text))
             return {"names": names, "index_names": [n for n in idx if n in names] if idx else names}
         except Exception:
             return {"names": [], "index_names": []}
 
-    names = [n for n in dir(territory_library) if not n.startswith("_")]
+    names = _dedupe_str_list([n for n in dir(territory_library) if not n.startswith("_")])
     idx = getattr(territory_library, "__TERRITORY_INDEX__", [])
-    index_names = [str(n) for n in idx if isinstance(n, str)] if isinstance(idx, (list, tuple)) else []
+    index_names = _dedupe_str_list([str(n) for n in idx if isinstance(n, str)] if isinstance(idx, (list, tuple)) else [])
     return {
         "names": names,
         "index_names": [n for n in index_names if n in names] if index_names else names,
@@ -3499,10 +3513,10 @@ def run_rendering_task(task_type, data, result_queue):
             catalog = _get_territory_catalog(source, code, hub_path)
             selected_input = getattr(data, "selected_names", None)
             if isinstance(selected_input, list):
-                selected_names = [str(n) for n in selected_input if isinstance(n, str)]
+                selected_names = _dedupe_str_list([str(n) for n in selected_input if isinstance(n, str)])
             else:
                 selected_names = catalog.get("index_names", [])
-            selected_names = [n for n in selected_names if n in catalog.get("names", [])]
+            selected_names = _dedupe_str_list([n for n in selected_names if n in catalog.get("names", [])])
 
             if source == "custom":
                 exec_globals = {

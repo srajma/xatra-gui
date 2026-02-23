@@ -1895,6 +1895,10 @@ ${DEFAULT_MAP_CODE}
       }
   };
 
+  const dedupeNames = (values) => (
+    Array.from(new Set((values || []).map((v) => String(v || '').trim()).filter(Boolean)))
+  );
+
   const loadTerritoryLibraryCatalog = async (source = territoryLibrarySource, hubPath = null) => {
     try {
           const response = await apiFetch('/territory_library/catalog', {
@@ -1910,12 +1914,13 @@ ${DEFAULT_MAP_CODE}
           if (!response.ok || data.error) {
               throw new Error(getApiErrorMessage(data, 'Failed to load territory catalog'));
           }
-          const names = Array.isArray(data.names) ? data.names : [];
-          const indexNames = Array.isArray(data.index_names) ? data.index_names : [];
+          const names = dedupeNames(Array.isArray(data.names) ? data.names : []);
+          const indexNames = dedupeNames(Array.isArray(data.index_names) ? data.index_names : []);
           setTerritoryLibraryNames(names);
           setSelectedTerritoryNames((prev) => {
-            if (prev.length && prev.some((name) => names.includes(name))) {
-              return prev.filter((name) => names.includes(name));
+            const prevDeduped = dedupeNames(prev);
+            if (prevDeduped.length && prevDeduped.some((name) => names.includes(name))) {
+              return prevDeduped.filter((name) => names.includes(name));
             }
             return indexNames.filter((name) => names.includes(name));
           });
@@ -1949,7 +1954,7 @@ ${DEFAULT_MAP_CODE}
               setError(getApiErrorMessage(data, 'Failed to render territory library'));
           } else if (data.html) {
               setTerritoryLibraryHtml(injectTerritoryLabelOverlayPatch(data.html));
-              const names = Array.isArray(data.available_names) ? data.available_names : [];
+              const names = dedupeNames(Array.isArray(data.available_names) ? data.available_names : []);
               if (names.length) setTerritoryLibraryNames(names);
           }
       } catch (err) {
