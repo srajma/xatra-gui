@@ -22,7 +22,7 @@ To restart if the page is blank or not responding:
    ```
 3. Run `./start_gui.sh` again.
 
-Backend at `localhost:8088`, frontend at `localhost:5188` (production production at `localhost:4173`).
+Backend at `localhost:8088`, frontend at `localhost:5188` (production frontend at `localhost:4173`).
 
 ## TODO
 
