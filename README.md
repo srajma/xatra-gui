@@ -399,6 +399,7 @@ Random misc
   - [x] The interface for the Music layers is wrong. Have you looked at what its fields actually are in xatra? The xatra repo is in ../xatra.master.
     - It should not ask for a path to the mp3 file, but should have a file upload UI (and it should upload from the _user_'s system, not a path on the server system, obviously).
     - It has two optional fields: Period and Timestamps. Both of these are optional fields, so should be collapsed by default in the UI.
+- [ ] Re-converting unions of gadms or unions of custom territories from code to builder
 
 Development difficulties
 - [x] keeping synchrony between things---this should be documented, i.e. "if you change this, then change this too"
