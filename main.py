@@ -93,6 +93,11 @@ ADMIN_USERNAME = os.environ.get("XATRA_ADMIN_USERNAME", "srajma")
 ADMIN_PASSWORD_ENV = os.environ.get("XATRA_ADMIN_PASSWORD") or os.environ.get("ADMIN_PASSWORD")
 FRONTEND_PORT = int(os.environ.get("XATRA_FRONTEND_PORT", "5188"))
 FRONTEND_PREVIEW_PORT = int(os.environ.get("XATRA_FRONTEND_PREVIEW_PORT", "4173"))
+EXTRA_CORS_ORIGINS = [
+    str(x).strip()
+    for x in str(os.environ.get("XATRA_EXTRA_CORS_ORIGINS", "")).split(",")
+    if str(x).strip()
+]
 HUB_RESERVED_USERNAMES = {
     GUEST_USERNAME,
     ANONYMOUS_USERNAME,
@@ -932,14 +937,19 @@ else:
 app = FastAPI()
 _init_hub_db()
 
+DEFAULT_CORS_ORIGINS = [
+    f"http://localhost:{FRONTEND_PORT}",
+    f"http://127.0.0.1:{FRONTEND_PORT}",
+    f"http://0.0.0.0:{FRONTEND_PORT}",
+    f"http://localhost:{FRONTEND_PREVIEW_PORT}",
+    f"http://127.0.0.1:{FRONTEND_PREVIEW_PORT}",
+    f"http://0.0.0.0:{FRONTEND_PREVIEW_PORT}",
+]
+ALLOWED_CORS_ORIGINS = list(dict.fromkeys(DEFAULT_CORS_ORIGINS + EXTRA_CORS_ORIGINS))
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        f"http://localhost:{FRONTEND_PORT}",
-        f"http://127.0.0.1:{FRONTEND_PORT}",
-        f"http://localhost:{FRONTEND_PREVIEW_PORT}",
-        f"http://127.0.0.1:{FRONTEND_PREVIEW_PORT}",
-    ],
+    allow_origins=ALLOWED_CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

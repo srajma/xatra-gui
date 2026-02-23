@@ -815,11 +815,14 @@ const TerritoryBuilder = ({
     }
     Promise.all(
       hubLibImports.map(async (imp) => {
-        const hub_path = `/${imp.username}/${imp.kind}/${imp.name}/${imp.selected_version || 'alpha'}`;
+        const hub_path = imp.username
+          ? `/${imp.username}/${imp.kind}/${imp.name}/${imp.selected_version || 'alpha'}`
+          : `/${imp.kind}/${imp.name}/${imp.selected_version || 'alpha'}`;
         try {
           const res = await fetch(`${API_BASE}/territory_library/catalog`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
             body: JSON.stringify({ source: 'hub', hub_path }),
           });
           const data = await res.json();
