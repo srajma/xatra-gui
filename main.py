@@ -2014,15 +2014,9 @@ def _get_territory_catalog(source: str, predefined_code: str, hub_path: Optional
     import xatra.territory_library as territory_library
 
     if source == "custom":
-        assigned = [n for n in _extract_assigned_names(predefined_code) if n != "__TERRITORY_INDEX__"]
-        names: List[str] = []
-        seen: set = set()
-        for name in assigned:
-            if name.startswith("_") or name in seen:
-                continue
-            seen.add(name)
-            names.append(name)
-        index_names = _extract_territory_index(predefined_code) if predefined_code else []
+        struct = _extract_territory_library_struct(predefined_code or "")
+        names = [entry.get("name") for entry in struct.get("territories", []) if isinstance(entry, dict) and isinstance(entry.get("name"), str)]
+        index_names = struct.get("index_names", [])
         return {
             "names": names,
             "index_names": [n for n in index_names if n in names] if index_names else names,
@@ -2032,9 +2026,13 @@ def _get_territory_catalog(source: str, predefined_code: str, hub_path: Optional
         try:
             parsed = _parse_xatrahub_path(hub_path)
             loaded = _hub_load_content(parsed["username"], parsed["kind"], parsed["name"], parsed["version"])
-            code_text = _extract_python_payload_text(loaded["kind"], loaded.get("content", ""), loaded.get("metadata", {}))
-            names = _dedupe_str_list([n for n in _extract_assigned_names(code_text) if n != "__TERRITORY_INDEX__" and not n.startswith("_")])
-            idx = _dedupe_str_list(_extract_territory_index(code_text))
+            struct = _extract_territory_library_struct(loaded.get("content", "") or "")
+            names = _dedupe_str_list([
+                entry.get("name")
+                for entry in struct.get("territories", [])
+                if isinstance(entry, dict) and isinstance(entry.get("name"), str)
+            ])
+            idx = _dedupe_str_list(struct.get("index_names", []))
             return {"names": names, "index_names": [n for n in idx if n in names] if idx else names}
         except Exception:
             return {"names": [], "index_names": []}
@@ -2046,6 +2044,289 @@ def _get_territory_catalog(source: str, predefined_code: str, hub_path: Optional
         "names": names,
         "index_names": [n for n in index_names if n in names] if index_names else names,
     }
+
+def _parse_territory_library_code_to_struct(code: str) -> Dict[str, Any]:
+    territories: List[Dict[str, Any]] = []
+    index_names: List[str] = []
+    if not isinstance(code, str) or not code.strip():
+        return {"territories": territories, "index_names": index_names}
+    try:
+        tree = ast.parse(code)
+    except Exception:
+        return {"territories": territories, "index_names": index_names}
+    seen: set = set()
+    for stmt in tree.body:
+        if not isinstance(stmt, ast.Assign):
+            continue
+        if len(stmt.targets) != 1 or not isinstance(stmt.targets[0], ast.Name):
+            continue
+        name = stmt.targets[0].id
+        if name == "__TERRITORY_INDEX__":
+            try:
+                value = ast.literal_eval(stmt.value)
+                if isinstance(value, (list, tuple)):
+                    index_names = _dedupe_str_list([str(v) for v in value if isinstance(v, str)])
+            except Exception:
+                pass
+            continue
+        if not name or name.startswith("_") or name in seen:
+            continue
+        parts = _parse_territory_expr(stmt.value)
+        if not parts:
+            continue
+        seen.add(name)
+        territories.append({"name": name, "parts": parts})
+    valid_names = {entry["name"] for entry in territories if isinstance(entry, dict) and isinstance(entry.get("name"), str)}
+    return {
+        "territories": territories,
+        "index_names": [n for n in index_names if n in valid_names] if index_names else [entry["name"] for entry in territories],
+    }
+
+
+def _extract_territory_library_struct(content: str) -> Dict[str, Any]:
+    parsed = _json_parse(content, None)
+    if isinstance(parsed, dict):
+        territories_raw = parsed.get("territories")
+        if isinstance(territories_raw, list):
+            territories: List[Dict[str, Any]] = []
+            for item in territories_raw:
+                if not isinstance(item, dict):
+                    continue
+                name = item.get("name")
+                parts = item.get("parts")
+                if not isinstance(name, str) or not name or name.startswith("_") or not isinstance(parts, list):
+                    continue
+                territories.append({"name": name, "parts": parts})
+            names = [t["name"] for t in territories]
+            idx_raw = parsed.get("index_names")
+            if isinstance(idx_raw, list):
+                idx = _dedupe_str_list([str(x) for x in idx_raw if isinstance(x, str)])
+                index_names = [n for n in idx if n in set(names)] if idx else names
+            else:
+                index_names = names
+            return {"territories": territories, "index_names": index_names}
+        for key in ("predefined_code", "code", "content"):
+            val = parsed.get(key)
+            if isinstance(val, str):
+                return _parse_territory_library_code_to_struct(val)
+    return _parse_territory_library_code_to_struct(content or "")
+
+
+def _territory_value_expr(part_type: str, value: Any) -> Optional[str]:
+    if part_type == "gadm":
+        vals = value if isinstance(value, list) else [value]
+        terms = [f"gadm({json.dumps(str(v))})" for v in vals if isinstance(v, str) and str(v).strip()]
+        return " | ".join(terms) if terms else None
+    if part_type == "predefined":
+        vals = value if isinstance(value, list) else [value]
+        terms = [str(v).strip() for v in vals if isinstance(v, str) and str(v).strip()]
+        return " | ".join(terms) if terms else None
+    if part_type == "polygon":
+        if isinstance(value, str):
+            try:
+                parsed = json.loads(value)
+            except Exception:
+                parsed = value
+        else:
+            parsed = value
+        return f"polygon({json.dumps(parsed, ensure_ascii=False)})"
+    if part_type == "group" and isinstance(value, list):
+        inner = _territory_parts_to_expr(value)
+        if inner:
+            return f"({inner})"
+    return None
+
+
+def _territory_parts_to_expr(parts: Any) -> str:
+    if not isinstance(parts, list):
+        return ""
+    expr = ""
+    first = True
+    for part in parts:
+        if not isinstance(part, dict):
+            continue
+        term = _territory_value_expr(str(part.get("type", "")), part.get("value"))
+        if not term:
+            continue
+        if first:
+            expr = term
+            first = False
+            continue
+        op = str(part.get("op", "union"))
+        token = "|" if op == "union" else ("-" if op == "difference" else "&")
+        expr = f"{expr} {token} {term}"
+    return expr
+
+
+def _territory_library_struct_to_code(struct: Dict[str, Any]) -> str:
+    lines: List[str] = []
+    territories = struct.get("territories") if isinstance(struct, dict) else None
+    if isinstance(territories, list):
+        for entry in territories:
+            if not isinstance(entry, dict):
+                continue
+            name = entry.get("name")
+            if not isinstance(name, str) or not name or name.startswith("_"):
+                continue
+            expr = _territory_parts_to_expr(entry.get("parts"))
+            if not expr:
+                continue
+            lines.append(f"{name} = {expr}")
+    idx_raw = struct.get("index_names") if isinstance(struct, dict) else None
+    if isinstance(idx_raw, list):
+        idx = _dedupe_str_list([str(v) for v in idx_raw if isinstance(v, str)])
+        lines.append(f"__TERRITORY_INDEX__ = {json.dumps(idx, ensure_ascii=False)}")
+    return ("\n".join(lines) + "\n") if lines else ""
+
+
+def _parse_theme_code_to_options(theme_code: str) -> Dict[str, Any]:
+    options: Dict[str, Any] = {"basemaps": []}
+    flag_rows: List[Dict[str, Any]] = []
+    admin_rows: List[Dict[str, Any]] = []
+    if not isinstance(theme_code, str) or not theme_code.strip():
+        return options
+    try:
+        tree = ast.parse(theme_code)
+    except Exception:
+        return options
+    for stmt in tree.body:
+        if not isinstance(stmt, ast.Expr) or not isinstance(stmt.value, ast.Call):
+            continue
+        call = stmt.value
+        name = _call_name(call.func)
+        if not (name and name.startswith("xatra.")):
+            continue
+        method = name.split(".", 1)[1]
+        kwargs = {kw.arg: kw.value for kw in call.keywords if kw.arg}
+        if method == "BaseOption":
+            if call.args:
+                provider = _python_value(call.args[0])
+                if isinstance(provider, str):
+                    options["basemaps"].append({
+                        "url_or_provider": provider,
+                        "name": _python_value(kwargs.get("name")) or provider,
+                        "default": bool(_python_value(kwargs.get("default"))),
+                    })
+            continue
+        if method == "CSS":
+            if call.args:
+                css_text = _python_value(call.args[0])
+                if isinstance(css_text, str):
+                    current = options.get("css_rules") or []
+                    options["css_rules"] = current + _parse_css_rules(css_text)
+            continue
+        if method == "FlagColorSequence":
+            if call.args:
+                row = _parse_linear_sequence_row_expr(call.args[0])
+                if row is None:
+                    legacy = _parse_admin_color_expr(call.args[0])
+                    if legacy:
+                        row = {
+                            "class_name": "",
+                            "colors": legacy,
+                            "step_h": 1.6180339887,
+                            "step_s": 0.0,
+                            "step_l": 0.0,
+                        }
+                if row:
+                    class_name = _python_value(kwargs.get("class_name"))
+                    row["class_name"] = class_name or ""
+                    flag_rows.append(row)
+            continue
+        if method == "AdminColorSequence":
+            if call.args:
+                row = _parse_linear_sequence_row_expr(call.args[0])
+                if row:
+                    admin_rows = [row]
+                else:
+                    legacy = _parse_admin_color_expr(call.args[0])
+                    if legacy:
+                        admin_rows = [{
+                            "class_name": "",
+                            "colors": legacy,
+                            "step_h": 1.6180339887,
+                            "step_s": 0.0,
+                            "step_l": 0.0,
+                        }]
+            continue
+        if method == "DataColormap":
+            if call.args:
+                cmap = _parse_data_colormap_expr(call.args[0])
+                if cmap:
+                    options["data_colormap"] = cmap
+            continue
+    if flag_rows:
+        options["flag_color_sequences"] = flag_rows
+    if admin_rows:
+        options["admin_color_sequences"] = admin_rows
+    return options
+
+
+def _normalize_theme_options_struct(options: Dict[str, Any]) -> Dict[str, Any]:
+    if not isinstance(options, dict):
+        return {"basemaps": []}
+    out: Dict[str, Any] = {"basemaps": []}
+    basemaps = options.get("basemaps")
+    if isinstance(basemaps, list):
+        out["basemaps"] = [bm for bm in basemaps if isinstance(bm, (dict, str))]
+    for key in ("css_rules", "flag_color_sequences", "admin_color_sequences"):
+        val = options.get(key)
+        if isinstance(val, list):
+            out[key] = [item for item in val if isinstance(item, dict)]
+    dc = options.get("data_colormap")
+    if isinstance(dc, dict):
+        out["data_colormap"] = dict(dc)
+    return out
+
+
+def _extract_theme_options_struct(content: str) -> Dict[str, Any]:
+    parsed = _json_parse(content, None)
+    if isinstance(parsed, dict):
+        opts = parsed.get("theme_options")
+        if isinstance(opts, dict):
+            return _normalize_theme_options_struct(opts)
+        for key in ("theme_code", "code", "content"):
+            val = parsed.get(key)
+            if isinstance(val, str):
+                return _parse_theme_code_to_options(val)
+    return _parse_theme_code_to_options(content or "")
+
+
+def _normalize_lib_content_for_storage(content: str) -> str:
+    parsed = _json_parse(content, None)
+    payload = dict(parsed) if isinstance(parsed, dict) else {}
+    struct = _extract_territory_library_struct(content or "")
+    payload["schema"] = "territory_library_v1"
+    payload["territories"] = struct.get("territories", [])
+    payload["index_names"] = struct.get("index_names", [])
+    payload["predefined_code"] = _territory_library_struct_to_code(struct)
+    return json.dumps(payload, ensure_ascii=False)
+
+
+def _normalize_css_content_for_storage(content: str) -> str:
+    parsed = _json_parse(content, None)
+    payload = dict(parsed) if isinstance(parsed, dict) else {}
+    if isinstance(parsed, dict):
+        original_code = parsed.get("theme_code")
+        if not isinstance(original_code, str):
+            original_code = parsed.get("code") if isinstance(parsed.get("code"), str) else ""
+    else:
+        original_code = content or ""
+    opts = _extract_theme_options_struct(content or "")
+    payload["schema"] = "theme_v1"
+    payload["theme_options"] = _normalize_theme_options_struct(opts)
+    payload["theme_code"] = original_code if isinstance(original_code, str) else ""
+    return json.dumps(payload, ensure_ascii=False)
+
+
+def _normalize_artifact_content_for_storage(kind: str, content: str) -> str:
+    normalized_kind = _normalize_hub_kind(kind)
+    raw = content or ""
+    if normalized_kind == "lib":
+        return _normalize_lib_content_for_storage(raw)
+    if normalized_kind == "css":
+        return _normalize_css_content_for_storage(raw)
+    return raw
 
 @app.post("/territory_library/catalog")
 def territory_library_catalog(request: TerritoryLibraryRequest):
@@ -2771,7 +3052,7 @@ def hub_save_alpha_by_name(kind: str, name: str, request: HubArtifactWriteReques
         if artifact is None:
             raise HTTPException(status_code=404, detail="Artifact not found")
         _require_write_identity(conn, http_request, artifact['username'])
-        content = request.content or ""
+        content = _normalize_artifact_content_for_storage(kind, request.content or "")
         if len(content.encode("utf-8")) > MAX_ARTIFACT_BYTES:
             raise HTTPException(status_code=413, detail="Content too large (max 10 MB)")
         md = dict(request.metadata or {})
@@ -2802,7 +3083,7 @@ def hub_publish_by_name(kind: str, name: str, request: HubArtifactWriteRequest, 
                 window_seconds=3600,
                 label="Publish rate limit reached. Please wait before publishing again.",
             )
-        content = request.content or ""
+        content = _normalize_artifact_content_for_storage(kind, request.content or "")
         if len(content.encode("utf-8")) > MAX_ARTIFACT_BYTES:
             raise HTTPException(status_code=413, detail="Content too large (max 10 MB)")
         md = dict(request.metadata or {})
@@ -2935,7 +3216,7 @@ def hub_save_alpha(username: str, kind: str, name: str, request: HubArtifactWrit
     conn = _hub_db_conn()
     try:
         _require_write_identity(conn, http_request, username)
-        content = request.content or ""
+        content = _normalize_artifact_content_for_storage(kind, request.content or "")
         if len(content.encode("utf-8")) > MAX_ARTIFACT_BYTES:
             raise HTTPException(status_code=413, detail="Content too large (max 10 MB)")
         # For map metadata, automatically preserve owner and updated_at.
@@ -2961,7 +3242,7 @@ def hub_publish(username: str, kind: str, name: str, request: HubArtifactWriteRe
                 window_seconds=3600,
                 label="Publish rate limit reached. Please wait before publishing again.",
             )
-        content = request.content or ""
+        content = _normalize_artifact_content_for_storage(kind, request.content or "")
         if len(content.encode("utf-8")) > MAX_ARTIFACT_BYTES:
             raise HTTPException(status_code=413, detail="Content too large (max 10 MB)")
         md = dict(request.metadata or {})
@@ -3419,6 +3700,190 @@ def run_rendering_task(task_type, data, result_queue):
             return {k: resolve_builder_value(v, eval_globals) for k, v in value.items()}
         return value
 
+    def resolve_dotted_name(scope: Dict[str, Any], name: str):
+        parts = [p for p in str(name or "").split(".") if p]
+        if not parts:
+            return None
+        obj = scope.get(parts[0])
+        for attr in parts[1:]:
+            if obj is None:
+                return None
+            obj = getattr(obj, attr, None)
+        return obj
+
+    def eval_territory_parts(parts: Any, resolver):
+        if not isinstance(parts, list):
+            return None
+        out = None
+        for part in parts:
+            if not isinstance(part, dict):
+                continue
+            ptype = str(part.get("type", ""))
+            value = part.get("value")
+            piece = None
+            if ptype == "group":
+                piece = eval_territory_parts(value, resolver)
+            elif ptype == "gadm":
+                vals = value if isinstance(value, list) else [value]
+                for item in vals:
+                    if not isinstance(item, str) or not item.strip():
+                        continue
+                    terr = xatra.loaders.gadm(item.strip())
+                    piece = terr if piece is None else (piece | terr)
+            elif ptype == "polygon":
+                try:
+                    coords = json.loads(value) if isinstance(value, str) else value
+                    piece = xatra.loaders.polygon(coords)
+                except Exception:
+                    piece = None
+            elif ptype == "predefined":
+                vals = value if isinstance(value, list) else [value]
+                for item in vals:
+                    if not isinstance(item, str) or not item.strip():
+                        continue
+                    terr = resolver(item.strip())
+                    if terr is not None:
+                        piece = terr if piece is None else (piece | terr)
+            if piece is None:
+                continue
+            op = str(part.get("op", "union"))
+            if out is None:
+                out = piece
+            elif op == "difference":
+                out = out - piece
+            elif op == "intersection":
+                out = out & piece
+            else:
+                out = out | piece
+        return out
+
+    def materialize_library_namespace(struct: Dict[str, Any], external_scope: Dict[str, Any], include_builtin: bool = False):
+        definitions: Dict[str, List[Dict[str, Any]]] = {}
+        territories = struct.get("territories") if isinstance(struct, dict) else None
+        if isinstance(territories, list):
+            for entry in territories:
+                if not isinstance(entry, dict):
+                    continue
+                name = entry.get("name")
+                parts = entry.get("parts")
+                if not isinstance(name, str) or not name or name.startswith("_") or not isinstance(parts, list):
+                    continue
+                definitions[name] = parts
+        cache: Dict[str, Any] = {}
+        visiting: set = set()
+
+        def _resolver(token: str):
+            if "." in token:
+                return resolve_dotted_name(external_scope, token)
+            if token in cache:
+                return cache[token]
+            if token in visiting:
+                return None
+            parts = definitions.get(token)
+            if isinstance(parts, list):
+                visiting.add(token)
+                try:
+                    terr = eval_territory_parts(parts, _resolver)
+                    cache[token] = terr
+                    return terr
+                finally:
+                    visiting.discard(token)
+            obj = external_scope.get(token)
+            if obj is not None:
+                return obj
+            if include_builtin:
+                try:
+                    import xatra.territory_library as territory_library
+                    return getattr(territory_library, token, None)
+                except Exception:
+                    return None
+            return None
+
+        for name in definitions.keys():
+            _resolver(name)
+        payload = {k: v for k, v in cache.items() if v is not None}
+        return SimpleNamespace(**payload), payload
+
+    def filter_theme_options(options: Dict[str, Any], filter_only: Optional[List[str]], filter_not: Optional[List[str]]) -> Dict[str, Any]:
+        if not filter_only and not filter_not:
+            return _normalize_theme_options_struct(options or {})
+        only = {str(x).strip() for x in (filter_only or []) if str(x).strip()}
+        blocked = {str(x).strip() for x in (filter_not or []) if str(x).strip()}
+        key_map = {
+            "BaseOption": "basemaps",
+            "CSS": "css_rules",
+            "FlagColorSequence": "flag_color_sequences",
+            "AdminColorSequence": "admin_color_sequences",
+            "DataColormap": "data_colormap",
+        }
+        filtered: Dict[str, Any] = {"basemaps": []}
+        for method, key in key_map.items():
+            if only and method not in only:
+                continue
+            if method in blocked:
+                continue
+            if key in options:
+                filtered[key] = options[key]
+        return _normalize_theme_options_struct(filtered)
+
+    def apply_theme_options(options: Dict[str, Any]):
+        opts = _normalize_theme_options_struct(options or {})
+        basemaps = opts.get("basemaps")
+        if isinstance(basemaps, list):
+            for bm in basemaps:
+                if isinstance(bm, dict):
+                    m.BaseOption(**bm)
+                else:
+                    m.BaseOption(bm)
+        css_rules = opts.get("css_rules")
+        if isinstance(css_rules, list):
+            css_str = ""
+            for rule in css_rules:
+                if not isinstance(rule, dict):
+                    continue
+                selector = rule.get("selector", "")
+                style = rule.get("style", "")
+                if selector and style:
+                    css_str += f"{selector} {{ {style} }}\n"
+            if css_str:
+                m.CSS(css_str)
+        flag_rows = opts.get("flag_color_sequences")
+        if isinstance(flag_rows, list):
+            for row in flag_rows:
+                seq = build_linear_sequence_from_row(row)
+                if not seq:
+                    continue
+                class_name = row.get("class_name")
+                if isinstance(class_name, str):
+                    class_name = class_name.strip() or None
+                else:
+                    class_name = None
+                m.FlagColorSequence(seq, class_name=class_name)
+        admin_rows = opts.get("admin_color_sequences")
+        if isinstance(admin_rows, list) and admin_rows:
+            row = admin_rows[0]
+            seq = build_linear_sequence_from_row(row)
+            if seq:
+                m.AdminColorSequence(seq)
+        dc = opts.get("data_colormap")
+        if isinstance(dc, dict):
+            cmap_type = str(dc.get("type", "")).strip()
+            if cmap_type == "LinearSegmented":
+                from matplotlib.colors import LinearSegmentedColormap
+                colors_raw = str(dc.get("colors", "yellow,orange,red"))
+                colors = [c.strip() for c in colors_raw.split(",") if c.strip()]
+                if not colors:
+                    colors = ["yellow", "orange", "red"]
+                cmap = LinearSegmentedColormap.from_list("custom_cmap", colors)
+                m.DataColormap(cmap)
+            elif cmap_type:
+                import matplotlib.pyplot as plt
+                cmap = getattr(plt.cm, cmap_type, None)
+                if cmap is not None:
+                    m.DataColormap(cmap)
+        elif isinstance(dc, str):
+            m.DataColormap(dc)
+
     def register_xatrahub(exec_globals):
         def xatrahub(path, filter_only=None, filter_not=None):
             parsed = _parse_xatrahub_path(str(path))
@@ -3436,34 +3901,19 @@ def run_rendering_task(task_type, data, result_queue):
             kind = loaded["kind"]
             only = filter_only if isinstance(filter_only, list) else None
             not_list = filter_not if isinstance(filter_not, list) else None
-            if kind in ("map", "css"):
+            if kind == "map":
                 filtered = _filter_xatra_code(code_text, filter_only=only, filter_not=not_list)
                 if filtered.strip():
                     exec(filtered, exec_globals)
                 return None
+            if kind == "css":
+                theme_opts = _extract_theme_options_struct(loaded.get("content", "") or "")
+                apply_theme_options(filter_theme_options(theme_opts, only, not_list))
+                return None
             if kind == "lib":
-                lib_globals = {
-                    "xatra": xatra,
-                    "gadm": xatra.loaders.gadm,
-                    "naturalearth": xatra.loaders.naturalearth,
-                    "polygon": xatra.loaders.polygon,
-                    "overpass": xatra.loaders.overpass,
-                    "Icon": Icon,
-                    "Color": Color,
-                    "ColorSequence": ColorSequence,
-                    "LinearColorSequence": LinearColorSequence,
-                    "LinearSegmentedColormap": __import__("matplotlib.colors", fromlist=["LinearSegmentedColormap"]).LinearSegmentedColormap,
-                    "plt": __import__("matplotlib.pyplot", fromlist=["pyplot"]),
-                }
-                if "xatrahub" in exec_globals:
-                    lib_globals["xatrahub"] = exec_globals["xatrahub"]
-                exec(code_text or "", lib_globals)
-                names = [
-                    name for name in lib_globals.keys()
-                    if not name.startswith("_") and name not in {"xatra", "gadm", "naturalearth", "polygon", "overpass", "Icon", "Color", "ColorSequence", "LinearColorSequence", "xatrahub"}
-                ]
-                payload = {name: lib_globals[name] for name in names}
-                return SimpleNamespace(**payload)
+                struct = _extract_territory_library_struct(loaded.get("content", "") or "")
+                ns, _ = materialize_library_namespace(struct, exec_globals, include_builtin=True)
+                return ns
             raise ValueError(f"Unsupported xatrahub kind: {kind}")
 
         exec_globals["xatrahub"] = xatrahub
@@ -3519,19 +3969,14 @@ def run_rendering_task(task_type, data, result_queue):
             selected_names = _dedupe_str_list([n for n in selected_names if n in catalog.get("names", [])])
 
             if source == "custom":
-                exec_globals = {
-                    "gadm": xatra.loaders.gadm,
-                    "polygon": xatra.loaders.polygon,
-                    "naturalearth": xatra.loaders.naturalearth,
-                    "overpass": xatra.loaders.overpass,
-                }
+                exec_globals = {}
                 for name in dir(territory_library):
                     if not name.startswith("_"):
                         exec_globals[name] = getattr(territory_library, name)
-                if code.strip():
-                    exec(code, exec_globals)
+                struct = _extract_territory_library_struct(code)
+                _, custom_map = materialize_library_namespace(struct, exec_globals, include_builtin=True)
                 for n in selected_names:
-                    terr = exec_globals.get(n)
+                    terr = custom_map.get(n)
                     if terr is not None:
                         try:
                             m.Flag(label=n, value=terr)
@@ -3541,16 +3986,14 @@ def run_rendering_task(task_type, data, result_queue):
                 try:
                     parsed = _parse_xatrahub_path(hub_path)
                     loaded = _hub_load_content(parsed["username"], parsed["kind"], parsed["name"], parsed["version"])
-                    code_text = _extract_python_payload_text(loaded["kind"], loaded.get("content", ""), loaded.get("metadata", {}))
-                    scope = {
-                        "gadm": xatra.loaders.gadm,
-                        "polygon": xatra.loaders.polygon,
-                        "naturalearth": xatra.loaders.naturalearth,
-                        "overpass": xatra.loaders.overpass,
-                    }
-                    exec(code_text or "", scope)
+                    scope = {}
+                    for name in dir(territory_library):
+                        if not name.startswith("_"):
+                            scope[name] = getattr(territory_library, name)
+                    struct = _extract_territory_library_struct(loaded.get("content", "") or "")
+                    _, hub_map = materialize_library_namespace(struct, scope, include_builtin=True)
                     for n in selected_names:
-                        terr = scope.get(n)
+                        terr = hub_map.get(n)
                         if terr is not None:
                             try:
                                 m.Flag(label=n, value=terr)
@@ -3589,14 +4032,16 @@ def run_rendering_task(task_type, data, result_queue):
             predefined_code = getattr(data, "predefined_code", "") or ""
             if imports_code.strip():
                 exec(imports_code, exec_globals)
+            import xatra.territory_library as territory_library
+            for name in dir(territory_library):
+                if not name.startswith("_") and name not in exec_globals:
+                    exec_globals[name] = getattr(territory_library, name)
             if predefined_code.strip():
-                import xatra.territory_library as territory_library
-                for name in dir(territory_library):
-                    if not name.startswith("_"):
-                        exec_globals[name] = getattr(territory_library, name)
-                exec(predefined_code, exec_globals)
+                struct = _extract_territory_library_struct(predefined_code)
+                _, custom_map = materialize_library_namespace(struct, exec_globals, include_builtin=True)
+                exec_globals.update(custom_map)
             if theme_code.strip():
-                exec(theme_code, exec_globals)
+                apply_theme_options(_parse_theme_code_to_options(theme_code))
             exec(data.code, exec_globals)
             if runtime_code.strip():
                 exec(runtime_code, exec_globals)
@@ -3716,32 +4161,10 @@ def run_rendering_task(task_type, data, result_queue):
                 elif isinstance(dc, str):
                     m.DataColormap(dc)
 
-            # Execute predefined territory code so Flag parts of type "predefined" can use them
             predefined_namespace = {}
-            if getattr(data, "predefined_code", None) and data.predefined_code.strip():
-                try:
-                    import xatra.territory_library as territory_library
-                    exec_globals = {
-                        "gadm": xatra.loaders.gadm,
-                        "polygon": xatra.loaders.polygon,
-                        "naturalearth": xatra.loaders.naturalearth,
-                        "overpass": xatra.loaders.overpass,
-                        "xatra": xatra,
-                        "Icon": Icon,
-                        "Color": Color,
-                        "ColorSequence": ColorSequence,
-                        "LinearColorSequence": LinearColorSequence,
-                        "LinearSegmentedColormap": __import__("matplotlib.colors", fromlist=["LinearSegmentedColormap"]).LinearSegmentedColormap,
-                        "plt": __import__("matplotlib.pyplot", fromlist=["pyplot"]),
-                    }
-                    register_xatrahub(exec_globals)
-                    for name in dir(territory_library):
-                        if not name.startswith("_"):
-                            exec_globals[name] = getattr(territory_library, name)
-                    exec(data.predefined_code.strip(), exec_globals)
-                    predefined_namespace = {k: v for k, v in exec_globals.items() if k not in ("gadm", "polygon", "naturalearth", "overpass") and not k.startswith("_")}
-                except Exception:
-                    predefined_namespace = {}
+            predefined_struct = _extract_territory_library_struct(
+                getattr(data, "predefined_code", "") or ""
+            )
 
             builder_exec_globals = {
                 "xatra": xatra,
@@ -3757,8 +4180,6 @@ def run_rendering_task(task_type, data, result_queue):
                 "plt": __import__("matplotlib.pyplot", fromlist=["pyplot"]),
                 "map": m,
             }
-            if predefined_namespace:
-                builder_exec_globals.update(predefined_namespace)
             register_xatrahub(builder_exec_globals)
 
             imports_code = getattr(data, "imports_code", "") or ""
@@ -3766,8 +4187,12 @@ def run_rendering_task(task_type, data, result_queue):
             runtime_code = getattr(data, "runtime_code", "") or ""
             if imports_code.strip():
                 exec(imports_code, builder_exec_globals)
+            if predefined_struct.get("territories"):
+                _, predefined_namespace = materialize_library_namespace(predefined_struct, builder_exec_globals, include_builtin=True)
+                if predefined_namespace:
+                    builder_exec_globals.update(predefined_namespace)
             if theme_code.strip():
-                exec(theme_code, builder_exec_globals)
+                apply_theme_options(_parse_theme_code_to_options(theme_code))
 
             def _is_empty_builder_arg(value):
                 if value is None:
