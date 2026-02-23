@@ -29,7 +29,7 @@ sys.path.append(str(Path(__file__).parent.parent / "src"))
 from fastapi import FastAPI, HTTPException, Body, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import List, Optional, Any, Dict, Union
+from typing import List, Optional, Any, Dict, Union, Tuple
 
 import xatra
 from xatra.loaders import gadm, naturalearth, polygon, GADM_DIR
@@ -37,8 +37,8 @@ from xatra.render import export_html_string
 from xatra.colorseq import Color, ColorSequence, LinearColorSequence, color_sequences
 from xatra.icon import Icon
 
-# Track one rendering process per task type so independent map generation can be cancelled safely.
-current_processes: Dict[str, multiprocessing.Process] = {}
+# Track one rendering process per (actor, task_type) so users cannot cancel each other.
+current_processes: Dict[str, Optional[multiprocessing.Process]] = {}
 process_lock = threading.Lock()
 render_cache_lock = threading.Lock()
 RENDER_CACHE_MAX_ENTRIES = 24
@@ -106,14 +106,35 @@ HUB_RESERVED_USERNAMES = {
 SESSION_COOKIE = "xatra_session"
 GUEST_COOKIE = "xatra_guest"
 SESSION_TTL_DAYS = 30
+COOKIE_SECURE_ENV = os.environ.get("XATRA_COOKIE_SECURE")
 
 
 def _sha256_text(text: str) -> str:
     return hashlib.sha256((text or "").encode("utf-8")).hexdigest()
 
 
+def _parse_bool_env(value: Optional[str], default: bool = False) -> bool:
+    if value is None:
+        return default
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
+def _secure_cookie_flag(request: Optional[Request] = None) -> bool:
+    if COOKIE_SECURE_ENV is not None:
+        return _parse_bool_env(COOKIE_SECURE_ENV, default=False)
+    if request is None:
+        return False
+    forwarded = str(request.headers.get("x-forwarded-proto") or "").split(",")[0].strip().lower()
+    if forwarded:
+        return forwarded == "https"
+    try:
+        return str(request.url.scheme).lower() == "https"
+    except Exception:
+        return False
 
 
 def _hub_db_conn() -> sqlite3.Connection:
@@ -383,7 +404,7 @@ def _init_hub_db():
                             (json.dumps(parsed_lib, ensure_ascii=False), now, existing_lib["id"]),
                         )
                 except Exception:
-                    pass
+                    print("[xatra] Warning: failed to refresh default lib seed.", file=sys.stderr)
             # Seed default public map 'indic' if missing (uses new /lib/dtl/alpha import path).
             map_seed_content = json.dumps({
                 "imports_code": 'indic = xatrahub("/lib/dtl/alpha")\n',
@@ -434,17 +455,19 @@ def _init_hub_db():
                             (json.dumps(parsed, ensure_ascii=False), now, existing_map["id"]),
                         )
                 except Exception:
-                    pass
+                    print("[xatra] Warning: failed to refresh default map seed.", file=sys.stderr)
         # Migration: maps no longer support descriptions; strip description keys from stored metadata.
         map_rows = conn.execute(
             "SELECT id, alpha_metadata FROM hub_artifacts WHERE kind = 'map'"
         ).fetchall()
         for row in map_rows:
-            meta = _sanitize_artifact_metadata("map", row["alpha_metadata"])
-            conn.execute(
-                "UPDATE hub_artifacts SET alpha_metadata = ? WHERE id = ?",
-                (_json_text(meta), row["id"]),
-            )
+            original = _json_text(_json_parse(row["alpha_metadata"], {}))
+            sanitized = _json_text(_sanitize_artifact_metadata("map", row["alpha_metadata"]))
+            if sanitized != original:
+                conn.execute(
+                    "UPDATE hub_artifacts SET alpha_metadata = ? WHERE id = ?",
+                    (sanitized, row["id"]),
+                )
         map_version_rows = conn.execute(
             """
             SELECT v.id, v.metadata
@@ -454,11 +477,13 @@ def _init_hub_db():
             """
         ).fetchall()
         for row in map_version_rows:
-            meta = _sanitize_artifact_metadata("map", row["metadata"])
-            conn.execute(
-                "UPDATE hub_artifact_versions SET metadata = ? WHERE id = ?",
-                (_json_text(meta), row["id"]),
-            )
+            original = _json_text(_json_parse(row["metadata"], {}))
+            sanitized = _json_text(_sanitize_artifact_metadata("map", row["metadata"]))
+            if sanitized != original:
+                conn.execute(
+                    "UPDATE hub_artifact_versions SET metadata = ? WHERE id = ?",
+                    (sanitized, row["id"]),
+                )
         # Ensure the anonymous user exists (for disassociated artifacts).
         conn.execute(
             "INSERT OR IGNORE INTO hub_users(username, created_at) VALUES(?, ?)",
@@ -859,7 +884,7 @@ def build_gadm_index():
                                     
                                 index.append(entry)
                 except Exception as e:
-                    pass
+                    print(f"[xatra] Warning: failed to read GADM file {f}: {e}", file=sys.stderr)
         
         with _gadm_lock:
             GADM_INDEX = index
@@ -881,7 +906,8 @@ if os.path.exists(GADM_INDEX_PATH):
         with _gadm_lock:
             GADM_INDEX = _loaded_index
             rebuild_country_indexes()
-    except:
+    except Exception as e:
+        print(f"[xatra] Warning: failed to load cached GADM index: {e}", file=sys.stderr)
         threading.Thread(target=build_gadm_index).start()
 else:
     threading.Thread(target=build_gadm_index).start()
@@ -908,8 +934,10 @@ def search_gadm(q: str):
     q = q.lower()
     results = []
     limit = 20
-    
-    for item in GADM_INDEX:
+
+    with _gadm_lock:
+        index_snapshot = list(GADM_INDEX)
+    for item in index_snapshot:
         score = 0
         gid = item["gid"].lower()
         name = item["name"].lower() if item["name"] else ""
@@ -931,12 +959,14 @@ def search_gadm(q: str):
 
 @app.get("/search/countries")
 def search_countries(q: str):
+    with _gadm_lock:
+        country_snapshot = list(COUNTRY_SEARCH_INDEX)
     if not q:
-        return COUNTRY_SEARCH_INDEX[:20]
+        return country_snapshot[:20]
     q = q.lower().strip()
     results = []
 
-    for item in COUNTRY_SEARCH_INDEX:
+    for item in country_snapshot:
         code = item["country_code"].lower()
         name = item["country"].lower()
         score = 0
@@ -961,7 +991,9 @@ def gadm_levels(country: str):
     if not country:
         return []
     country_code = country.strip().upper().split(".")[0]
-    return COUNTRY_LEVELS_INDEX.get(country_code, [0, 1, 2, 3, 4])
+    with _gadm_lock:
+        levels = COUNTRY_LEVELS_INDEX.get(country_code, [0, 1, 2, 3, 4])
+    return list(levels)
 
 class CodeRequest(BaseModel):
     code: str
@@ -1006,10 +1038,6 @@ class TerritoryLibraryRequest(BaseModel):
 
 class StopRequest(BaseModel):
     task_types: Optional[List[str]] = None
-
-
-class HubEnsureUserRequest(BaseModel):
-    username: str
 
 
 class HubArtifactWriteRequest(BaseModel):
@@ -1192,6 +1220,7 @@ def _ensure_guest_id(request: Request, response: Optional[Response] = None) -> s
             gid,
             httponly=True,
             samesite="lax",
+            secure=_secure_cookie_flag(request),
             max_age=60 * 60 * 24 * 365,
         )
     return gid
@@ -2014,14 +2043,7 @@ def _require_write_identity(conn: sqlite3.Connection, request: Request, username
         if user["username"] != target:
             raise HTTPException(status_code=403, detail="Cannot modify another user's artifact")
         return user
-    if target != GUEST_USERNAME:
-        raise HTTPException(status_code=401, detail="Login required")
-    # For guest writes, require the guest cookie to be present so completely anonymous
-    # requests (no cookies at all) can't write to guest artifacts.
-    guest_id = request.cookies.get(GUEST_COOKIE)
-    if not guest_id or not guest_id.strip():
-        raise HTTPException(status_code=401, detail="Login required")
-    return None
+    raise HTTPException(status_code=401, detail="Login required")
 
 
 def _transfer_guest_draft(conn: sqlite3.Connection, guest_id: str, user_id: int) -> None:
@@ -2049,7 +2071,7 @@ def _transfer_guest_draft(conn: sqlite3.Connection, guest_id: str, user_id: int)
     # Note: caller must conn.commit()
 
 
-def _create_session_cookie(conn: sqlite3.Connection, row: sqlite3.Row, response: Response) -> Dict[str, Any]:
+def _create_session_cookie(conn: sqlite3.Connection, row: sqlite3.Row, response: Response, request: Request) -> Dict[str, Any]:
     """Insert a new session record and set the session cookie. Returns user profile."""
     token = secrets.token_urlsafe(32)
     token_hash = _sha256_text(token)
@@ -2065,6 +2087,7 @@ def _create_session_cookie(conn: sqlite3.Connection, row: sqlite3.Row, response:
         token,
         httponly=True,
         samesite="lax",
+        secure=_secure_cookie_flag(request),
         max_age=60 * 60 * 24 * SESSION_TTL_DAYS,
     )
     return {"user": _user_public_profile(conn, row), "is_authenticated": True}
@@ -2093,7 +2116,7 @@ def auth_signup(body: AuthSignupRequest, response: Response, http_request: Reque
         )
         conn.commit()
         row = conn.execute("SELECT * FROM hub_users WHERE username = ?", (username,)).fetchone()
-        result = _create_session_cookie(conn, row, response)
+        result = _create_session_cookie(conn, row, response, http_request)
         guest_id = http_request.cookies.get(GUEST_COOKIE)
         if guest_id and guest_id.strip():
             _transfer_guest_draft(conn, guest_id.strip(), row["id"])
@@ -2113,7 +2136,7 @@ def auth_login(body: AuthLoginRequest, response: Response, http_request: Request
         row = conn.execute("SELECT * FROM hub_users WHERE username = ?", (username,)).fetchone()
         if row is None or not _verify_password(str(body.password or ""), row["password_hash"]):
             raise HTTPException(status_code=401, detail="Invalid username or password")
-        result = _create_session_cookie(conn, row, response)
+        result = _create_session_cookie(conn, row, response, http_request)
         guest_id = http_request.cookies.get(GUEST_COOKIE)
         if guest_id and guest_id.strip():
             _transfer_guest_draft(conn, guest_id.strip(), row["id"])
@@ -2368,9 +2391,26 @@ def maps_explore(
         ).fetchone()["c"]
         rows = conn.execute(
             f"""
-            SELECT a.id, a.name, a.updated_at, a.alpha_metadata, u.username
+            SELECT
+                a.id,
+                a.name,
+                a.updated_at,
+                a.alpha_metadata,
+                u.username,
+                COALESCE(vv.votes_count, 0) AS votes_count,
+                COALESCE(mv.views_count, 0) AS views_count
             FROM hub_artifacts a
             JOIN hub_users u ON u.id = a.user_id
+            LEFT JOIN (
+                SELECT artifact_id, COUNT(*) AS votes_count
+                FROM hub_votes
+                GROUP BY artifact_id
+            ) vv ON vv.artifact_id = a.id
+            LEFT JOIN (
+                SELECT artifact_id, COUNT(*) AS views_count
+                FROM hub_map_views
+                GROUP BY artifact_id
+            ) mv ON mv.artifact_id = a.id
             {where_sql}
             ORDER BY a.updated_at DESC
             LIMIT ? OFFSET ?
@@ -2385,8 +2425,8 @@ def maps_explore(
                 "name": row["name"],
                 "slug": f"/{row['name']}",
                 "forked_from": meta.get("forked_from"),
-                "votes": _map_vote_count(conn, row["id"]),
-                "views": _map_view_count(conn, row["id"]),
+                "votes": int(row["votes_count"] or 0),
+                "views": int(row["views_count"] or 0),
                 "updated_at": row["updated_at"],
                 "thumbnail": meta.get("thumbnail") or "/vite.svg",
             })
@@ -2421,15 +2461,41 @@ def users_list(
         ).fetchone()["c"]
         rows = conn.execute(
             f"""
-            SELECT u.*
+            SELECT
+                u.username,
+                u.full_name,
+                u.bio,
+                u.created_at,
+                COALESCE(mc.maps_count, 0) AS maps_count,
+                COALESCE(vc.views_count, 0) AS views_count
             FROM hub_users u
+            LEFT JOIN (
+                SELECT user_id, COUNT(*) AS maps_count
+                FROM hub_artifacts
+                WHERE kind = 'map'
+                GROUP BY user_id
+            ) mc ON mc.user_id = u.id
+            LEFT JOIN (
+                SELECT a.user_id, COUNT(*) AS views_count
+                FROM hub_map_views mv
+                JOIN hub_artifacts a ON a.id = mv.artifact_id
+                WHERE a.kind = 'map'
+                GROUP BY a.user_id
+            ) vc ON vc.user_id = u.id
             {where_sql}
             ORDER BY u.username ASC
             LIMIT ? OFFSET ?
             """,
             (*params, safe_per_page, offset),
         ).fetchall()
-        users = [_user_public_profile(conn, row) for row in rows]
+        users = [{
+            "username": row["username"],
+            "full_name": row["full_name"] or "",
+            "bio": row["bio"] or "",
+            "maps_count": int(row["maps_count"] or 0),
+            "views_count": int(row["views_count"] or 0),
+            "created_at": row["created_at"],
+        } for row in rows]
         return {"items": users, "page": safe_page, "per_page": safe_per_page, "total": int(total or 0)}
     finally:
         conn.close()
@@ -2754,22 +2820,6 @@ def hub_get_artifact_version_by_name(kind: str, name: str, version: str, http_re
         conn.close()
 
 
-@app.post("/hub/users/ensure")
-def hub_ensure_user(body: HubEnsureUserRequest, http_request: Request, response: Response):
-    ip = (http_request.client.host if http_request.client else "unknown")
-    _check_rate_limit(f"ensure_user:{ip}", limit=10, window_seconds=3600)
-    conn = _hub_db_conn()
-    try:
-        caller = _request_user(conn, http_request)
-        if caller is None and not http_request.cookies.get("xatra_guest"):
-            raise HTTPException(status_code=401, detail="Session required")
-        user = _hub_ensure_user(conn, body.username)
-        conn.commit()
-        return {"username": user["username"], "created_at": user["created_at"]}
-    finally:
-        conn.close()
-
-
 @app.patch("/hub/{username}/{kind}/{name}/rename")
 def hub_rename_artifact(username: str, kind: str, name: str, request: HubArtifactRenameRequest, http_request: Request):
     """Rename an artifact in-place. Only allowed when there are no published versions."""
@@ -3000,7 +3050,7 @@ def hub_registry(
         rows = conn.execute(
             f"""
             SELECT
-                a.id, a.kind, a.name, a.updated_at,
+                a.id, a.kind, a.name, a.updated_at, a.alpha_metadata,
                 u.username,
                 COALESCE(MAX(v.version), 0) AS latest_version,
                 COUNT(DISTINCT vv.id) AS votes_count,
@@ -3021,7 +3071,7 @@ def hub_registry(
         for row in rows:
             kind_label = _hub_kind_label(row["kind"])
             latest = int(row["latest_version"]) if int(row["latest_version"]) > 0 else None
-            meta = _json_parse(conn.execute("SELECT alpha_metadata FROM hub_artifacts WHERE id = ?", (row["id"],)).fetchone()["alpha_metadata"], {})
+            meta = _json_parse(row["alpha_metadata"], {})
             items.append({
                 "username": row["username"],
                 "kind": kind_label,
@@ -3056,20 +3106,26 @@ def stop_generation(http_request: Request, request: Optional[StopRequest] = Body
         guest_id = http_request.cookies.get(GUEST_COOKIE)
         if user is None and not (guest_id and guest_id.strip()):
             raise HTTPException(status_code=401, detail="Login required")
+        actor_key = f"user:{int(user['id'])}" if user is not None else f"guest:{guest_id.strip()}"
     finally:
         conn.close()
     allowed_task_types = {"picker", "territory_library", "code", "builder"}
     requested = request.task_types if request and request.task_types else list(allowed_task_types)
     task_types = [t for t in requested if t in allowed_task_types]
     stopped = []
+    to_join: List[multiprocessing.Process] = []
     with process_lock:
         for task_type in task_types:
-            proc = current_processes.get(task_type)
+            slot_key = f"{actor_key}:{task_type}"
+            proc = current_processes.get(slot_key)
             if proc and proc.is_alive():
                 proc.terminate()
-                proc.join()
                 stopped.append(task_type)
-            current_processes[task_type] = None
+                to_join.append(proc)
+            if current_processes.get(slot_key) is proc:
+                current_processes.pop(slot_key, None)
+    for proc in to_join:
+        _terminate_process(proc, timeout=3.0)
     return {"status": "stopped" if stopped else "no process running", "stopped_task_types": stopped}
 
 
@@ -3419,7 +3475,7 @@ def run_rendering_task(task_type, data, result_queue):
                             except Exception:
                                 continue
                 except Exception:
-                    pass
+                    print("[xatra] Warning: failed to load territory library preview from hub path.", file=sys.stderr)
             else:
                 for n in selected_names:
                     terr = getattr(territory_library, n, None)
@@ -3502,13 +3558,15 @@ def run_rendering_task(task_type, data, result_queue):
 
             if "zoom" in data.options and data.options["zoom"] is not None:
                  try: m.zoom(int(data.options["zoom"]))
-                 except: pass
+                 except Exception as e:
+                     print(f"[xatra] Warning: invalid zoom value in builder options: {e}", file=sys.stderr)
                  
             if "focus" in data.options and data.options["focus"]:
                  focus = data.options["focus"]
                  if isinstance(focus, list) and len(focus) == 2:
                      try: m.focus(float(focus[0]), float(focus[1]))
-                     except: pass
+                     except Exception as e:
+                         print(f"[xatra] Warning: invalid focus value in builder options: {e}", file=sys.stderr)
 
             if "flag_color_sequences" in data.options and isinstance(data.options["flag_color_sequences"], list):
                 for row in data.options["flag_color_sequences"]:
@@ -3744,10 +3802,7 @@ def run_rendering_task(task_type, data, result_queue):
                 elif el.type == "point":
                     pos = resolve_builder_value(el.value, builder_exec_globals)
                     if isinstance(pos, str):
-                        try:
-                            pos = json.loads(pos)
-                        except Exception:
-                            pass
+                        pos = _json_parse(pos, pos)
                     icon_arg = args.pop("icon", None)
                     if icon_arg is not None and icon_arg != "":
                         try:
@@ -3870,11 +3925,81 @@ def run_rendering_task(task_type, data, result_queue):
             except Exception:
                 pass
 
-def run_in_process(task_type, data):
+def _request_actor_key(request: Request) -> Tuple[str, str]:
+    ip = (request.client.host if request.client else "unknown")
+    conn = _hub_db_conn()
+    try:
+        user = _request_user(conn, request)
+        if user is not None:
+            actor = f"user:{int(user['id'])}"
+            return actor, actor
+        guest_id = request.cookies.get(GUEST_COOKIE)
+        if guest_id and guest_id.strip():
+            actor = f"guest:{guest_id.strip()}"
+            return actor, actor
+        # Fallback: isolate unauthenticated/no-cookie render jobs by IP.
+        actor = f"ip:{ip}"
+        return actor, actor
+    finally:
+        conn.close()
+
+
+def _terminate_process(proc: Optional[multiprocessing.Process], timeout: float = 3.0) -> None:
+    if proc is None:
+        return
+    try:
+        alive = proc.is_alive()
+    except Exception:
+        return
+    if alive:
+        try:
+            proc.terminate()
+        except Exception:
+            pass
+    try:
+        proc.join(timeout=timeout)
+    except Exception:
+        pass
+    try:
+        if proc.is_alive():
+            proc.kill()
+            proc.join(timeout=1.0)
+    except Exception:
+        pass
+
+
+def _hub_render_dependency_epoch() -> str:
+    conn = _hub_db_conn()
+    try:
+        row = conn.execute(
+            """
+            SELECT
+                COALESCE((SELECT MAX(updated_at) FROM hub_artifacts), '') AS artifact_epoch,
+                COALESCE((SELECT MAX(created_at) FROM hub_artifact_versions), '') AS version_epoch
+            """
+        ).fetchone()
+        return f"{row['artifact_epoch']}|{row['version_epoch']}"
+    finally:
+        conn.close()
+
+
+def _enforce_render_rate_limit(task_type: str, actor_key: str) -> None:
+    # Keep picker previews permissive; cap expensive code/builder renders more tightly.
+    limits = {
+        "picker": (60, 60),
+        "territory_library": (30, 60),
+        "code": (20, 60),
+        "builder": (20, 60),
+    }
+    limit, window = limits.get(task_type, (20, 60))
+    _check_rate_limit(f"render:{task_type}:{actor_key}", limit=limit, window_seconds=window)
+
+
+def run_in_process(task_type, data, actor_key: str):
     cache_key = None
     try:
         payload = data.model_dump() if hasattr(data, "model_dump") else data.dict()
-        cache_key = f"{task_type}:{json.dumps(payload, sort_keys=True, default=str)}"
+        cache_key = f"{task_type}:{json.dumps(payload, sort_keys=True, default=str)}:hub={_hub_render_dependency_epoch()}"
     except Exception:
         cache_key = None
 
@@ -3888,17 +4013,21 @@ def run_in_process(task_type, data):
 
     queue = multiprocessing.Queue()
     p = multiprocessing.Process(target=run_rendering_task, args=(task_type, data, queue))
+    slot_key = f"{actor_key}:{task_type}"
+    previous_to_join: Optional[multiprocessing.Process] = None
 
     # Kill any previous process and register+start the new one atomically inside the lock
     # to prevent a race window where another thread could see a registered-but-not-started
     # process and incorrectly terminate it.
     with process_lock:
-        previous = current_processes.get(task_type)
+        previous = current_processes.get(slot_key)
         if previous and previous.is_alive():
             previous.terminate()
-            previous.join()
-        current_processes[task_type] = p
+            previous_to_join = previous
+        current_processes[slot_key] = p
         p.start()
+    if previous_to_join is not None:
+        _terminate_process(previous_to_join, timeout=3.0)
     
     result = {"error": "Rendering process timed out or crashed"}
     try:
@@ -3908,13 +4037,11 @@ def run_in_process(task_type, data):
     except Exception as e:
         result = {"error": f"Rendering failed: {str(e)}"}
     
-    p.join(timeout=5)
-    if p.is_alive():
-        p.terminate()
-        p.join()
+    _terminate_process(p, timeout=5.0)
         
     with process_lock:
-        current_processes[task_type] = None
+        if current_processes.get(slot_key) is p:
+            current_processes.pop(slot_key, None)
 
     if cache_key and isinstance(result, dict) and "error" not in result:
         with render_cache_lock:
@@ -3926,29 +4053,37 @@ def run_in_process(task_type, data):
     return result
 
 @app.post("/render/picker")
-def render_picker(request: PickerRequest):
-    result = run_in_process('picker', request)
+def render_picker(request: PickerRequest, http_request: Request):
+    actor_key, rate_key = _request_actor_key(http_request)
+    _enforce_render_rate_limit("picker", rate_key)
+    result = run_in_process('picker', request, actor_key)
     if "error" in result:
         return result
     return result
 
 @app.post("/render/territory-library")
-def render_territory_library(request: TerritoryLibraryRequest):
-    result = run_in_process('territory_library', request)
+def render_territory_library(request: TerritoryLibraryRequest, http_request: Request):
+    actor_key, rate_key = _request_actor_key(http_request)
+    _enforce_render_rate_limit("territory_library", rate_key)
+    result = run_in_process('territory_library', request, actor_key)
     if "error" in result:
         return result
     return result
 
 @app.post("/render/code")
-def render_code(request: CodeRequest):
-    result = run_in_process('code', request)
+def render_code(request: CodeRequest, http_request: Request):
+    actor_key, rate_key = _request_actor_key(http_request)
+    _enforce_render_rate_limit("code", rate_key)
+    result = run_in_process('code', request, actor_key)
     if "error" in result:
         return result
     return result
 
 @app.post("/render/builder")
-def render_builder(request: BuilderRequest):
-    result = run_in_process('builder', request)
+def render_builder(request: BuilderRequest, http_request: Request):
+    actor_key, rate_key = _request_actor_key(http_request)
+    _enforce_render_rate_limit("builder", rate_key)
+    result = run_in_process('builder', request, actor_key)
     if "error" in result:
         return result
     return result
@@ -3967,4 +4102,8 @@ if __name__ == "__main__":
     import uvicorn
     # Use spawn for multiprocessing compatibility
     multiprocessing.set_start_method('spawn')
-    uvicorn.run(app, host="0.0.0.0", port=8088)
+    uvicorn.run(
+        app,
+        host=os.environ.get("XATRA_BACKEND_HOST", "127.0.0.1"),
+        port=int(os.environ.get("XATRA_BACKEND_PORT", "8088")),
+    )

@@ -4,6 +4,7 @@ trap 'kill 0' EXIT
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BACKEND_PORT="${XATRA_BACKEND_PORT:-8088}"
+BACKEND_HOST="${XATRA_BACKEND_HOST:-127.0.0.1}"
 PYTHON_BIN="python3.12"
 
 # Load .env if it exists (simple key=value parsing, no export of comments or blanks)
@@ -13,6 +14,7 @@ if [ -f "$SCRIPT_DIR/.env" ]; then
     source "$SCRIPT_DIR/.env"
     set +a
     BACKEND_PORT="${XATRA_BACKEND_PORT:-$BACKEND_PORT}"
+    BACKEND_HOST="${XATRA_BACKEND_HOST:-$BACKEND_HOST}"
 fi
 
 cd "$SCRIPT_DIR"
@@ -84,8 +86,8 @@ if port_in_use; then
     done
 fi
 
-echo "Starting Backend (port $BACKEND_PORT)..."
-python -m uvicorn main:app --reload --host 0.0.0.0 --port "$BACKEND_PORT" &
+echo "Starting Backend (${BACKEND_HOST}:$BACKEND_PORT)..."
+python -m uvicorn main:app --reload --host "$BACKEND_HOST" --port "$BACKEND_PORT" &
 
 echo "Starting Frontend..."
 cd "$SCRIPT_DIR/frontend"

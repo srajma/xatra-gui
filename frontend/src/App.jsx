@@ -56,6 +56,7 @@ const parsePath = (pathname) => {
   if (parts.length >= 3 && parts[1] === 'map') {
     let version = 'alpha';
     if (parts[3] && /^v\d+$/i.test(parts[3])) version = parts[3].slice(1);
+    else if (parts[3] && /^\d+$/.test(parts[3])) version = parts[3];
     else if (parts[3] && String(parts[3]).toLowerCase() === 'alpha') version = 'alpha';
     return { page: 'editor', owner: parts[0], map: parts[2], version };
   }
@@ -1346,6 +1347,12 @@ ${DEFAULT_MAP_CODE}
     const handleMessage = (event) => {
       // Only accept messages from our srcdoc iframes (null origin) or same origin
       if (event.origin !== 'null' && event.origin !== window.location.origin) return;
+      const allowedSources = [
+        iframeRef.current?.contentWindow,
+        pickerIframeRef.current?.contentWindow,
+        territoryLibraryIframeRef.current?.contentWindow,
+      ].filter(Boolean);
+      if (allowedSources.length > 0 && !allowedSources.includes(event.source)) return;
       if (event.data && event.data.type === 'mapViewUpdate') {
         const targetSet = activePreviewTab === 'picker' ? null : setBuilderOptions;
         if (targetSet) {
@@ -2004,11 +2011,13 @@ ${DEFAULT_MAP_CODE}
   const injectThumbnailCapture = (html) => {
     const script = `<script>
 window.addEventListener('message', function(e) {
+  if (e.source !== parent) return;
   if (!e.data || e.data.type !== 'xatra_request_thumbnail') return;
+  var targetOrigin = (e.origin && e.origin !== 'null') ? e.origin : '*';
   try {
     var mapEl = document.querySelector('.leaflet-container');
     var svgEl = mapEl ? mapEl.querySelector('svg') : null;
-    if (!svgEl) { parent.postMessage({ type: 'xatra_thumbnail_response', svg: null }, '*'); return; }
+    if (!svgEl) { parent.postMessage({ type: 'xatra_thumbnail_response', svg: null }, targetOrigin); return; }
     var w = mapEl.clientWidth || 1;
     var h = mapEl.clientHeight || 1;
 
@@ -2033,9 +2042,9 @@ window.addEventListener('message', function(e) {
     clone.setAttribute('viewBox', vbX + ' ' + vbY + ' ' + w + ' ' + h);
     clone.style.transform = '';  // strip the CSS transform — viewBox handles positioning now
     var svg = new XMLSerializer().serializeToString(clone);
-    parent.postMessage({ type: 'xatra_thumbnail_response', svg: svg, width: w, height: h }, '*');
+    parent.postMessage({ type: 'xatra_thumbnail_response', svg: svg, width: w, height: h }, targetOrigin);
   } catch(err) {
-    parent.postMessage({ type: 'xatra_thumbnail_response', svg: null }, '*');
+    parent.postMessage({ type: 'xatra_thumbnail_response', svg: null }, targetOrigin);
   }
 });<\/script>`;
     return html.includes('</body>') ? html.replace('</body>', script + '</body>') : html + script;
@@ -2050,6 +2059,8 @@ window.addEventListener('message', function(e) {
       const svgData = await new Promise((resolve) => {
         const timeout = setTimeout(() => resolve(null), 3000);
         const handler = (event) => {
+          if (event.source !== iframe.contentWindow) return;
+          if (event.origin !== 'null' && event.origin !== window.location.origin) return;
           if (event.data?.type === 'xatra_thumbnail_response') {
             clearTimeout(timeout);
             window.removeEventListener('message', handler);
