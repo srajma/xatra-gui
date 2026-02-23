@@ -102,6 +102,8 @@ function App() {
   const [forkDialogName, setForkDialogName] = useState('');
   const [forkDialogChecking, setForkDialogChecking] = useState(false);
   const [forkDialogError, setForkDialogError] = useState('');
+  const [publishV1WarnOpen, setPublishV1WarnOpen] = useState(false);
+  const [publishV1WarnKind, setPublishV1WarnKind] = useState('map'); // 'map' | 'lib' | 'css'
   const [profileSettingsOpen, setProfileSettingsOpen] = useState(false);
   const [statusNotice, setStatusNotice] = useState('');
   const [authMode, setAuthMode] = useState('login');
@@ -728,13 +730,22 @@ ${DEFAULT_MAP_CODE}
   };
 
   useEffect(() => {
+    // Only eagerly load map versions; lib/css are loaded lazily when the import modal opens
     (hubSearchResults || []).forEach((item) => {
       ensureArtifactVersions(item.username, item.name, 'map');
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hubSearchResults]);
+
+  useEffect(() => {
+    // When import modal opens, also load lib/css version info (deferred to avoid 404 noise on explore)
+    if (!importModalOpen) return;
+    (hubSearchResults || []).forEach((item) => {
       ensureArtifactVersions(item.username, item.name, 'css');
       ensureArtifactVersions(item.username, item.name, 'lib');
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hubSearchResults]);
+  }, [importModalOpen, hubSearchResults]);
 
   useEffect(() => {
     if (!mapOwner || !route.map || !HUB_NAME_RE.test(route.map)) return;
@@ -1376,6 +1387,18 @@ ${DEFAULT_MAP_CODE}
       } else if (event.data && event.data.type === 'mapKeyDown') {
           // Keys forwarded from map iframe (when user clicked map, focus is in iframe)
           const key = event.data.key;
+          // Forward modifier+key combos to the global shortcut handler via synthetic event
+          if ((event.data.ctrlKey || event.data.metaKey) && key !== 'Control' && key !== 'Meta') {
+            window.dispatchEvent(new KeyboardEvent('keydown', {
+              key: key,
+              ctrlKey: !!event.data.ctrlKey,
+              metaKey: !!event.data.metaKey,
+              shiftKey: !!event.data.shiftKey,
+              altKey: !!event.data.altKey,
+              bubbles: true,
+            }));
+            return;
+          }
           if (!activePicker) return;
           const isDraftPicker = activePicker.context === 'layer' || isTerritoryPolygonPicker(activePicker.context);
           if (key === 'Backspace' && isDraftPicker) {
@@ -1704,6 +1727,11 @@ ${DEFAULT_MAP_CODE}
         }
         return;
       }
+      if (e.key === 'Escape' && publishV1WarnOpen) {
+        e.preventDefault();
+        setPublishV1WarnOpen(false);
+        return;
+      }
       if (e.key === 'Escape' && newMapDialogOpen) {
         e.preventDefault();
         setNewMapDialogOpen(false);
@@ -1802,7 +1830,7 @@ ${DEFAULT_MAP_CODE}
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [activeTab, code, predefinedCode, builderElements, builderOptions, activePreviewTab, territoryLibrarySource, activePicker, referencePickTarget]);
+  }, [activeTab, code, predefinedCode, builderElements, builderOptions, activePreviewTab, territoryLibrarySource, activePicker, referencePickTarget, publishV1WarnOpen, newMapDialogOpen, forkDialogOpen, promoteDraftDialogOpen, importModalOpen]);
 
   const handleGetCurrentView = () => {
     const ref = activePreviewTab === 'picker' ? pickerIframeRef : activePreviewTab === 'library' ? territoryLibraryIframeRef : iframeRef;
@@ -2167,6 +2195,37 @@ window.addEventListener('message', function(e) {
           setAutoSaveStatus('conflict');
           return;
         }
+        // If the old map has no published versions, rename it in-place instead of creating a new one
+        const oldVersionOpts = await ensureArtifactVersions(normalizedHubUsername, route.map, 'map');
+        const oldHasPublished = Array.isArray(oldVersionOpts) && oldVersionOpts.some((o) => o.value !== 'alpha');
+        if (!oldHasPublished) {
+          const renameResp = await apiFetch(`/hub/${normalizedHubUsername}/map/${route.map}/rename`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ new_name: normalizedMapName }),
+          });
+          if (!renameResp.ok) {
+            const d = await renameResp.json().catch(() => ({}));
+            if (d?.detail?.includes('already exists') || d?.detail?.includes('conflict')) {
+              setAutoSaveStatus('conflict');
+            } else {
+              setAutoSaveStatus('unsaved');
+            }
+            return;
+          }
+          // Also rename lib/css if they exist (alpha-only, same name as old map)
+          await apiFetch(`/hub/${normalizedHubUsername}/lib/${route.map}/rename`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ new_name: normalizedMapName }),
+          }).catch(() => {}); // ignore if lib doesn't exist
+          await apiFetch(`/hub/${normalizedHubUsername}/css/${route.map}/rename`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ new_name: normalizedMapName }),
+          }).catch(() => {}); // ignore if css doesn't exist
+          // Fall through to save content under the new name
+        }
       }
       const resp = await apiFetch(`/hub/${normalizedHubUsername}/map/${normalizedMapName}/alpha`, {
         method: 'PUT',
@@ -2201,7 +2260,7 @@ window.addEventListener('message', function(e) {
     }
   };
 
-  const handlePublishMap = async () => {
+  const handlePublishMap = async (skipV1Warn = false) => {
     try {
       if (!currentUser.is_authenticated) {
         setStatusNotice('Login required');
@@ -2213,6 +2272,12 @@ window.addEventListener('message', function(e) {
         return;
       }
       let targetName = normalizedMapName;
+      // Warn before publishing v1 (which locks the map name permanently)
+      if (!skipV1Warn && !currentMapVersionOptions.some((o) => o.value !== 'alpha')) {
+        setPublishV1WarnKind('map');
+        setPublishV1WarnOpen(true);
+        return;
+      }
       await ensureLatestThumbnail();
       const check = await apiFetch(`/hub/map/${targetName}`);
       const exists = check.ok;
@@ -2375,10 +2440,15 @@ window.addEventListener('message', function(e) {
     }
   };
 
-  const handlePublishLibrary = async () => {
+  const handlePublishLibrary = async (skipV1Warn = false) => {
     try {
       if (isReadOnlyMap || selectedLibraryVersion !== 'alpha') {
         setError('Library is read-only in this view.');
+        return;
+      }
+      if (!skipV1Warn && !currentLibraryVersionOptions.some((o) => o.value !== 'alpha')) {
+        setPublishV1WarnKind('lib');
+        setPublishV1WarnOpen(true);
         return;
       }
       setLibraryPublishStatus('publishing');
@@ -2393,10 +2463,15 @@ window.addEventListener('message', function(e) {
     }
   };
 
-  const handlePublishTheme = async () => {
+  const handlePublishTheme = async (skipV1Warn = false) => {
     try {
       if (isReadOnlyMap || selectedThemeVersion !== 'alpha') {
         setError('Theme is read-only in this view.');
+        return;
+      }
+      if (!skipV1Warn && !currentThemeVersionOptions.some((o) => o.value !== 'alpha')) {
+        setPublishV1WarnKind('css');
+        setPublishV1WarnOpen(true);
         return;
       }
       setThemePublishStatus('publishing');
@@ -2965,6 +3040,13 @@ window.addEventListener('message', function(e) {
     kind: 'css',
     name: route.map || '',
   });
+  // True when the current map (or its lib/css) has at least one published (non-alpha) version.
+  // Publishing any of these locks the map name permanently.
+  const hasPublishedVersions = !!route.map && (
+    currentMapVersionOptions.some((o) => o.value !== 'alpha') ||
+    currentLibraryVersionOptions.some((o) => o.value !== 'alpha') ||
+    currentThemeVersionOptions.some((o) => o.value !== 'alpha')
+  );
   const importedBaseSet = new Set((hubImports || []).map((imp) => `${imp.kind}:${imp.name}`));
   const renderExploreCatalogCard = (item) => (
     <a
@@ -3271,6 +3353,41 @@ window.addEventListener('message', function(e) {
 
   const renderGlobalModals = () => (
     <>
+      {publishV1WarnOpen && (
+        <div className="fixed inset-0 bg-black/40 z-[100] flex items-center justify-center" onClick={(e) => { if (e.target === e.currentTarget) setPublishV1WarnOpen(false); }}>
+          <div className={`rounded-lg border shadow-xl p-6 w-96 ${isDarkMode ? 'bg-slate-900 border-slate-700 text-slate-100' : 'bg-white border-gray-200 text-slate-800'}`}>
+            <div className="font-semibold text-sm mb-2">Publish version 1?</div>
+            <div className={`text-xs mb-4 leading-relaxed ${isDarkMode ? 'text-slate-300' : 'text-gray-600'}`}>
+              Once you publish a version of this {publishV1WarnKind === 'map' ? 'map' : publishV1WarnKind === 'lib' ? 'territory library' : 'theme'}, the map name <span className="font-mono font-semibold">{normalizedMapName}</span> is permanently locked and cannot be changed.
+              {' '}Make sure the name is correct before continuing.
+            </div>
+            <div className="flex gap-2 justify-end">
+              <button
+                className={`px-3 py-1.5 text-sm border rounded transition-colors ${isDarkMode ? 'border-slate-600 text-slate-300 hover:bg-slate-800' : 'border-gray-300 text-gray-700 hover:bg-gray-50'}`}
+                onClick={() => setPublishV1WarnOpen(false)}
+              >Cancel</button>
+              <button
+                autoFocus
+                className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700"
+                onClick={() => {
+                  setPublishV1WarnOpen(false);
+                  if (publishV1WarnKind === 'map') handlePublishMap(true);
+                  else if (publishV1WarnKind === 'lib') handlePublishLibrary(true);
+                  else if (publishV1WarnKind === 'css') handlePublishTheme(true);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    setPublishV1WarnOpen(false);
+                    if (publishV1WarnKind === 'map') handlePublishMap(true);
+                    else if (publishV1WarnKind === 'lib') handlePublishLibrary(true);
+                    else if (publishV1WarnKind === 'css') handlePublishTheme(true);
+                  } else if (e.key === 'Escape') setPublishV1WarnOpen(false);
+                }}
+              >Publish v1</button>
+            </div>
+          </div>
+        </div>
+      )}
       {newMapDialogOpen && (
         <div className="fixed inset-0 bg-black/40 z-[100] flex items-center justify-center" onClick={(e) => { if (e.target === e.currentTarget) setNewMapDialogOpen(false); }}>
           <div className={`rounded-lg border shadow-xl p-6 w-80 ${isDarkMode ? 'bg-slate-900 border-slate-700 text-slate-100' : 'bg-white border-gray-200 text-slate-800'}`}>
@@ -3683,9 +3800,9 @@ window.addEventListener('message', function(e) {
                 type="text"
                 value={mapName}
                 onChange={(e) => setMapName(e.target.value.toLowerCase().replace(/[^a-z0-9_.]/g, ''))}
-                disabled={isReadOnlyMap}
+                disabled={isReadOnlyMap || hasPublishedVersions}
                 className={`w-30 text-sm p-1.5 border rounded bg-white font-mono disabled:bg-gray-100 disabled:text-gray-500 ${HUB_NAME_RE.test(normalizedMapName) ? 'border-gray-300' : 'border-red-400'}`}
-                title="Map title"
+                title={hasPublishedVersions ? 'Map name cannot be changed after publishing a version' : 'Map title'}
                 placeholder="map_name"
               />
               {statusNotice && <span className="text-[10px] text-amber-700">{statusNotice}</span>}

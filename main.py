@@ -1017,6 +1017,10 @@ class HubArtifactWriteRequest(BaseModel):
     metadata: Dict[str, Any] = {}
 
 
+class HubArtifactRenameRequest(BaseModel):
+    new_name: str
+
+
 class AuthSignupRequest(BaseModel):
     username: str
     password: str
@@ -1987,6 +1991,12 @@ def health():
     return {"status": "ok"}
 
 
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon():
+    # Return empty 204 to silence browser favicon requests (frontend serves its own favicon)
+    return Response(status_code=204)
+
+
 def _map_vote_count(conn: sqlite3.Connection, artifact_id: int) -> int:
     row = conn.execute("SELECT COUNT(*) AS c FROM hub_votes WHERE artifact_id = ?", (artifact_id,)).fetchone()
     return int(row["c"] if row else 0)
@@ -2756,6 +2766,41 @@ def hub_ensure_user(body: HubEnsureUserRequest, http_request: Request, response:
         user = _hub_ensure_user(conn, body.username)
         conn.commit()
         return {"username": user["username"], "created_at": user["created_at"]}
+    finally:
+        conn.close()
+
+
+@app.patch("/hub/{username}/{kind}/{name}/rename")
+def hub_rename_artifact(username: str, kind: str, name: str, request: HubArtifactRenameRequest, http_request: Request):
+    """Rename an artifact in-place. Only allowed when there are no published versions."""
+    conn = _hub_db_conn()
+    try:
+        _require_write_identity(conn, http_request, username)
+        kind = _normalize_hub_kind(kind)
+        artifact = _hub_get_artifact(conn, username, kind, name)
+        if artifact is None:
+            raise HTTPException(status_code=404, detail="Artifact not found")
+        version_count = conn.execute(
+            "SELECT COUNT(*) AS c FROM hub_artifact_versions WHERE artifact_id = ?",
+            (artifact["id"],),
+        ).fetchone()["c"]
+        if version_count > 0:
+            raise HTTPException(status_code=409, detail="Cannot rename: artifact has published versions")
+        new_name = _normalize_hub_name(request.new_name)
+        if kind == "map" and new_name in HUB_RESERVED_USERNAMES:
+            raise HTTPException(status_code=400, detail=f"Map name '{new_name}' is reserved")
+        existing = conn.execute(
+            "SELECT id FROM hub_artifacts WHERE kind = ? AND name = ? AND id != ?",
+            (kind, new_name, artifact["id"]),
+        ).fetchone()
+        if existing:
+            raise HTTPException(status_code=409, detail=f"A {kind} named '{new_name}' already exists")
+        conn.execute(
+            "UPDATE hub_artifacts SET name = ?, updated_at = ? WHERE id = ?",
+            (new_name, _utc_now_iso(), artifact["id"]),
+        )
+        conn.commit()
+        return {"name": new_name, "renamed": True}
     finally:
         conn.close()
 
