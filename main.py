@@ -48,7 +48,12 @@ render_cache = OrderedDict()
 _rate_limit_store: Dict[str, List[float]] = defaultdict(list)
 _rate_limit_lock = threading.Lock()
 
-def _check_rate_limit(key: str, limit: int, window_seconds: int) -> None:
+def _check_rate_limit(
+    key: str,
+    limit: int,
+    window_seconds: int,
+    label: str = "Too many requests. Please try again later.",
+) -> None:
     """Raise HTTP 429 if this key has exceeded `limit` requests in `window_seconds`."""
     now = time.time()
     cutoff = now - window_seconds
@@ -56,7 +61,19 @@ def _check_rate_limit(key: str, limit: int, window_seconds: int) -> None:
         timestamps = _rate_limit_store[key]
         timestamps[:] = [t for t in timestamps if t > cutoff]
         if len(timestamps) >= limit:
-            raise HTTPException(status_code=429, detail="Too many requests. Please try again later.")
+            oldest = min(timestamps) if timestamps else now
+            retry_after = max(1, int((oldest + window_seconds) - now))
+            raise HTTPException(
+                status_code=429,
+                detail={
+                    "code": "rate_limited",
+                    "message": label,
+                    "retry_after_seconds": retry_after,
+                    "limit": limit,
+                    "window_seconds": window_seconds,
+                },
+                headers={"Retry-After": str(retry_after)},
+            )
         timestamps.append(now)
 
 # Lock protecting GADM index globals against concurrent mutation from background thread
@@ -2096,7 +2113,12 @@ def _create_session_cookie(conn: sqlite3.Connection, row: sqlite3.Row, response:
 @app.post("/auth/signup")
 def auth_signup(body: AuthSignupRequest, response: Response, http_request: Request):
     ip = (http_request.client.host if http_request.client else "unknown")
-    _check_rate_limit(f"signup:{ip}", limit=5, window_seconds=3600)
+    _check_rate_limit(
+        f"signup:{ip}",
+        limit=5,
+        window_seconds=3600,
+        label="Too many signup attempts from this IP.",
+    )
     username = _normalize_hub_user(body.username)
     password = str(body.password or "")
     if len(password) < 8:
@@ -2129,7 +2151,12 @@ def auth_signup(body: AuthSignupRequest, response: Response, http_request: Reque
 @app.post("/auth/login")
 def auth_login(body: AuthLoginRequest, response: Response, http_request: Request):
     ip = (http_request.client.host if http_request.client else "unknown")
-    _check_rate_limit(f"login:{ip}", limit=10, window_seconds=300)
+    _check_rate_limit(
+        f"login:{ip}",
+        limit=20,
+        window_seconds=600,
+        label="Too many login attempts. Please wait before trying again.",
+    )
     conn = _hub_db_conn()
     try:
         username = _normalize_hub_user(body.username)
@@ -2216,7 +2243,12 @@ def auth_update_profile(request: Request, payload: UserProfileUpdateRequest):
 @app.put("/auth/me/password")
 def auth_update_password(request: Request, payload: PasswordUpdateRequest):
     ip = (request.client.host if request.client else "unknown")
-    _check_rate_limit(f"passwd:{ip}", limit=5, window_seconds=300)
+    _check_rate_limit(
+        f"passwd:{ip}",
+        limit=6,
+        window_seconds=1800,
+        label="Too many password change attempts.",
+    )
     conn = _hub_db_conn()
     try:
         user = _request_user(conn, request)
@@ -2629,6 +2661,12 @@ def draft_promote(body: DraftPromoteRequest, request: Request):
         user = _request_user(conn, request)
         if user is None:
             raise HTTPException(status_code=401, detail="Login required")
+        _check_rate_limit(
+            f"draft_promote:user:{int(user['id'])}",
+            limit=20,
+            window_seconds=3600,
+            label="Too many map create actions. Please wait before creating more maps.",
+        )
         name = _normalize_hub_name(body.name)
         username = user["username"]
         owner_key = f"user:{user['id']}"
@@ -2674,6 +2712,12 @@ def hub_create_map(http_request: Request):
         user = _request_user(conn, http_request)
         if user is None:
             raise HTTPException(status_code=401, detail="Login required")
+        _check_rate_limit(
+            f"hub_create_map:user:{int(user['id'])}",
+            limit=30,
+            window_seconds=3600,
+            label="Map creation rate limit reached. Please wait before creating more maps.",
+        )
         now = _utc_now_iso()
         user_row = _hub_ensure_user(conn, user['username'])
         placeholder = f"_new_{secrets.token_hex(8)}"
@@ -2727,6 +2771,13 @@ def hub_publish_by_name(kind: str, name: str, request: HubArtifactWriteRequest, 
         if artifact is None:
             raise HTTPException(status_code=404, detail="Artifact not found")
         user_row = _require_write_identity(conn, http_request, artifact['username'])
+        if user_row is not None:
+            _check_rate_limit(
+                f"publish:user:{int(user_row['id'])}:{kind}",
+                limit=60,
+                window_seconds=3600,
+                label="Publish rate limit reached. Please wait before publishing again.",
+            )
         content = request.content or ""
         if len(content.encode("utf-8")) > MAX_ARTIFACT_BYTES:
             raise HTTPException(status_code=413, detail="Content too large (max 10 MB)")
@@ -2879,6 +2930,13 @@ def hub_publish(username: str, kind: str, name: str, request: HubArtifactWriteRe
     conn = _hub_db_conn()
     try:
         user_row = _require_write_identity(conn, http_request, username)
+        if user_row is not None:
+            _check_rate_limit(
+                f"publish:user:{int(user_row['id'])}:{kind}",
+                limit=60,
+                window_seconds=3600,
+                label="Publish rate limit reached. Please wait before publishing again.",
+            )
         content = request.content or ""
         if len(content.encode("utf-8")) > MAX_ARTIFACT_BYTES:
             raise HTTPException(status_code=413, detail="Content too large (max 10 MB)")
@@ -3984,15 +4042,20 @@ def _hub_render_dependency_epoch() -> str:
 
 
 def _enforce_render_rate_limit(task_type: str, actor_key: str) -> None:
-    # Keep picker previews permissive; cap expensive code/builder renders more tightly.
+    # Picker is cheap and often frequent; code/builder renders are heavier.
     limits = {
-        "picker": (60, 60),
-        "territory_library": (30, 60),
-        "code": (20, 60),
-        "builder": (20, 60),
+        "picker": (180, 60),
+        "territory_library": (90, 60),
+        "code": (60, 60),
+        "builder": (60, 60),
     }
     limit, window = limits.get(task_type, (20, 60))
-    _check_rate_limit(f"render:{task_type}:{actor_key}", limit=limit, window_seconds=window)
+    _check_rate_limit(
+        f"render:{task_type}:{actor_key}",
+        limit=limit,
+        window_seconds=window,
+        label=f"Render rate limit reached for '{task_type}' previews.",
+    )
 
 
 def run_in_process(task_type, data, actor_key: str):

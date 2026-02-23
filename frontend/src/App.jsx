@@ -44,6 +44,22 @@ const apiFetch = (path, options = {}) => {
   });
 };
 
+const getApiErrorMessage = (payload, fallback = 'Request failed') => {
+  const detail = payload?.detail;
+  if (typeof detail === 'string' && detail.trim()) return detail;
+  if (detail && typeof detail === 'object') {
+    const msg = detail.message || detail.error || detail.detail;
+    const retry = detail.retry_after_seconds;
+    if (typeof msg === 'string' && msg.trim()) {
+      if (typeof retry === 'number' && retry > 0) return `${msg} Try again in ${retry}s.`;
+      return msg;
+    }
+  }
+  if (typeof payload?.error === 'string' && payload.error.trim()) return payload.error;
+  if (typeof payload?.message === 'string' && payload.message.trim()) return payload.message;
+  return fallback;
+};
+
 const parsePath = (pathname) => {
   const parts = String(pathname || '/').split('/').filter(Boolean);
   if (parts.length === 0) return { page: 'editor' };
@@ -427,17 +443,25 @@ ${DEFAULT_MAP_CODE}
   };
 
   const loadMe = async () => {
-    try {
-      const resp = await apiFetch('/auth/me');
-      const data = await resp.json();
-      if (resp.ok) {
+    let lastError = null;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        const resp = await apiFetch('/auth/me');
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(getApiErrorMessage(data, 'Failed to load session state'));
         setCurrentUser(data);
+        setAuthReady(true);
+        return;
+      } catch (err) {
+        lastError = err;
+        if (attempt < 2) {
+          // Short retry for transient backend/reload blips in dev.
+          await new Promise((resolve) => setTimeout(resolve, 250));
+        }
       }
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setAuthReady(true);
     }
+    setError(lastError?.message || 'Failed to load session state');
+    setAuthReady(true);
   };
 
   useEffect(() => {
@@ -621,7 +645,7 @@ ${DEFAULT_MAP_CODE}
     });
     const data = await response.json();
     if (!response.ok || data.detail || data.error) {
-      throw new Error(data.detail || data.error || 'Failed to publish artifact');
+      throw new Error(getApiErrorMessage(data, 'Failed to publish artifact'));
     }
     const latest = data.latest_published_version;
     const publishedVersion = data?.published?.version ?? latest ?? null;
@@ -799,7 +823,7 @@ ${DEFAULT_MAP_CODE}
           navigateTo('/explore');
           return;
         }
-        throw new Error(data.detail || data.error || 'Failed to load map');
+        throw new Error(getApiErrorMessage(data, 'Failed to load map'));
       }
       const content = typeof data.content === 'string' ? data.content : '';
       const parsed = (() => {
@@ -937,7 +961,7 @@ ${DEFAULT_MAP_CODE}
       const params = new URLSearchParams({ page: String(page), per_page: '12', q: query || '' });
       const resp = await apiFetch(`/explore?${params.toString()}`);
       const data = await resp.json();
-      if (!resp.ok) throw new Error(data.detail || 'Failed to load explore');
+      if (!resp.ok) throw new Error(getApiErrorMessage(data, 'Failed to load explore'));
       setExploreData(data);
       setHubSearchResults(Array.isArray(data.items) ? data.items : []);
     } catch (err) {
@@ -954,7 +978,7 @@ ${DEFAULT_MAP_CODE}
       const params = new URLSearchParams({ page: String(page), per_page: '12', q: query || '' });
       const resp = await apiFetch(`/users/${username}?${params.toString()}`);
       const data = await resp.json();
-      if (!resp.ok) throw new Error(data.detail || 'Failed to load profile');
+      if (!resp.ok) throw new Error(getApiErrorMessage(data, 'Failed to load profile'));
       setProfileData(data);
       setProfileEdit({ full_name: data?.profile?.full_name || '', bio: data?.profile?.bio || '' });
     } catch (err) {
@@ -984,7 +1008,7 @@ ${DEFAULT_MAP_CODE}
       const params = new URLSearchParams({ page: String(page), per_page: '20', q: query || '' });
       const resp = await apiFetch(`/users?${params.toString()}`);
       const data = await resp.json();
-      if (!resp.ok) throw new Error(data.detail || 'Failed to load users');
+      if (!resp.ok) throw new Error(getApiErrorMessage(data, 'Failed to load users'));
       setUsersData(data);
     } catch (err) {
       setError(err.message);
@@ -1056,7 +1080,7 @@ ${DEFAULT_MAP_CODE}
       }
       if (resp.status !== 404) {
         const data = await resp.json().catch(() => ({}));
-        throw new Error(data.detail || 'Failed to validate map name');
+        throw new Error(getApiErrorMessage(data, 'Failed to validate map name'));
       }
       setNewMapDialogOpen(false);
       applyNewMapDefaults({ name, owner: normalizedHubUsername });
@@ -1079,7 +1103,7 @@ ${DEFAULT_MAP_CODE}
         body: JSON.stringify({ name: promoteDraftName }),
       });
       const data = await resp.json();
-      if (!resp.ok) throw new Error(data.detail || 'Failed to save map');
+      if (!resp.ok) throw new Error(getApiErrorMessage(data, 'Failed to save map'));
       setPromoteDraftDialogOpen(false);
       setUserDraftMeta({ exists: false });
       navigateTo(`/${promoteDraftName}`);
@@ -1175,7 +1199,7 @@ ${DEFAULT_MAP_CODE}
         body: JSON.stringify(payload),
       });
       const data = await resp.json();
-      if (!resp.ok) throw new Error(data.detail || data.error || 'Authentication failed');
+      if (!resp.ok) throw new Error(getApiErrorMessage(data, 'Authentication failed'));
       await loadMe();
       navigateTo('/explore');
     } catch (err) {
@@ -1200,7 +1224,7 @@ ${DEFAULT_MAP_CODE}
     try {
       const resp = await apiFetch(`/maps/${mapOwner}/${route.map}/vote`, { method: 'POST' });
       const data = await resp.json();
-      if (!resp.ok) throw new Error(data.detail || 'Vote failed');
+      if (!resp.ok) throw new Error(getApiErrorMessage(data, 'Vote failed'));
       setMapVotes(Number(data.votes || 0));
       setMapUserVoted(!!data.voted);
     } catch (err) {
@@ -1216,7 +1240,7 @@ ${DEFAULT_MAP_CODE}
         body: JSON.stringify(profileEdit),
       });
       const data = await resp.json();
-      if (!resp.ok) throw new Error(data.detail || 'Failed to save profile');
+      if (!resp.ok) throw new Error(getApiErrorMessage(data, 'Failed to save profile'));
       await loadMe();
       if (route.page === 'profile' && route.username) loadProfile(route.username, profilePage, profileSearch);
       setStatusNotice('Profile saved');
@@ -1234,7 +1258,7 @@ ${DEFAULT_MAP_CODE}
         body: JSON.stringify(passwordEdit),
       });
       const data = await resp.json();
-      if (!resp.ok) throw new Error(data.detail || 'Failed to update password');
+      if (!resp.ok) throw new Error(getApiErrorMessage(data, 'Failed to update password'));
       setPasswordEdit({ current_password: '', new_password: '' });
       setStatusNotice('Password updated');
       setTimeout(() => setStatusNotice(''), 1500);
@@ -1860,6 +1884,9 @@ ${DEFAULT_MAP_CODE}
               body: JSON.stringify(payload)
           });
           const data = await response.json();
+          if (!response.ok || data.error) {
+              throw new Error(getApiErrorMessage(data, 'Failed to render picker preview'));
+          }
           if (data.html) setPickerHtml(data.html);
       } catch (err) {
           setError(err.message);
@@ -1870,7 +1897,7 @@ ${DEFAULT_MAP_CODE}
 
   const loadTerritoryLibraryCatalog = async (source = territoryLibrarySource, hubPath = null) => {
     try {
-      const response = await apiFetch('/territory_library/catalog', {
+          const response = await apiFetch('/territory_library/catalog', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1878,10 +1905,10 @@ ${DEFAULT_MAP_CODE}
           predefined_code: predefinedCode || '',
           hub_path: hubPath || undefined,
         }),
-      });
+          });
           const data = await response.json();
           if (!response.ok || data.error) {
-              throw new Error(data.error || 'Failed to load territory catalog');
+              throw new Error(getApiErrorMessage(data, 'Failed to load territory catalog'));
           }
           const names = Array.isArray(data.names) ? data.names : [];
           const indexNames = Array.isArray(data.index_names) ? data.index_names : [];
@@ -1918,8 +1945,8 @@ ${DEFAULT_MAP_CODE}
               body: JSON.stringify(body),
           });
           const data = await response.json();
-          if (data.error) {
-              setError(data.error);
+          if (!response.ok || data.error) {
+              setError(getApiErrorMessage(data, 'Failed to render territory library'));
           } else if (data.html) {
               setTerritoryLibraryHtml(injectTerritoryLabelOverlayPatch(data.html));
               const names = Array.isArray(data.available_names) ? data.available_names : [];
@@ -1945,12 +1972,14 @@ ${DEFAULT_MAP_CODE}
         body: JSON.stringify(body),
       });
       const data = await response.json();
-      if (data.error) {
-        setError(data.error);
+      if (!response.ok || data.error) {
+        setError(getApiErrorMessage(data, 'Failed to render map'));
         console.error(data.traceback);
-      } else {
+      } else if (typeof data.html === 'string' && data.html) {
         setMapHtml(injectThumbnailCapture(data.html));
         setMapPayload(data.payload);
+      } else {
+        setError('Render completed but returned no HTML.');
       }
     } catch (err) {
       setError(err.message);
@@ -1991,12 +2020,14 @@ ${DEFAULT_MAP_CODE}
       });
       
       const data = await response.json();
-      if (data.error) {
-        setError(data.error);
+      if (!response.ok || data.error) {
+        setError(getApiErrorMessage(data, 'Failed to render map'));
         console.error(data.traceback);
-      } else {
+      } else if (typeof data.html === 'string' && data.html) {
         setMapHtml(injectThumbnailCapture(data.html));
         setMapPayload(data.payload);
+      } else {
+        setError('Render completed but returned no HTML.');
       }
     } catch (err) {
       setError(err.message);
@@ -2217,7 +2248,8 @@ window.addEventListener('message', function(e) {
           });
           if (!renameResp.ok) {
             const d = await renameResp.json().catch(() => ({}));
-            if (d?.detail?.includes('already exists') || d?.detail?.includes('conflict')) {
+            const detailMsg = getApiErrorMessage(d, '');
+            if (detailMsg.includes('already exists') || detailMsg.includes('conflict')) {
               setAutoSaveStatus('conflict');
             } else {
               setAutoSaveStatus('unsaved');
@@ -2252,7 +2284,8 @@ window.addEventListener('message', function(e) {
       });
       if (!resp.ok) {
         const data = await resp.json().catch(() => ({}));
-        if (data?.detail?.includes('already exists') || data?.detail?.includes('conflict')) {
+        const detailMsg = getApiErrorMessage(data, '');
+        if (detailMsg.includes('already exists') || detailMsg.includes('conflict')) {
           setAutoSaveStatus('conflict');
         } else {
           setAutoSaveStatus('unsaved');
@@ -2342,7 +2375,7 @@ window.addEventListener('message', function(e) {
       }
       if (checkResp.status !== 404) {
         const d = await checkResp.json().catch(() => ({}));
-        throw new Error(d.detail || 'Failed to validate map name');
+        throw new Error(getApiErrorMessage(d, 'Failed to validate map name'));
       }
       setForkDialogOpen(false);
       await ensureLatestThumbnail();
@@ -2365,7 +2398,7 @@ window.addEventListener('message', function(e) {
     try {
       const resp = await apiFetch(`/hub/${kind}/${name}/disassociate`, { method: 'POST' });
       const data = await resp.json();
-      if (!resp.ok) throw new Error(data?.detail || 'Disassociation failed');
+      if (!resp.ok) throw new Error(getApiErrorMessage(data, 'Disassociation failed'));
       setDisassociateConfirm({ open: false, kind: 'map', name: '', nameInput: '', loading: false, error: null });
       // Navigate to profile and reload map list (navigateTo is a no-op if already on profile page,
       // so always call loadProfile explicitly to ensure the map disappears from the grid)
@@ -2403,7 +2436,7 @@ window.addEventListener('message', function(e) {
     try {
       const resp = await apiFetch(`/hub/${mapOwner}/lib/${normalizedMapName}/${v}`);
       const data = await resp.json();
-      if (!resp.ok) throw new Error(data.detail || 'Failed to load library version');
+      if (!resp.ok) throw new Error(getApiErrorMessage(data, 'Failed to load library version'));
       let nextCode = '';
       try {
         const parsed = JSON.parse(data.content || '{}');
@@ -2437,7 +2470,7 @@ window.addEventListener('message', function(e) {
     try {
       const resp = await apiFetch(`/hub/${mapOwner}/css/${normalizedMapName}/${v}`);
       const data = await resp.json();
-      if (!resp.ok) throw new Error(data.detail || 'Failed to load theme version');
+      if (!resp.ok) throw new Error(getApiErrorMessage(data, 'Failed to load theme version'));
       let nextCode = '';
       try {
         const parsed = JSON.parse(data.content || '{}');
@@ -3060,10 +3093,11 @@ window.addEventListener('message', function(e) {
   );
   const importedBaseSet = new Set((hubImports || []).map((imp) => `${imp.kind}:${imp.name}`));
   const renderExploreCatalogCard = (item) => (
-    <a
+    <button
       key={`${item.username}-${item.name}`}
-      href={item.slug || `/${item.name}`}
-      className={`block rounded-xl border overflow-hidden shadow-sm hover:shadow-md transition-shadow group ${isDarkMode ? 'bg-slate-800 border-slate-700 hover:border-slate-600' : 'bg-white border-gray-200 hover:border-gray-300'}`}
+      type="button"
+      onClick={() => navigateTo(item.slug || `/${item.name}`)}
+      className={`block text-left w-full rounded-xl border overflow-hidden shadow-sm hover:shadow-md transition-shadow group ${isDarkMode ? 'bg-slate-800 border-slate-700 hover:border-slate-600' : 'bg-white border-gray-200 hover:border-gray-300'}`}
     >
       <img src={item.thumbnail || '/vite.svg'} alt="" className={`w-full h-28 object-cover ${isDarkMode ? 'bg-slate-700' : 'bg-gray-100'}`} />
       <div className="p-3">
@@ -3074,7 +3108,7 @@ window.addEventListener('message', function(e) {
           <span>{item.views || 0} views</span>
         </div>
       </div>
-    </a>
+    </button>
   );
 
   const renderImportCatalogCard = (item) => {
