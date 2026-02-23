@@ -167,6 +167,9 @@ function App() {
   const sidebarStartXRef = useRef(0);
   const sidebarStartWidthRef = useRef(500);
   const lastPreviewTabRef = useRef('main');
+  const territoryLibraryHtmlByTabRef = useRef({});
+  const territoryCatalogReqByTabRef = useRef({});
+  const territoryRenderReqByTabRef = useRef({});
 
   // Builder State
   const [builderElements, setBuilderElements] = useState([
@@ -434,6 +437,14 @@ ${DEFAULT_MAP_CODE}
     setMapVersionLabel(v);
     setSelectedLibraryVersion(v);
     setSelectedThemeVersion(v);
+  }, [route?.owner, route?.map, route?.version]);
+
+  useEffect(() => {
+    didPrefetchReferenceRef.current = false;
+    didPrefetchTerritoryRef.current = false;
+    territoryLibraryHtmlByTabRef.current = {};
+    territoryCatalogReqByTabRef.current = {};
+    territoryRenderReqByTabRef.current = {};
   }, [route?.owner, route?.map, route?.version]);
 
   const navigateTo = (path) => {
@@ -1608,8 +1619,15 @@ ${DEFAULT_MAP_CODE}
       target,
     });
     setActivePreviewTab(isTerritoryPick ? 'library' : 'picker');
-    if (isTerritoryPick && !territoryLibraryHtml) {
-      renderTerritoryLibrary(activeLibraryConfig?.source || territoryLibrarySource, { hubPath: activeLibraryConfig?.hub_path || null });
+    if (isTerritoryPick) {
+      const tabId = activeLibraryConfig?.id || 'custom';
+      const hasCached = !!territoryLibraryHtmlByTabRef.current[tabId];
+      if (!hasCached) {
+        renderTerritoryLibrary(activeLibraryConfig?.source || territoryLibrarySource, {
+          hubPath: activeLibraryConfig?.hub_path || null,
+          tabId,
+        });
+      }
     }
     if (target.kind === 'gadm') {
       const initial = getCurrentPickerValues(target);
@@ -1896,7 +1914,14 @@ ${DEFAULT_MAP_CODE}
       }
   };
 
-  const loadTerritoryLibraryCatalog = async (source = territoryLibrarySource, hubPath = null) => {
+  const loadTerritoryLibraryCatalog = async (
+    source = territoryLibrarySource,
+    hubPath = null,
+    { tabId = null } = {}
+  ) => {
+    const effectiveTabId = tabId || activeLibraryConfigRef.current?.id || 'custom';
+    const reqId = (territoryCatalogReqByTabRef.current[effectiveTabId] || 0) + 1;
+    territoryCatalogReqByTabRef.current[effectiveTabId] = reqId;
     try {
           const response = await apiFetch('/territory_library/catalog', {
         method: 'POST',
@@ -1904,15 +1929,19 @@ ${DEFAULT_MAP_CODE}
         body: JSON.stringify({
           source,
           predefined_code: predefinedCode || '',
+          imports_code: importsCode || '',
           hub_path: hubPath || undefined,
         }),
           });
           const data = await response.json();
+          if (territoryCatalogReqByTabRef.current[effectiveTabId] !== reqId) return;
           if (!response.ok || data.error) {
               throw new Error(getApiErrorMessage(data, 'Failed to load territory catalog'));
           }
-          const names = Array.isArray(data.names) ? data.names : [];
-          const indexNames = Array.isArray(data.index_names) ? data.index_names : [];
+          const names = Array.from(new Set((Array.isArray(data.names) ? data.names : []).map((name) => String(name || '').trim()).filter(Boolean)));
+          const indexNames = Array.from(new Set((Array.isArray(data.index_names) ? data.index_names : []).map((name) => String(name || '').trim()).filter(Boolean)));
+          const activeTabId = activeLibraryConfigRef.current?.id || 'custom';
+          if (effectiveTabId !== activeTabId) return;
           setTerritoryLibraryNames(names);
           setSelectedTerritoryNames((prev) => {
             if (prev.length && prev.some((name) => names.includes(name))) {
@@ -1921,19 +1950,25 @@ ${DEFAULT_MAP_CODE}
             return indexNames.filter((name) => names.includes(name));
           });
       } catch (err) {
+          if (territoryCatalogReqByTabRef.current[effectiveTabId] !== reqId) return;
           setError(err.message);
       }
   };
 
   const renderTerritoryLibrary = async (
     source = territoryLibrarySource,
-    { useDefaultSelection = false, showLoading = true, hubPath = null } = {}
+    { useDefaultSelection = false, showLoading = true, hubPath = null, tabId = null } = {}
   ) => {
-      if (showLoading) setLoadingByView((prev) => ({ ...prev, library: true }));
+      const effectiveTabId = tabId || activeLibraryConfigRef.current?.id || 'custom';
+      const reqId = (territoryRenderReqByTabRef.current[effectiveTabId] || 0) + 1;
+      territoryRenderReqByTabRef.current[effectiveTabId] = reqId;
+      const activeTabId = activeLibraryConfigRef.current?.id || 'custom';
+      if (showLoading && effectiveTabId === activeTabId) setLoadingByView((prev) => ({ ...prev, library: true }));
       try {
           const body = {
             source,
             predefined_code: predefinedCode || '',
+            imports_code: importsCode || '',
             basemaps: builderOptions.basemaps || [],
             hub_path: hubPath || undefined,
           };
@@ -1946,17 +1981,27 @@ ${DEFAULT_MAP_CODE}
               body: JSON.stringify(body),
           });
           const data = await response.json();
+          if (territoryRenderReqByTabRef.current[effectiveTabId] !== reqId) return;
           if (!response.ok || data.error) {
               setError(getApiErrorMessage(data, 'Failed to render territory library'));
           } else if (data.html) {
-              setTerritoryLibraryHtml(injectTerritoryLabelOverlayPatch(data.html));
-              const names = Array.isArray(data.available_names) ? data.available_names : [];
-              if (names.length) setTerritoryLibraryNames(names);
+              const html = injectTerritoryLabelOverlayPatch(data.html);
+              territoryLibraryHtmlByTabRef.current[effectiveTabId] = html;
+              if (effectiveTabId === (activeLibraryConfigRef.current?.id || 'custom')) {
+                setTerritoryLibraryHtml(html);
+              }
+              const names = Array.from(new Set((Array.isArray(data.available_names) ? data.available_names : []).map((name) => String(name || '').trim()).filter(Boolean)));
+              if (names.length && effectiveTabId === (activeLibraryConfigRef.current?.id || 'custom')) {
+                setTerritoryLibraryNames(names);
+              }
           }
       } catch (err) {
+          if (territoryRenderReqByTabRef.current[effectiveTabId] !== reqId) return;
           setError(err.message);
       } finally {
-          if (showLoading) setLoadingByView((prev) => ({ ...prev, library: false }));
+          if (showLoading && effectiveTabId === (activeLibraryConfigRef.current?.id || 'custom')) {
+            setLoadingByView((prev) => ({ ...prev, library: false }));
+          }
       }
   };
 
@@ -3014,11 +3059,22 @@ window.addEventListener('message', function(e) {
     if (didPrefetchTerritoryRef.current || !mapHtml) return;
     didPrefetchTerritoryRef.current = true;
     (async () => {
-      await loadTerritoryLibraryCatalog('custom');
-      await renderTerritoryLibrary('custom', { background: true, useDefaultSelection: true, showLoading: true });
+      const tabsToPrefetch = [
+        ...importedLibraryTabs,
+        { id: 'custom', source: 'custom', hub_path: null },
+      ];
+      for (const tab of tabsToPrefetch) {
+        await loadTerritoryLibraryCatalog(tab.source, tab.hub_path, { tabId: tab.id });
+        await renderTerritoryLibrary(tab.source, {
+          useDefaultSelection: true,
+          showLoading: false,
+          hubPath: tab.hub_path,
+          tabId: tab.id,
+        });
+      }
     })();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mapHtml, editorContextReady]);
+  }, [mapHtml, editorContextReady, hubImports]);
 
   useEffect(() => {
     if (activePreviewTab !== 'library') return;
@@ -3036,8 +3092,18 @@ window.addEventListener('message', function(e) {
     }
     const tab = libraryTabs.find((t) => t.id === activeLibraryTab) || libraryTabs[0];
     const src = tab?.source || 'custom';
+    const activeTabId = tab?.id || 'custom';
     setTerritoryLibrarySource(src);
-    loadTerritoryLibraryCatalog(src, tab?.hub_path);
+    setTerritoryLibraryHtml(territoryLibraryHtmlByTabRef.current[activeTabId] || '');
+    loadTerritoryLibraryCatalog(src, tab?.hub_path, { tabId: activeTabId });
+    if (!territoryLibraryHtmlByTabRef.current[activeTabId]) {
+      renderTerritoryLibrary(src, {
+        useDefaultSelection: true,
+        showLoading: true,
+        hubPath: tab?.hub_path,
+        tabId: activeTabId,
+      });
+    }
     lastPreviewTabRef.current = activePreviewTab;
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activePreviewTab, activeLibraryTab, predefinedCode, hubImports]);
@@ -4084,10 +4150,7 @@ window.addEventListener('message', function(e) {
             {libraryTabs.map((tab) => (
               <button
                 key={tab.id}
-                onClick={() => {
-                  setActiveLibraryTab(tab.id);
-                  setSelectedTerritoryNames([]);
-                }}
+                onClick={() => setActiveLibraryTab(tab.id)}
                 className={`px-3 py-1 rounded-full text-[11px] font-semibold transition-all ${activeLibraryTab === tab.id ? 'bg-blue-600 text-white shadow-sm' : mapTabInactiveClass}`}
               >
                 {tab.label}

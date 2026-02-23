@@ -1057,8 +1057,9 @@ class PickerRequest(BaseModel):
     basemaps: Optional[List[Dict[str, Any]]] = None
 
 class TerritoryLibraryRequest(BaseModel):
-    source: str = "builtin"  # "builtin" or "custom"
+    source: str = "custom"  # "custom" or "hub" (builtin remains supported)
     predefined_code: Optional[str] = None
+    imports_code: Optional[str] = None
     selected_names: Optional[List[str]] = None
     basemaps: Optional[List[Dict[str, Any]]] = None
     hub_path: Optional[str] = None
@@ -1999,6 +2000,17 @@ def _get_territory_catalog(source: str, predefined_code: str, hub_path: Optional
     """Return territory names using AST analysis only — no exec() in the main process."""
     import xatra.territory_library as territory_library
 
+    def _uniq(values: List[str]) -> List[str]:
+        out: List[str] = []
+        seen: set = set()
+        for raw in values:
+            name = str(raw or "").strip()
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            out.append(name)
+        return out
+
     if source == "custom":
         assigned = [n for n in _extract_assigned_names(predefined_code) if n != "__TERRITORY_INDEX__"]
         names: List[str] = []
@@ -2008,7 +2020,8 @@ def _get_territory_catalog(source: str, predefined_code: str, hub_path: Optional
                 continue
             seen.add(name)
             names.append(name)
-        index_names = _extract_territory_index(predefined_code) if predefined_code else []
+        names = _uniq(names)
+        index_names = _uniq(_extract_territory_index(predefined_code)) if predefined_code else []
         return {
             "names": names,
             "index_names": [n for n in index_names if n in names] if index_names else names,
@@ -2019,15 +2032,15 @@ def _get_territory_catalog(source: str, predefined_code: str, hub_path: Optional
             parsed = _parse_xatrahub_path(hub_path)
             loaded = _hub_load_content(parsed["username"], parsed["kind"], parsed["name"], parsed["version"])
             code_text = _extract_python_payload_text(loaded["kind"], loaded.get("content", ""), loaded.get("metadata", {}))
-            names = [n for n in _extract_assigned_names(code_text) if n != "__TERRITORY_INDEX__" and not n.startswith("_")]
-            idx = _extract_territory_index(code_text)
+            names = _uniq([n for n in _extract_assigned_names(code_text) if n != "__TERRITORY_INDEX__" and not n.startswith("_")])
+            idx = _uniq(_extract_territory_index(code_text))
             return {"names": names, "index_names": [n for n in idx if n in names] if idx else names}
         except Exception:
             return {"names": [], "index_names": []}
 
-    names = [n for n in dir(territory_library) if not n.startswith("_")]
+    names = _uniq([n for n in dir(territory_library) if not n.startswith("_")])
     idx = getattr(territory_library, "__TERRITORY_INDEX__", [])
-    index_names = [str(n) for n in idx if isinstance(n, str)] if isinstance(idx, (list, tuple)) else []
+    index_names = _uniq([str(n) for n in idx if isinstance(n, str)]) if isinstance(idx, (list, tuple)) else []
     return {
         "names": names,
         "index_names": [n for n in index_names if n in names] if index_names else names,
@@ -3493,8 +3506,9 @@ def run_rendering_task(task_type, data, result_queue):
         elif task_type == 'territory_library':
             apply_basemaps(getattr(data, "basemaps", None))
             import xatra.territory_library as territory_library
-            source = (getattr(data, "source", "builtin") or "builtin").strip().lower()
+            source = (getattr(data, "source", "custom") or "custom").strip().lower()
             code = getattr(data, "predefined_code", "") or ""
+            imports_code = getattr(data, "imports_code", "") or ""
             hub_path = getattr(data, "hub_path", None)
             catalog = _get_territory_catalog(source, code, hub_path)
             selected_input = getattr(data, "selected_names", None)
@@ -3510,10 +3524,20 @@ def run_rendering_task(task_type, data, result_queue):
                     "polygon": xatra.loaders.polygon,
                     "naturalearth": xatra.loaders.naturalearth,
                     "overpass": xatra.loaders.overpass,
+                    "xatra": xatra,
+                    "Icon": Icon,
+                    "Color": Color,
+                    "ColorSequence": ColorSequence,
+                    "LinearColorSequence": LinearColorSequence,
+                    "LinearSegmentedColormap": __import__("matplotlib.colors", fromlist=["LinearSegmentedColormap"]).LinearSegmentedColormap,
+                    "plt": __import__("matplotlib.pyplot", fromlist=["pyplot"]),
                 }
+                register_xatrahub(exec_globals)
                 for name in dir(territory_library):
                     if not name.startswith("_"):
                         exec_globals[name] = getattr(territory_library, name)
+                if imports_code.strip():
+                    exec(imports_code, exec_globals)
                 if code.strip():
                     exec(code, exec_globals)
                 for n in selected_names:
@@ -3533,7 +3557,9 @@ def run_rendering_task(task_type, data, result_queue):
                         "polygon": xatra.loaders.polygon,
                         "naturalearth": xatra.loaders.naturalearth,
                         "overpass": xatra.loaders.overpass,
+                        "xatra": xatra,
                     }
+                    register_xatrahub(scope)
                     exec(code_text or "", scope)
                     for n in selected_names:
                         terr = scope.get(n)
