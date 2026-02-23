@@ -399,7 +399,13 @@ Random misc
   - [x] The interface for the Music layers is wrong. Have you looked at what its fields actually are in xatra? The xatra repo is in ../xatra.master.
     - It should not ask for a path to the mp3 file, but should have a file upload UI (and it should upload from the _user_'s system, not a path on the server system, obviously).
     - It has two optional fields: Period and Timestamps. Both of these are optional fields, so should be collapsed by default in the UI.
-- [ ] Re-converting unions of gadms or unions of custom territories from code to builder
+- [ ] Parse territory libraries and themes before allowing them to be published as versions. 
+  - exactly how are territory libraries and themes imported? Are they imported directly as Python code? I saw an error saying "oqow is not defined" because the territory library I was importing lib/owokwod/v2 had a random string "oqow" at the end, suggesting that territory library code is simply run as arbitrary Python code without parsing?! No, territory libraries must be stored and parsed exactly like Flag territories: i.e. every territory must be comprised from trees of operations out of admin units, polygons, and other (perhaps-imported) territories. Similarly, the "Custom theme"s should not simply be execed as code but rather parsed into xatra layers (typically xatra.CSS(), xatra.BaseOption(), xatra.FlagColorSequence(), xatra.AdminColorSequence(), xatra.DataColormap()).
+- [ ] In the Code -> Builder conversion/parsing, when we convert Flag values into builder syntax, we should always try to 
+when we convert unions of gadms or unions of custom territories, we should always try to parse them into lists of 
+
+intersecting territory librarues
+comma in gadm autocomplete
 
 Development difficulties
 - [x] keeping synchrony between things---this should be documented, i.e. "if you change this, then change this too"
