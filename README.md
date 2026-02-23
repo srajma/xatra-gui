@@ -400,11 +400,43 @@ Random misc
     - It should not ask for a path to the mp3 file, but should have a file upload UI (and it should upload from the _user_'s system, not a path on the server system, obviously).
     - It has two optional fields: Period and Timestamps. Both of these are optional fields, so should be collapsed by default in the UI.
 - [ ] Custom territory libraries and themes are currently run as arbitrary Python, without parsing. Instead, territory libraries must be stored and parsed exactly like Flag territories: i.e. every territory must be comprised from trees of operations out of admin units, polygons, and other (perhaps-imported) territories. Similarly, the "Custom theme"s should not directly be exec-ed as code but rather parsed into Layers and Global Options (corresponding to xatra.CSS(), xatra.BaseOption(), xatra.FlagColorSequence(), xatra.AdminColorSequence(), xatra.DataColormap()) first. It should be these parsed versions that get run, stored, published as versions, imported etc. In general we should not have any arbitrary code execution (apart from the specific "Python layers" and "Python outputs" which we will later make "trusted users only").
-- [ ] In the Code -> Builder conversion/parsing, when we convert Flag values into builder syntax, we should always try where possible to convert unions of gadms into a single territory item (comprising of multiple admin units in a list)---and similarly unions of custom territories 
-when we convert unions of gadms or unions of custom territories, we should always try to parse them into lists of 
+- [ ] In the Code -> Builder conversion/parsing, when we convert Flag values into builder syntax, we should always try where possible to convert pure unions of gadms into a single "Admin unit" item in the Flag value (since an Admin unit item can comprise of a list of multiple gadm entries)---and similarly pure unions of custom territories should be converted into a single "Territory" item in the Flag value (since a Territory item can comprise of a list of multiple Territory entries). i.e.
 
-intersecting territory librarues
-comma in gadm autocomplete
+```
+(gadm("IND") | gadm("PAK") | gadm("BGD")) | (indic.KURU | (indic.PANCALA_N | indic.PANCALA_S)) | (gadm("AFG") | indic.TARIM) | indic.GULF | indic.LEVANT
+```
+
+should be converted into 
+
+Base: Admin Unit: IND, PAK, BGD
+U (+): Group: 
+  Base: Territory: indic.KURU
+  U (+): Territory: indic.PANCALA_N, indic.PANCALA_S
+U (+): Group:
+  Base: Admin Unit: gadm("AFG")
+  U (+): Territory: indic.Tarim
+U (+): Territory: indic.GULF
+U (+): Territory: indic.LEVANT
+
+instead of
+
+Base: Group:
+  Base: Admin Unit: IND
+  U (+): Admin Unit: PAK
+  U (+): Admin Unit: BGD
+U (+): Group:
+  Base: Territory: indic.KURU
+  U (+): Group:
+    Base: Territory: indic.PANCALA_N
+    U(+): Territory: indic.PANCALA_S
+U (+): Group:
+  Base: Admin Unit: gadm("AFG")
+  U (+): Territory: indic.Tarim
+U (+): Territory: indic.GULF
+U (+): Territory: indic.LEVANT
+
+- [ ] For some reason an intersection between a custom territory and another custom territory, or between a custom territory and a gadm unit, produces a random extra point marker on the map. Why? Check if that is a bug in the original xatra package (which I am developing at ../xatra) or in this repo, and fix it.
+- [ ] In the search/autocompletes for GADMs and territories, pressing comma should do exactly the same thing as pressing Enter.
 
 Development difficulties
 - [x] keeping synchrony between things---this should be documented, i.e. "if you change this, then change this too"
@@ -458,6 +490,7 @@ For eventually publishing this as a website
 - [ ] Efficiency and scalability concerns [for now, just answer in words, don't implement anything]
   - Can this website handle, idk, approx 1000 users making maps? How can we estimate the resources etc. that will cost and the servers we will need? (I'm totally new to this, I have no idea if this makes sense).
   - Is it inefficient that for every change the user makes to the map, it has to be re-rendered from ground up by xatra? Are there better solutions? Do note that the maps can get pretty long (e.g. maps of global territorial evolution over history, etc.)
+  - Does all the rendering and everything really need to be handled server-side? Or could all the heavy lifting be done client-side?
 - [ ] Admin can "featured" maps, making them appear on top
 - [ ] Collaborative editing/Github integration
 - [ ] AI agent that makes maps for you --- only for paid users [have to think about exactly how to implement this]
