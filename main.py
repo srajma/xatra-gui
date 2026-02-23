@@ -160,8 +160,13 @@ def _secure_cookie_flag(request: Optional[Request] = None) -> bool:
 
 
 def _hub_db_conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(HUB_DB_PATH)
+    # Use a busy timeout + WAL so render subprocess reads do not fail immediately
+    # during short metadata writes (autosave/publish/vote/etc.).
+    conn = sqlite3.connect(HUB_DB_PATH, timeout=30.0)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode = WAL")
+    conn.execute("PRAGMA synchronous = NORMAL")
+    conn.execute("PRAGMA busy_timeout = 30000")
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
 
