@@ -98,8 +98,8 @@ function App() {
   const [mapPayload, setMapPayload] = useState(null);
   const [pickerHtml, setPickerHtml] = useState('');
   const [territoryLibraryHtml, setTerritoryLibraryHtml] = useState('');
-  const [territoryLibrarySource, setTerritoryLibrarySource] = useState('builtin'); // builtin | custom
-  const [activeLibraryTab, setActiveLibraryTab] = useState('builtin');
+  const [territoryLibrarySource, setTerritoryLibrarySource] = useState('custom'); // custom | hub
+  const [activeLibraryTab, setActiveLibraryTab] = useState('custom');
   const [territoryLibraryNames, setTerritoryLibraryNames] = useState([]);
   const [selectedTerritoryNames, setSelectedTerritoryNames] = useState([]);
   const [territorySearchTerm, setTerritorySearchTerm] = useState('');
@@ -166,6 +166,7 @@ function App() {
   const sidebarResizingRef = useRef(false);
   const sidebarStartXRef = useRef(0);
   const sidebarStartWidthRef = useRef(500);
+  const lastPreviewTabRef = useRef('main');
 
   // Builder State
   const [builderElements, setBuilderElements] = useState([
@@ -3013,25 +3014,37 @@ window.addEventListener('message', function(e) {
     if (didPrefetchTerritoryRef.current || !mapHtml) return;
     didPrefetchTerritoryRef.current = true;
     (async () => {
-      await loadTerritoryLibraryCatalog('builtin');
-      await renderTerritoryLibrary('builtin', { background: true, useDefaultSelection: true, showLoading: true });
+      await loadTerritoryLibraryCatalog('custom');
+      await renderTerritoryLibrary('custom', { background: true, useDefaultSelection: true, showLoading: true });
     })();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mapHtml, editorContextReady]);
 
   useEffect(() => {
     if (activePreviewTab !== 'library') return;
+    const enteringLibrary = lastPreviewTabRef.current !== 'library';
+    if (enteringLibrary && activeLibraryTab === 'custom' && importedLibraryTabs.length > 0) {
+      setActiveLibraryTab(importedLibraryTabs[0].id);
+      lastPreviewTabRef.current = activePreviewTab;
+      return;
+    }
     const exists = libraryTabs.some((t) => t.id === activeLibraryTab);
     if (!exists) {
-      setActiveLibraryTab('builtin');
+      setActiveLibraryTab(importedLibraryTabs[0]?.id || 'custom');
+      lastPreviewTabRef.current = activePreviewTab;
       return;
     }
     const tab = libraryTabs.find((t) => t.id === activeLibraryTab) || libraryTabs[0];
-    const src = tab?.source || 'builtin';
+    const src = tab?.source || 'custom';
     setTerritoryLibrarySource(src);
     loadTerritoryLibraryCatalog(src, tab?.hub_path);
+    lastPreviewTabRef.current = activePreviewTab;
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activePreviewTab, activeLibraryTab, predefinedCode, hubImports]);
+
+  useEffect(() => {
+    if (activePreviewTab !== 'library') lastPreviewTabRef.current = activePreviewTab;
+  }, [activePreviewTab]);
 
   const filteredTerritoryNames = territoryLibraryNames.filter((name) => (
     !territorySearchTerm.trim() || name.toLowerCase().includes(territorySearchTerm.trim().toLowerCase())
@@ -3046,9 +3059,8 @@ window.addEventListener('message', function(e) {
       alias: imp.alias || imp.name,
     }));
   const libraryTabs = [
-    { id: 'builtin', label: 'xatra.territory_library', source: 'builtin' },
-    { id: 'custom', label: 'Custom Library', source: 'custom' },
     ...importedLibraryTabs,
+    { id: 'custom', label: 'Custom Library', source: 'custom' },
   ];
   const activeLibraryConfig = libraryTabs.find((t) => t.id === activeLibraryTab) || libraryTabs[0];
   // Keep a ref so the message handler closure always has the latest value
