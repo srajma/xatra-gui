@@ -632,6 +632,15 @@ const LayerItem = ({
         {element.type === 'flag' && (
             <>
                  <div>
+                    <label className="block text-xs text-gray-500 mb-1">Display Label</label>
+                    <PythonTextField
+                        value={element.args?.display_label || ''}
+                        onChange={(val) => updateArg(index, 'display_label', val)}
+                        inputClassName="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:border-blue-500 outline-none"
+                        placeholder="Optional map label"
+                    />
+                </div>
+                 <div>
                     <label className="block text-xs text-gray-500 mb-1">Color (Hex)</label>
                     <PythonTextField
                         value={element.args?.color || ''}
