@@ -350,7 +350,7 @@ Bugs we still have
   - [x] Holding Ctrl/Cmd to drag free-hand does not behave as intended in polygons. Say we already have points a, b, c and then draw freehand x1 x2 x3 x4 ... You would expect lines from c to x1, x1 to x2, x2 to x3, ... but instead the preview shows lines from c to x1, c to x2, c to x3, c to x4 etc. And when I click Render map, the polygon doesn't even render! WTF?
   - [x] Backspace does not remove the previous point.
 - [x] Ok, the above bugs with drawing Paths, Polygons, Points with the Picker are fixed/much better; however there's still one issue: the moment I click the picker for a new (empty) field, the field gets populated with the last point I had selected (for any other item/layer). Instead it should be initialized with the empty list.
-
+- [ ] When running the server I get a lot of "404 error not found"s in my logs in the terminal. It doesn't actually hamper my usage of the site in any way; it's just that it might be worth knowing what's causing this and if it's something that should be fixed/handled better.
 
 Random misc
 - [x] On the new map creating editor, non logged-in user should see a red "Unsaved changes" message on the second line (i.e. below the name field etc.) as soon as they make any change worth saving, and a "Login to save/publish" link after it (this should be visible whether or not the user has made any changes).

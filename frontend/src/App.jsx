@@ -98,6 +98,10 @@ function App() {
   const [newMapDialogName, setNewMapDialogName] = useState('');
   const [newMapDialogChecking, setNewMapDialogChecking] = useState(false);
   const [newMapDialogError, setNewMapDialogError] = useState('');
+  const [forkDialogOpen, setForkDialogOpen] = useState(false);
+  const [forkDialogName, setForkDialogName] = useState('');
+  const [forkDialogChecking, setForkDialogChecking] = useState(false);
+  const [forkDialogError, setForkDialogError] = useState('');
   const [profileSettingsOpen, setProfileSettingsOpen] = useState(false);
   const [statusNotice, setStatusNotice] = useState('');
   const [authMode, setAuthMode] = useState('login');
@@ -596,12 +600,12 @@ ${DEFAULT_MAP_CODE}
   });
 
   const publishHubArtifact = async (kind, content, opts = {}) => {
-    if (!HUB_NAME_RE.test(normalizedMapName)) {
-      throw new Error('Map name must contain only lowercase letters, numerals, underscores, and dots.');
-    }
     const owner = opts.owner || normalizedHubUsername;
     const targetName = opts.name || normalizedMapName;
-    const response = await apiFetch(`/hub/${kind}/${targetName}/publish`, {
+    if (!HUB_NAME_RE.test(targetName)) {
+      throw new Error('Map name must contain only lowercase letters, numerals, underscores, and dots.');
+    }
+    const response = await apiFetch(`/hub/${owner}/${kind}/${targetName}/publish`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -1705,6 +1709,11 @@ ${DEFAULT_MAP_CODE}
         setNewMapDialogOpen(false);
         return;
       }
+      if (e.key === 'Escape' && forkDialogOpen) {
+        e.preventDefault();
+        setForkDialogOpen(false);
+        return;
+      }
       if (e.key === 'Escape' && promoteDraftDialogOpen) {
         e.preventDefault();
         setPromoteDraftDialogOpen(false);
@@ -2224,25 +2233,52 @@ window.addEventListener('message', function(e) {
       navigateTo('/login');
       return;
     }
-    const forkSourceOwner = mapOwner;
-    const forkSourceMap = route.map;
     try {
-      await ensureLatestThumbnail();
       const base = normalizedMapName || 'new_map';
       const resp = await apiFetch(`/maps/resolve-name?base=${encodeURIComponent(base)}`);
       const data = await resp.json();
-      if (!resp.ok || !data?.name) throw new Error(data?.detail || 'Failed to resolve fork name');
+      const suggested = (resp.ok && data?.name) ? data.name : base;
+      setForkDialogName(suggested);
+      setForkDialogError('');
+      setForkDialogChecking(false);
+      setForkDialogOpen(true);
+    } catch (err) {
+      setError(`Fork failed: ${err.message}`);
+    }
+  };
+
+  const handleForkConfirm = async () => {
+    const name = String(forkDialogName || '').trim().toLowerCase();
+    if (!name || !HUB_NAME_RE.test(name)) return;
+    if (RESERVED_MAP_NAMES.has(name)) {
+      setForkDialogError(`'${name}' is a reserved name and cannot be used for a map.`);
+      return;
+    }
+    setForkDialogChecking(true);
+    setForkDialogError('');
+    const forkSourceOwner = mapOwner;
+    const forkSourceMap = route.map;
+    try {
+      const checkResp = await apiFetch(`/hub/map/${name}`);
+      if (checkResp.ok) {
+        setForkDialogError(`Map '${name}' already exists. Choose a different name.`);
+        return;
+      }
+      if (checkResp.status !== 404) {
+        const d = await checkResp.json().catch(() => ({}));
+        throw new Error(d.detail || 'Failed to validate map name');
+      }
+      setForkDialogOpen(false);
+      await ensureLatestThumbnail();
       const content = await buildMapArtifactContent();
-      await publishHubArtifact('map', content, {
-        owner: normalizedHubUsername,
-        name: data.name,
-      });
-      // Auto-vote on the source map after forking
+      await publishHubArtifact('map', content, { owner: normalizedHubUsername, name });
       if (forkSourceOwner && forkSourceMap) {
         apiFetch(`/maps/${forkSourceOwner}/${forkSourceMap}/vote`, { method: 'POST' }).catch(() => {});
       }
     } catch (err) {
-      setError(`Fork failed: ${err.message}`);
+      setForkDialogError(err.message || 'Fork failed');
+    } finally {
+      setForkDialogChecking(false);
     }
   };
 
@@ -3265,6 +3301,41 @@ window.addEventListener('message', function(e) {
                 disabled={!newMapDialogName || !HUB_NAME_RE.test(newMapDialogName) || newMapDialogChecking}
                 onClick={handleNewMapConfirm}
               >{newMapDialogChecking ? 'Checking…' : 'Create'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {forkDialogOpen && (
+        <div className="fixed inset-0 bg-black/40 z-[100] flex items-center justify-center" onClick={(e) => { if (e.target === e.currentTarget) setForkDialogOpen(false); }}>
+          <div className={`rounded-lg border shadow-xl p-6 w-80 ${isDarkMode ? 'bg-slate-900 border-slate-700 text-slate-100' : 'bg-white border-gray-200 text-slate-800'}`}>
+            <div className="font-semibold text-sm mb-1">Fork map</div>
+            <div className={`text-xs mb-3 ${isDarkMode ? 'text-slate-400' : 'text-gray-500'}`}>Choose a name for your forked copy.</div>
+            <label className={`block text-xs mb-1 ${isDarkMode ? 'text-slate-300' : 'text-gray-600'}`}>Map name <span className={`${isDarkMode ? 'text-slate-500' : 'text-gray-400'}`}>(a–z, 0–9, _ or .)</span></label>
+            <input
+              autoFocus
+              type="text"
+              value={forkDialogName}
+              onChange={(e) => {
+                setForkDialogName(e.target.value.toLowerCase().replace(/[^a-z0-9_.]/g, ''));
+                if (forkDialogError) setForkDialogError('');
+              }}
+              onKeyDown={(e) => { if (e.key === 'Enter') handleForkConfirm(); else if (e.key === 'Escape') setForkDialogOpen(false); }}
+              placeholder="my_map"
+              className={`w-full border rounded px-3 py-2 text-sm mb-1 focus:outline-none focus:ring-2 focus:ring-blue-300 ${isDarkMode ? 'bg-slate-800 border-slate-600 text-white placeholder-slate-500 focus:border-blue-400' : 'bg-white border-gray-300 focus:border-blue-400'}`}
+            />
+            {forkDialogName && !HUB_NAME_RE.test(forkDialogName) && (
+              <div className="text-xs text-red-600 mb-2">Invalid name. Use only a–z, 0–9, _ or .</div>
+            )}
+            {forkDialogError && (
+              <div className="text-xs text-red-600 mb-2">{forkDialogError}</div>
+            )}
+            <div className="flex gap-2 mt-3 justify-end">
+              <button className={`px-3 py-1.5 text-sm border rounded transition-colors ${isDarkMode ? 'border-slate-600 text-slate-300 hover:bg-slate-800' : 'border-gray-300 text-gray-700 hover:bg-gray-50'}`} onClick={() => setForkDialogOpen(false)}>Cancel</button>
+              <button
+                className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+                disabled={!forkDialogName || !HUB_NAME_RE.test(forkDialogName) || forkDialogChecking}
+                onClick={handleForkConfirm}
+              >{forkDialogChecking ? 'Forking…' : 'Fork'}</button>
             </div>
           </div>
         </div>
