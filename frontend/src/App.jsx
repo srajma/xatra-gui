@@ -3811,7 +3811,7 @@ window.addEventListener('message', function(e) {
                   <GitFork size={13} className="text-gray-700"/>
                 </button>
               ) : (
-                <button onClick={handlePublishMap} className="p-1.5 bg-white border border-gray-300 rounded hover:bg-gray-50 inline-flex items-center justify-center" title="Publish new version">
+                <button onClick={() => handlePublishMap()} className="p-1.5 bg-white border border-gray-300 rounded hover:bg-gray-50 inline-flex items-center justify-center" title="Publish new version">
                   <CloudUpload size={13} className="text-gray-700"/>
                 </button>
               )}

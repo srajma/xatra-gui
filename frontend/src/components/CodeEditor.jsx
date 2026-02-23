@@ -187,7 +187,7 @@ const CodeEditor = ({
                   {libraryPublishStatus === 'no_changes' ? 'No changes' : libraryPublishStatus === 'publishing' ? 'Publishing…' : libraryPublishStatus.replace('published:', '')}
                 </span>
               )}
-              <button type="button" onClick={onSaveLibrary} disabled={readOnlyLibrary} className="px-1.5 py-1 rounded border border-slate-600 hover:bg-slate-800 inline-flex items-center gap-1 disabled:opacity-40" title="Publish new library version">
+              <button type="button" onClick={() => onSaveLibrary()} disabled={readOnlyLibrary} className="px-1.5 py-1 rounded border border-slate-600 hover:bg-slate-800 inline-flex items-center gap-1 disabled:opacity-40" title="Publish new library version">
                 <CloudUpload size={12} />
               </button>
               <select value={libraryVersionLabel} onChange={(e) => onSelectLibraryVersion?.(e.target.value)} className="px-1 py-1 rounded border border-slate-600 bg-slate-900 text-slate-100 text-[10px] font-mono">
@@ -217,7 +217,7 @@ const CodeEditor = ({
                   {themePublishStatus === 'no_changes' ? 'No changes' : themePublishStatus === 'publishing' ? 'Publishing…' : themePublishStatus.replace('published:', '')}
                 </span>
               )}
-              <button type="button" onClick={onSaveTheme} disabled={readOnlyTheme} className="px-1.5 py-1 rounded border border-slate-600 hover:bg-slate-800 inline-flex items-center gap-1 disabled:opacity-40" title="Publish new theme version">
+              <button type="button" onClick={() => onSaveTheme()} disabled={readOnlyTheme} className="px-1.5 py-1 rounded border border-slate-600 hover:bg-slate-800 inline-flex items-center gap-1 disabled:opacity-40" title="Publish new theme version">
                 <CloudUpload size={12} />
               </button>
               <select value={themeVersionLabel} onChange={(e) => onSelectThemeVersion?.(e.target.value)} className="px-1 py-1 rounded border border-slate-600 bg-slate-900 text-slate-100 text-[10px] font-mono">
