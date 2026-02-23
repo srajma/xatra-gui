@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useCallback } from 'react';
-import { Map, Users, MapPin, Type, GitMerge, Table, Heading, Code2, Import, Trash2 } from 'lucide-react';
+import { Map, Users, MapPin, Type, GitMerge, Table, Heading, Code2, Import, Trash2, Music } from 'lucide-react';
 import LayerItem from './LayerItem';
 import GlobalOptions from './GlobalOptions';
 
@@ -54,6 +54,11 @@ const Builder = ({
       case 'titlebox':
         newElement.label = 'TitleBox';
         newElement.value = '<b>My Map</b>';
+        newElement.args = {};
+        break;
+      case 'music':
+        newElement.label = 'Music';
+        newElement.value = '';
         newElement.args = {};
         break;
       case 'python':
@@ -261,6 +266,9 @@ const Builder = ({
              </button>
              <button data-kind="titlebox" onClick={() => addElement('titlebox', { focusFirstField: true })} className="xatra-add-layer-btn flex flex-col items-center justify-center p-2 bg-fuchsia-50 text-fuchsia-700 rounded hover:bg-fuchsia-100 text-[10px] gap-1 border border-fuchsia-100">
                <Heading size={14}/> TitleBox
+             </button>
+             <button data-kind="music" onClick={() => addElement('music', { focusFirstField: true })} className="xatra-add-layer-btn flex flex-col items-center justify-center p-2 bg-pink-50 text-pink-700 rounded hover:bg-pink-100 text-[10px] gap-1 border border-pink-100">
+               <Music size={14}/> Music
              </button>
              <button data-kind="python" onClick={() => addElement('python', { focusFirstField: true })} className="xatra-add-layer-btn flex flex-col items-center justify-center p-2 bg-amber-50 text-amber-700 rounded hover:bg-amber-100 text-[10px] gap-1 border border-amber-100">
                <Code2 size={14}/> Python

@@ -359,6 +359,7 @@ const TerritoryBuilder = ({
   value, onChange, lastMapClick, activePicker, setActivePicker, draftPoints, setDraftPoints, parentId, predefinedCode, onStartReferencePick, onStartTerritoryLibraryPick, pathPrefix = [], onMovePartByPath = null, selectedPath: selectedPathProp = null, setSelectedPath: setSelectedPathProp = null, hubImports = []
 }) => {
   const builderRootRef = useRef(null);
+  const lastHandledClickTsRef = useRef(null);
   const parts = normalizeParts(value);
   const [localSelectedPath, setLocalSelectedPath] = useState(null);
   const [operationPrompt, setOperationPrompt] = useState(null);
@@ -380,6 +381,7 @@ const TerritoryBuilder = ({
     if (Number.isInteger(activePicker.id)) return [activePicker.id];
     return null;
   }, [activePicker, parentId]);
+  const pickerStartedAt = Number(activePicker?.startedAt || 0);
 
   const pickingIndex = useMemo(() => {
     if (!matchingPickerPath || matchingPickerPath.length !== pathPrefix.length + 1) return -1;
@@ -394,22 +396,26 @@ const TerritoryBuilder = ({
 
   useEffect(() => {
     if (pickingIndex >= 0 && lastMapClick) {
+      if (pickerStartedAt && Number(lastMapClick.ts || 0) <= pickerStartedAt) return;
+      if (lastHandledClickTsRef.current === lastMapClick.ts) return;
+      lastHandledClickTsRef.current = lastMapClick.ts;
       const lat = parseFloat(lastMapClick.lat.toFixed(4));
       const lng = parseFloat(lastMapClick.lng.toFixed(4));
       const point = [lat, lng];
 
       const part = parts[pickingIndex];
       if (part && part.type === 'polygon') {
-        const newPoints = [...draftPoints, point];
-        setDraftPoints(newPoints);
-
-        const newParts = [...parts];
-        newParts[pickingIndex] = { ...part, value: JSON.stringify(newPoints) };
-        onChange(newParts);
+        setDraftPoints((prev) => {
+          const next = [...prev, point];
+          const newParts = [...parts];
+          newParts[pickingIndex] = { ...part, value: JSON.stringify(next) };
+          onChange(newParts);
+          return next;
+        });
       }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lastMapClick, pickingIndex, parts, draftPoints, onChange]);
+  }, [lastMapClick, pickingIndex, pickerStartedAt, parts, onChange]);
 
   useEffect(() => {
     if (pickingIndex >= 0) {
@@ -423,7 +429,7 @@ const TerritoryBuilder = ({
         }
       }
     }
-  }, [pickingIndex]);
+  }, [pickingIndex, parts, setDraftPoints]);
 
   const pathForIndex = (idx) => [...pathPrefix, idx];
 
@@ -436,7 +442,8 @@ const TerritoryBuilder = ({
       setDraftPoints([]);
       return;
     }
-    setActivePicker({ id: idx, type: 'polygon', context: `territory-${parentId}`, target: { partPath: nextPath } });
+    lastHandledClickTsRef.current = null;
+    setActivePicker({ id: idx, type: 'polygon', context: `territory-${parentId}`, target: { partPath: nextPath }, startedAt: Date.now() });
     setDraftPoints([]);
   };
 

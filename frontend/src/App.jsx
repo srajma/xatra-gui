@@ -31,7 +31,7 @@ xatra.TitleBox("<b>My Map</b>")
 `;
 const IMPORTABLE_LAYER_TYPES = [
   'Flag', 'River', 'Path', 'Point', 'Text', 'Admin', 'AdminRivers', 'Dataframe',
-  'TitleBox', 'CSS', 'BaseOption', 'FlagColorSequence', 'AdminColorSequence',
+  'TitleBox', 'Music', 'CSS', 'BaseOption', 'FlagColorSequence', 'AdminColorSequence',
   'DataColormap', 'zoom', 'focus', 'slider', 'Python',
 ];
 
@@ -793,9 +793,9 @@ ${DEFAULT_MAP_CODE}
         setImportsCode(parsed.imports_code || '');
         setHubImports(parseImportsCodeToItems(parsed.imports_code || ''));
         setThemeCode(parsed.theme_code || '');
-        setPredefinedCode(parsed.predefined_code || predefinedCode);
-        setCode(parsed.map_code || code);
-        setRuntimeCode(parsed.runtime_code || '');
+        setPredefinedCode(parsed.predefined_code ?? '');
+        setCode(parsed.map_code ?? '');
+        setRuntimeCode(parsed.runtime_code ?? '');
         if (parsed.project && parsed.project.elements && parsed.project.options) {
           setBuilderElements(parsed.project.elements);
           setBuilderOptions(parsed.project.options);
@@ -1139,6 +1139,13 @@ ${DEFAULT_MAP_CODE}
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [route.page, currentUser.is_authenticated, authReady, normalizedHubUsername]);
 
+  useEffect(() => {
+    if (route.page === 'profile' && currentUser.is_authenticated && authReady && route.username === normalizedHubUsername) {
+      loadUserDraftMeta();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [route.page, route.username, currentUser.is_authenticated, authReady, normalizedHubUsername]);
+
   const handleLogin = async (mode = authMode) => {
     setAuthSubmitting(true);
     try {
@@ -1276,14 +1283,21 @@ ${DEFAULT_MAP_CODE}
       if (!activePicker) return;
       if (activePicker.context === 'layer') {
           const idx = activePicker.id;
-          const newElements = [...builderElements];
-          newElements[idx].value = JSON.stringify(points);
-          setBuilderElements(newElements);
+          setBuilderElements((prev) => {
+            const next = [...prev];
+            const el = next[idx];
+            if (!el) return prev;
+            if (el.type === 'point' || el.type === 'text') {
+              const pt = points.length ? points[points.length - 1] : null;
+              next[idx] = { ...el, value: pt ? JSON.stringify(pt) : '' };
+            } else {
+              next[idx] = { ...el, value: JSON.stringify(points) };
+            }
+            return next;
+          });
       } else if (isTerritoryPolygonPicker(activePicker.context)) {
           const parentId = parseInt(activePicker.context.replace('territory-', ''), 10);
           if (Number.isNaN(parentId)) return;
-          const el = builderElements[parentId];
-          if (!el || el.type !== 'flag' || !Array.isArray(el.value)) return;
           const path = Array.isArray(activePicker.target?.partPath)
             ? activePicker.target.partPath
             : (Number.isInteger(activePicker.id) ? [activePicker.id] : []);
@@ -1303,9 +1317,13 @@ ${DEFAULT_MAP_CODE}
             next[idx] = { ...part, value: setPartAtPath(part.value, partPath, depth + 1) };
             return next;
           };
-          const newElements = [...builderElements];
-          newElements[parentId] = { ...el, value: setPartAtPath(el.value, path) };
-          setBuilderElements(newElements);
+          setBuilderElements((prev) => {
+            const next = [...prev];
+            const el = next[parentId];
+            if (!el || el.type !== 'flag' || !Array.isArray(el.value)) return prev;
+            next[parentId] = { ...el, value: setPartAtPath(el.value, path) };
+            return next;
+          });
       }
   };
 
@@ -1336,7 +1354,12 @@ ${DEFAULT_MAP_CODE}
       } else if (event.data && event.data.type === 'mapMouseMove') {
           const modifierPressed = !!(event.data.ctrlKey || event.data.metaKey || freehandModifierPressed);
           if (modifierPressed !== freehandModifierPressed) setFreehandModifierPressed(modifierPressed);
-          if (activePicker && modifierPressed && isMouseDown && (activePicker.context === 'layer' || isTerritoryPolygonPicker(activePicker.context))) {
+          const isFreehandEligible = !!(
+            activePicker &&
+            (activePicker.type === 'path' || activePicker.type === 'polygon') &&
+            (activePicker.context === 'layer' || isTerritoryPolygonPicker(activePicker.context))
+          );
+          if (isFreehandEligible && modifierPressed && isMouseDown) {
               const point = [parseFloat(event.data.lat.toFixed(4)), parseFloat(event.data.lng.toFixed(4))];
               setDraftPoints(prev => {
                   const last = prev[prev.length - 1];
@@ -1455,7 +1478,7 @@ ${DEFAULT_MAP_CODE}
     };
     window.addEventListener('message', handleMessage);
     return () => window.removeEventListener('message', handleMessage);
-  }, [activePreviewTab, activePicker, freehandModifierPressed, isMouseDown, referencePickTarget, builderElements]);
+  }, [activePreviewTab, activePicker, freehandModifierPressed, isMouseDown, referencePickTarget]);
 
   useEffect(() => {
     const uniqueCountries = Array.from(
@@ -1650,6 +1673,7 @@ ${DEFAULT_MAP_CODE}
       setReferencePickTarget(null);
       clearReferenceSelection();
       setFreehandModifierPressed(false);
+      setIsMouseDown(false);
     }
   }, [activePicker]);
 
@@ -1754,6 +1778,7 @@ ${DEFAULT_MAP_CODE}
           p: 'point',
           t: 'text',
           h: 'path',
+          m: 'music',
           a: 'admin',
           d: 'dataframe',
           b: 'titlebox',
@@ -1880,7 +1905,7 @@ ${DEFAULT_MAP_CODE}
         setError(data.error);
         console.error(data.traceback);
       } else {
-        setMapHtml(data.html);
+        setMapHtml(injectThumbnailCapture(data.html));
         setMapPayload(data.payload);
       }
     } catch (err) {
@@ -1926,7 +1951,7 @@ ${DEFAULT_MAP_CODE}
         setError(data.error);
         console.error(data.traceback);
       } else {
-        setMapHtml(data.html);
+        setMapHtml(injectThumbnailCapture(data.html));
         setMapPayload(data.payload);
       }
     } catch (err) {
@@ -1937,27 +1962,71 @@ ${DEFAULT_MAP_CODE}
     }
   };
 
+  // Inject a postMessage listener into rendered HTML so the sandboxed iframe can
+  // respond to thumbnail capture requests (contentDocument is inaccessible without allow-same-origin).
+  const injectThumbnailCapture = (html) => {
+    const script = `<script>
+window.addEventListener('message', function(e) {
+  if (!e.data || e.data.type !== 'xatra_request_thumbnail') return;
+  try {
+    var mapEl = document.querySelector('.leaflet-container');
+    var svgEl = mapEl ? mapEl.querySelector('svg') : null;
+    if (!svgEl) { parent.postMessage({ type: 'xatra_thumbnail_response', svg: null }, '*'); return; }
+    var w = mapEl.clientWidth || 1;
+    var h = mapEl.clientHeight || 1;
+
+    // Leaflet positions the SVG via CSS translate3d, and the map pane also has a pan offset.
+    // We must account for both to produce the correct viewBox for the visible area.
+    function getTranslate(el) {
+      var t = el ? (el.style.transform || '') : '';
+      var m = t.match(/translate3d\\((-?[\\d.]+)px,\\s*(-?[\\d.]+)px/);
+      return m ? [parseFloat(m[1]), parseFloat(m[2])] : [0, 0];
+    }
+    var paneEl = mapEl.querySelector('.leaflet-map-pane');
+    var pane = getTranslate(paneEl);  // pan offset [A, B]
+    var svgT = getTranslate(svgEl);   // pixel-origin offset [C, D]
+    // Screen (0,0) = path coordinate (-A-C, -B-D)
+    var vbX = -(pane[0] + svgT[0]);
+    var vbY = -(pane[1] + svgT[1]);
+
+    var clone = svgEl.cloneNode(true);
+    clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+    clone.setAttribute('width', String(w));
+    clone.setAttribute('height', String(h));
+    clone.setAttribute('viewBox', vbX + ' ' + vbY + ' ' + w + ' ' + h);
+    clone.style.transform = '';  // strip the CSS transform — viewBox handles positioning now
+    var svg = new XMLSerializer().serializeToString(clone);
+    parent.postMessage({ type: 'xatra_thumbnail_response', svg: svg, width: w, height: h }, '*');
+  } catch(err) {
+    parent.postMessage({ type: 'xatra_thumbnail_response', svg: null }, '*');
+  }
+});<\/script>`;
+    return html.includes('</body>') ? html.replace('</body>', script + '</body>') : html + script;
+  };
+
   const captureMapThumbnail = async () => {
     try {
       const iframe = iframeRef.current;
-      const doc = iframe?.contentDocument;
-      const mapEl = doc?.querySelector('.leaflet-container');
-      if (!doc || !mapEl) return '';
-      const svgEl = mapEl.querySelector('svg');
-      if (!svgEl) return '';
-      const sourceRect = mapEl.getBoundingClientRect();
-      const srcW = Math.max(1, Math.round(sourceRect.width || mapEl.clientWidth || 1));
-      const srcH = Math.max(1, Math.round(sourceRect.height || mapEl.clientHeight || 1));
+      if (!iframe?.contentWindow) return '';
+      // The iframe is sandboxed without allow-same-origin, so contentDocument is inaccessible.
+      // Use postMessage to ask the iframe to serialize its own SVG and send it back.
+      const svgData = await new Promise((resolve) => {
+        const timeout = setTimeout(() => resolve(null), 3000);
+        const handler = (event) => {
+          if (event.data?.type === 'xatra_thumbnail_response') {
+            clearTimeout(timeout);
+            window.removeEventListener('message', handler);
+            resolve(event.data);
+          }
+        };
+        window.addEventListener('message', handler);
+        iframe.contentWindow.postMessage({ type: 'xatra_request_thumbnail' }, '*');
+      });
+      if (!svgData?.svg) return '';
+      const { svg, width: srcW, height: srcH } = svgData;
       const targetW = 480;
       const targetH = 270;
-
-      const clone = svgEl.cloneNode(true);
-      clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
-      clone.setAttribute('width', String(srcW));
-      clone.setAttribute('height', String(srcH));
-      clone.setAttribute('viewBox', `0 0 ${srcW} ${srcH}`);
-      const serialized = new XMLSerializer().serializeToString(clone);
-      const blob = new Blob([serialized], { type: 'image/svg+xml;charset=utf-8' });
+      const blob = new Blob([svg], { type: 'image/svg+xml;charset=utf-8' });
       const url = URL.createObjectURL(blob);
       try {
         const img = await new Promise((resolve, reject) => {
@@ -1973,13 +2042,21 @@ ${DEFAULT_MAP_CODE}
         if (!ctx) return '';
         ctx.fillStyle = isDarkMode ? '#0f172a' : '#f8fafc';
         ctx.fillRect(0, 0, targetW, targetH);
-        ctx.drawImage(img, 0, 0, targetW, targetH);
+        ctx.drawImage(img, 0, 0, srcW, srcH, 0, 0, targetW, targetH);
         return canvas.toDataURL('image/jpeg', 0.78);
       } finally {
         URL.revokeObjectURL(url);
       }
     } catch {
       return '';
+    }
+  };
+
+  const ensureLatestThumbnail = async () => {
+    if (!mapHtml) return;
+    const dataUrl = await captureMapThumbnail();
+    if (dataUrl) {
+      lastRenderedThumbnailRef.current = dataUrl;
     }
   };
 
@@ -2071,6 +2148,7 @@ ${DEFAULT_MAP_CODE}
     if (!HUB_NAME_RE.test(normalizedMapName)) return;
     setAutoSaveStatus('saving');
     try {
+      await ensureLatestThumbnail();
       // Only flag conflict when the user has renamed the map to something that already exists
       // (i.e. route.map is set — an existing map was loaded — but mapName was changed to something different)
       const isRename = !!(route.map && route.map !== normalizedMapName);
@@ -2126,6 +2204,7 @@ ${DEFAULT_MAP_CODE}
         return;
       }
       let targetName = normalizedMapName;
+      await ensureLatestThumbnail();
       const check = await apiFetch(`/hub/map/${targetName}`);
       const exists = check.ok;
       const isSameCurrent = !!(mapOwner === normalizedHubUsername && route.map === targetName);
@@ -2148,6 +2227,7 @@ ${DEFAULT_MAP_CODE}
     const forkSourceOwner = mapOwner;
     const forkSourceMap = route.map;
     try {
+      await ensureLatestThumbnail();
       const base = normalizedMapName || 'new_map';
       const resp = await apiFetch(`/maps/resolve-name?base=${encodeURIComponent(base)}`);
       const data = await resp.json();
@@ -2620,6 +2700,12 @@ ${DEFAULT_MAP_CODE}
         } else if (el.type === 'titlebox') {
             const titleHtml = (el.value != null && el.value !== '') ? pyVal(el.value) : 'None';
             lines.push(`xatra.TitleBox(${titleHtml}${argsStr})`);
+        } else if (el.type === 'music') {
+            const musicArgs = { ...args };
+            delete musicArgs.filename;
+            const musicArgsStr = argsToStr(musicArgs);
+            const musicVal = (el.value != null && el.value !== '') ? pyVal(el.value) : 'None';
+            lines.push(`xatra.Music(path=${musicVal}${musicArgsStr})`);
         } else if (el.type === 'python') {
             const raw = (el.value == null) ? '' : String(el.value);
             if (raw.trim()) lines.push(raw);
@@ -3029,6 +3115,7 @@ ${DEFAULT_MAP_CODE}
             <div>`Ctrl/Cmd+Shift+P` add Point</div>
             <div>`Ctrl/Cmd+Shift+T` add Text</div>
             <div>`Ctrl/Cmd+Shift+H` add Path</div>
+            <div>`Ctrl/Cmd+Shift+M` add Music</div>
             <div>`Ctrl/Cmd+Shift+A` add Admin</div>
             <div>`Ctrl/Cmd+Shift+D` add Data</div>
             <div>`Ctrl/Cmd+Shift+B` add TitleBox</div>
@@ -3438,10 +3525,28 @@ ${DEFAULT_MAP_CODE}
               <input value={profileSearch} onChange={(e) => setProfileSearch(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { setProfilePage(1); loadProfile(route.username, 1, profileSearch); } }} className={`flex-1 rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300 ${isDarkMode ? 'bg-slate-800 border-slate-600 text-white placeholder-slate-500 focus:border-blue-400' : 'bg-white border-gray-300 focus:border-blue-400'}`} placeholder="Search maps…" />
               <button className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 transition-colors" onClick={() => { setProfilePage(1); loadProfile(route.username, 1, profileSearch); }}>Search</button>
             </div>
-            {maps.length === 0 && !profileLoading && (
+            {maps.length === 0 && !profileLoading && !isOwn && (
               <div className={`text-sm text-center py-12 ${isDarkMode ? 'text-slate-500' : 'text-gray-400'}`}>No maps yet.</div>
             )}
             <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-4">
+              {isOwn && (
+                <button
+                  onClick={handleNewMapClick}
+                  className={`rounded-xl border h-full min-h-[168px] flex flex-col items-center justify-center gap-1.5 text-xs font-medium transition-colors ${isDarkMode ? 'bg-slate-800 border-slate-700 text-slate-300 hover:border-blue-500 hover:text-blue-400' : 'bg-white border-gray-200 text-gray-500 hover:border-blue-400 hover:text-blue-600'}`}
+                >
+                  <Plus size={18}/>
+                  New map
+                </button>
+              )}
+              {isOwn && userDraftMeta?.exists && (
+                <button
+                  onClick={() => { setPromoteDraftName(''); setPromoteDraftError(''); setPromoteDraftDialogOpen(true); }}
+                  className={`rounded-xl border h-full min-h-[168px] flex flex-col items-center justify-center gap-1 text-xs transition-colors ${isDarkMode ? 'bg-slate-800 border-red-700/50 hover:border-red-500' : 'bg-white border-red-200 hover:border-red-400'}`}
+                >
+                  <div className={`font-semibold ${isDarkMode ? 'text-red-400' : 'text-red-500'}`}>Unsaved Draft</div>
+                  <div className={`text-[10px] ${isDarkMode ? 'text-slate-400' : 'text-gray-400'}`}>{userDraftMeta.mapName}</div>
+                </button>
+              )}
               {maps.map((m) => (
                 <div key={m.slug} className={`relative group rounded-xl border overflow-hidden shadow-sm hover:shadow-md transition-shadow ${isDarkMode ? 'bg-slate-800 border-slate-700 hover:border-slate-600' : 'bg-white border-gray-200 hover:border-gray-300'}`}>
                   <a href={m.slug} className="block">

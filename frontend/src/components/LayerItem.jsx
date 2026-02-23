@@ -15,10 +15,14 @@ const LayerItem = ({
 }) => {
   const [showMore, setShowMore] = useState(false);
   const pickerTimeoutRef = useRef(null);
+  const lastHandledClickTsRef = useRef(null);
   const [builtinIconsList, setBuiltinIconsList] = useState([]);
+  const [musicPeriodText, setMusicPeriodText] = useState('');
+  const [musicTimestampsText, setMusicTimestampsText] = useState('');
   
   const isPicking = activePicker && activePicker.id === index && activePicker.context === 'layer';
   const isRiverReferencePicking = activePicker && activePicker.id === index && activePicker.context === 'reference-river';
+  const pickerStartedAt = isPicking ? Number(activePicker?.startedAt || 0) : 0;
 
   const [periodText, setPeriodText] = useState(Array.isArray(element.args?.period) ? element.args.period.join(', ') : '');
 
@@ -26,6 +30,20 @@ const LayerItem = ({
   useEffect(() => {
       setPeriodText(Array.isArray(element.args?.period) ? element.args.period.join(', ') : '');
   }, [element.args?.period]);
+
+  useEffect(() => {
+    const p = element.args?.period;
+    if (Array.isArray(p) && p.length === 2) setMusicPeriodText(`${p[0]}, ${p[1]}`);
+    else if (typeof p === 'string') setMusicPeriodText(p);
+    else setMusicPeriodText('');
+  }, [element.args?.period]);
+
+  useEffect(() => {
+    const t = element.args?.timestamps;
+    if (Array.isArray(t) && t.length === 2) setMusicTimestampsText(`${t[0]}, ${t[1]}`);
+    else if (typeof t === 'string') setMusicTimestampsText(t);
+    else setMusicTimestampsText('');
+  }, [element.args?.timestamps]);
 
   useEffect(() => {
     if (element.type === 'point') {
@@ -38,6 +56,9 @@ const LayerItem = ({
 
   useEffect(() => {
       if (isPicking && lastMapClick) {
+        if (pickerStartedAt && Number(lastMapClick.ts || 0) <= pickerStartedAt) return;
+        if (lastHandledClickTsRef.current === lastMapClick.ts) return;
+        lastHandledClickTsRef.current = lastMapClick.ts;
         const lat = parseFloat(lastMapClick.lat.toFixed(4));
         const lng = parseFloat(lastMapClick.lng.toFixed(4));
         const point = [lat, lng];
@@ -53,35 +74,26 @@ const LayerItem = ({
               setDraftPoints([]);
             }, 240);
         } else if (element.type === 'path') {
-            const newPoints = [...draftPoints, point];
-            setDraftPoints(newPoints);
-            updateElement(index, 'value', JSON.stringify(newPoints));
+            setDraftPoints((prev) => {
+              const next = [...prev, point];
+              updateElement(index, 'value', JSON.stringify(next));
+              return next;
+            });
         }
       }
       return () => {
         if (pickerTimeoutRef.current) clearTimeout(pickerTimeoutRef.current);
       };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lastMapClick, isPicking, element.type, index, updateElement, draftPoints, setActivePicker, setDraftPoints]);
-
-  // Sync draftPoints when entering picking mode for path
-  useEffect(() => {
-      if (isPicking && element.type === 'path') {
-          try {
-              const current = JSON.parse(element.value || '[]');
-              setDraftPoints(Array.isArray(current) ? current : []);
-          } catch {
-              setDraftPoints([]);
-          }
-      }
-  }, [isPicking]);
+  }, [lastMapClick, isPicking, pickerStartedAt, element.type, index, updateElement, setActivePicker, setDraftPoints]);
 
   const togglePicking = () => {
       if (isPicking) {
           setActivePicker(null);
           setDraftPoints([]);
       } else {
-          setActivePicker({ id: index, type: element.type, context: 'layer' });
+          lastHandledClickTsRef.current = null;
+          setActivePicker({ id: index, type: element.type, context: 'layer', startedAt: Date.now() });
           // For point/text, show existing position as dot when entering picker mode
           if (element.type === 'point' || element.type === 'text') {
               try {
@@ -90,6 +102,15 @@ const LayerItem = ({
                       setDraftPoints([pos]);
                       return;
                   }
+              } catch {
+                // ignore malformed coordinates while entering picker mode
+              }
+          }
+          if (element.type === 'path') {
+              try {
+                const current = JSON.parse(element.value || '[]');
+                setDraftPoints(Array.isArray(current) ? current : []);
+                return;
               } catch {
                 // ignore malformed coordinates while entering picker mode
               }
@@ -478,6 +499,94 @@ const LayerItem = ({
             />
           </div>
         );
+      case 'music':
+        return (
+          <div className="mb-2">
+            <label className="block text-xs text-gray-500 mb-1">Audio File</label>
+            <div className="flex items-center gap-2">
+              <input
+                type="file"
+                accept="audio/*"
+                data-focus-primary="true"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  const reader = new FileReader();
+                  reader.onload = (ev) => {
+                    updateElement(index, 'value', String(ev.target?.result || ''));
+                    updateArg(index, 'filename', file.name);
+                  };
+                  reader.readAsDataURL(file);
+                }}
+                className="block w-full text-xs text-gray-600 file:mr-2 file:px-2 file:py-1 file:rounded file:border file:border-gray-200 file:bg-gray-50 file:text-gray-700 hover:file:bg-gray-100"
+              />
+            </div>
+            <div className="mt-1 text-[10px] text-gray-500 font-mono truncate" title={element.args?.filename || ''}>
+              {element.args?.filename ? `Selected: ${element.args.filename}` : 'No file selected'}
+            </div>
+            <details className="mt-2 rounded border border-gray-100 bg-gray-50/40 p-2">
+              <summary className="cursor-pointer text-[11px] font-medium text-gray-600 select-none">Optional: Period & Timestamps</summary>
+              <div className="mt-2 grid grid-cols-1 gap-2">
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">Period [start, end]</label>
+                  <PythonTextField
+                    value={musicPeriodText}
+                    onChange={(val) => {
+                      if (val && typeof val === 'object' && !Array.isArray(val)) {
+                        setMusicPeriodText('');
+                        updateArg(index, 'period', val);
+                        return;
+                      }
+                      const text = String(val || '').trim();
+                      setMusicPeriodText(String(val || ''));
+                      if (!text) {
+                        updateArg(index, 'period', null);
+                        return;
+                      }
+                      const clean = text.replace(/\[|\]/g, '');
+                      const parts = clean.split(',').map((s) => s.trim());
+                      if (parts.length === 2) {
+                        const start = parseInt(parts[0], 10);
+                        const end = parseInt(parts[1], 10);
+                        if (!Number.isNaN(start) && !Number.isNaN(end)) updateArg(index, 'period', [start, end]);
+                      }
+                    }}
+                    inputClassName="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:border-blue-500 outline-none font-mono"
+                    placeholder="e.g. -320, -180"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">Timestamps [start, end] seconds</label>
+                  <PythonTextField
+                    value={musicTimestampsText}
+                    onChange={(val) => {
+                      if (val && typeof val === 'object' && !Array.isArray(val)) {
+                        setMusicTimestampsText('');
+                        updateArg(index, 'timestamps', val);
+                        return;
+                      }
+                      const text = String(val || '').trim();
+                      setMusicTimestampsText(String(val || ''));
+                      if (!text) {
+                        updateArg(index, 'timestamps', null);
+                        return;
+                      }
+                      const clean = text.replace(/\[|\]|\(|\)/g, '');
+                      const parts = clean.split(',').map((s) => s.trim());
+                      if (parts.length === 2) {
+                        const start = parseFloat(parts[0]);
+                        const end = parseFloat(parts[1]);
+                        if (!Number.isNaN(start) && !Number.isNaN(end)) updateArg(index, 'timestamps', [start, end]);
+                      }
+                    }}
+                    inputClassName="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:border-blue-500 outline-none font-mono"
+                    placeholder="e.g. 10, 90"
+                  />
+                </div>
+              </div>
+            </details>
+          </div>
+        );
       case 'python':
         return (
           <div className="mb-2">
@@ -497,7 +606,7 @@ const LayerItem = ({
   };
 
   const renderMoreOptions = () => {
-    if (element.type === 'titlebox') {
+    if (element.type === 'titlebox' || element.type === 'music') {
       return null;
     }
     const inheritOptions = (elements || [])
@@ -535,7 +644,7 @@ const LayerItem = ({
                     <label className="block text-xs text-gray-500 mb-1">Inherit Color From</label>
                     <select
                       value={element.args?.inherit || ''}
-                      onChange={(e) => updateArg(index, 'inherit', e.target.value)}
+                      onChange={(e) => updateArg(index, 'inherit', e.target.value || null)}
                       className="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:border-blue-500 outline-none"
                     >
                       <option value="">None</option>
@@ -587,7 +696,7 @@ const LayerItem = ({
 
       {renderSpecificFields()}
 
-      {element.type !== 'python' && (
+      {element.type !== 'python' && element.type !== 'music' && (
         <div className="mb-2">
             <label className="block text-xs text-gray-500 mb-1">Period [start, end]</label>
             <PythonTextField
@@ -602,7 +711,7 @@ const LayerItem = ({
         </div>
       )}
 
-      {element.type !== 'titlebox' && element.type !== 'python' && (
+      {element.type !== 'titlebox' && element.type !== 'python' && element.type !== 'music' && (
         <div>
           <label className="block text-xs text-gray-500 mb-1">Note (Tooltip)</label>
           <PythonTextField
@@ -617,7 +726,7 @@ const LayerItem = ({
         </div>
       )}
 
-      {element.type !== 'titlebox' && element.type !== 'python' && (
+      {element.type !== 'titlebox' && element.type !== 'python' && element.type !== 'music' && (
         <>
           <button 
             onClick={() => setShowMore(!showMore)}
