@@ -487,7 +487,23 @@ For eventually publishing this as a website
 - [ ] Security
   - [x] Obviously can't allow users to just run any Python code. Instead of blindly running whatever code the user enters in the Code editor, we should convert it into the "Builder" format first and then run _that_.
       - [x] "Python" blocks and "Python" input to fields should _only_ be available to "Trusted" users. Other users should not be able to do that or even see the options; **however they should be able to import maps/libraries/themes from users who did use these blocks.** Admin users are always trusted.
-        - [ ] Even that code should only be run in a sandbox, not affecting anything else on the system. You know, like how do platforms like Leetcode do it?
+        - [WONTFIX] Even that code should only be run in a sandbox, not affecting anything else on the system. You know, like how do platforms like Leetcode do it?
+        ```
+        1. Sandboxing trusted Python (LeetCode-style)
+              Not implemented yet. Current trusted Python still runs in your backend subprocess, not a hardened isolation boundary.
+              Correct approach: run trusted Python in a separate constrained runtime (container/microVM) with:
+                - read-only filesystem (except temp),
+                - no host/network access by default,
+                - CPU/memory/time/process limits,
+                - seccomp/cgroup/AppArmor (or microVM isolation),
+                - strict IPC boundary back to app.
+        
+            On sandboxing (LeetCode-style)
+        
+            - Not implemented yet.
+            - Current trusted Python still runs in app subprocesses, not a hardened container/microVM boundary.
+            - If you want, next step is a concrete execution-isolation layer (containerized worker with no network, RO FS, cgroup/seccomp limits, strict IPC).
+        ```
     - [x] Is the parsing of Python into Builder json, and the parsing of Builder json back into Python code, perfectly secure?
 - [ ] Efficiency and scalability concerns [for now, just answer in words, don't implement anything]
   - Can this website handle, idk, approx 1000 users making maps? How can we estimate the resources etc. that will cost and the servers we will need? (I'm totally new to this, I have no idea if this makes sense).
