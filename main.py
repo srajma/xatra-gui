@@ -3951,6 +3951,123 @@ def run_rendering_task(task_type, data, result_queue):
         elif isinstance(dc, str):
             m.DataColormap(dc)
 
+    def apply_scalar_options(options: Dict[str, Any]):
+        if not isinstance(options, dict):
+            return
+        if "zoom" in options and options["zoom"] is not None:
+            try:
+                m.zoom(int(options["zoom"]))
+            except Exception as e:
+                print(f"[xatra] Warning: invalid zoom value in imported options: {e}", file=sys.stderr)
+        if "focus" in options and options["focus"]:
+            focus = options["focus"]
+            if isinstance(focus, list) and len(focus) == 2:
+                try:
+                    m.focus(float(focus[0]), float(focus[1]))
+                except Exception as e:
+                    print(f"[xatra] Warning: invalid focus value in imported options: {e}", file=sys.stderr)
+        if "slider" in options and isinstance(options["slider"], dict):
+            sl = options["slider"]
+            start = sl.get("start")
+            end = sl.get("end")
+            speed = sl.get("speed")
+            if isinstance(start, str) and start.strip():
+                try: start = int(start)
+                except: start = None
+            elif isinstance(start, str):
+                start = None
+            if isinstance(end, str) and end.strip():
+                try: end = int(end)
+                except: end = None
+            elif isinstance(end, str):
+                end = None
+            if start is not None or end is not None:
+                m.slider(start=start, end=end, speed=speed if speed else 5.0)
+
+    def _import_method_allowed(method: str, filter_only: Optional[List[str]], filter_not: Optional[List[str]]) -> bool:
+        only = {str(x).strip() for x in (filter_only or []) if str(x).strip()}
+        blocked = {str(x).strip() for x in (filter_not or []) if str(x).strip()}
+        if only and method not in only:
+            return False
+        if method in blocked:
+            return False
+        return True
+
+    def _filter_imported_options(options: Dict[str, Any], filter_only: Optional[List[str]], filter_not: Optional[List[str]]) -> Dict[str, Any]:
+        if not isinstance(options, dict):
+            return {}
+        out: Dict[str, Any] = {}
+        option_method_map = {
+            "basemaps": "BaseOption",
+            "css_rules": "CSS",
+            "flag_color_sequences": "FlagColorSequence",
+            "admin_color_sequences": "AdminColorSequence",
+            "data_colormap": "DataColormap",
+            "zoom": "zoom",
+            "focus": "focus",
+            "slider": "slider",
+        }
+        for key, method in option_method_map.items():
+            if key in options and _import_method_allowed(method, filter_only, filter_not):
+                out[key] = options[key]
+        return out
+
+    def _filter_imported_elements(elements: List[Any], filter_only: Optional[List[str]], filter_not: Optional[List[str]]) -> List[Any]:
+        if not isinstance(elements, list):
+            return []
+        type_method_map = {
+            "flag": "Flag",
+            "river": "River",
+            "path": "Path",
+            "point": "Point",
+            "text": "Text",
+            "admin": "Admin",
+            "admin_rivers": "AdminRivers",
+            "dataframe": "Dataframe",
+            "titlebox": "TitleBox",
+            "music": "Music",
+            "python": "Python",
+        }
+        out: List[Any] = []
+        for el in elements:
+            if isinstance(el, dict):
+                el_type = str(el.get("type", "")).strip().lower()
+            else:
+                el_type = str(getattr(el, "type", "")).strip().lower()
+            method = type_method_map.get(el_type)
+            if not method:
+                continue
+            if _import_method_allowed(method, filter_only, filter_not):
+                out.append(el)
+        return out
+
+    def _parse_imported_map_payload(content_text: str) -> Dict[str, Any]:
+        parsed = _json_parse(content_text or "", None)
+        if isinstance(parsed, dict):
+            imports_code = parsed.get("imports_code")
+            if not isinstance(imports_code, str):
+                imports_code = ""
+            project = parsed.get("project")
+            if isinstance(project, dict) and isinstance(project.get("elements"), list):
+                return {
+                    "imports_code": imports_code,
+                    "elements": project.get("elements", []),
+                    "options": project.get("options", {}) if isinstance(project.get("options"), dict) else {},
+                }
+            map_code = parsed.get("map_code") if isinstance(parsed.get("map_code"), str) else ""
+            theme_code = parsed.get("theme_code") if isinstance(parsed.get("theme_code"), str) else ""
+            combined = "\n\n".join([x for x in [theme_code, map_code] if isinstance(x, str) and x.strip()])
+            if combined.strip():
+                parsed_builder = parse_code_segment_to_builder_payload(combined, parsed.get("predefined_code") if isinstance(parsed.get("predefined_code"), str) else "")
+                return {
+                    "imports_code": imports_code,
+                    "elements": parsed_builder.get("elements", []),
+                    "options": parsed_builder.get("options", {}),
+                }
+        return {"imports_code": "", "elements": [], "options": {}}
+
+    pending_import_elements: List[Any] = []
+
     def register_xatrahub(exec_globals):
         def xatrahub(path, filter_only=None, filter_not=None):
             parsed = _parse_xatrahub_path(str(path))
@@ -3969,9 +4086,25 @@ def run_rendering_task(task_type, data, result_queue):
             only = filter_only if isinstance(filter_only, list) else None
             not_list = filter_not if isinstance(filter_not, list) else None
             if kind == "map":
-                filtered = _filter_xatra_code(code_text, filter_only=only, filter_not=not_list)
-                if filtered.strip():
-                    exec(filtered, exec_globals)
+                payload = _parse_imported_map_payload(loaded.get("content", "") or "")
+                imports_code = payload.get("imports_code", "")
+                if isinstance(imports_code, str) and imports_code.strip():
+                    apply_imports_code_parsed(imports_code, exec_globals)
+                filtered_options = _filter_imported_options(
+                    payload.get("options", {}) if isinstance(payload.get("options"), dict) else {},
+                    only,
+                    not_list,
+                )
+                if filtered_options:
+                    apply_scalar_options(filtered_options)
+                    apply_theme_options(_normalize_theme_options_struct(filtered_options))
+                filtered_elements = _filter_imported_elements(
+                    payload.get("elements", []) if isinstance(payload.get("elements"), list) else [],
+                    only,
+                    not_list,
+                )
+                if filtered_elements:
+                    pending_import_elements.extend(filtered_elements)
                 return None
             if kind == "css":
                 theme_opts = _extract_theme_options_struct(loaded.get("content", "") or "")
@@ -4539,6 +4672,8 @@ def run_rendering_task(task_type, data, result_queue):
                         if code_line.strip():
                             exec(code_line, builder_exec_globals)
 
+            if pending_import_elements:
+                _apply_builder_elements(pending_import_elements)
             _apply_builder_elements(data.elements)
             _apply_builder_elements(runtime_elements)
 
