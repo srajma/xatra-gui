@@ -3,10 +3,9 @@ import { Trash2, ChevronDown, ChevronUp, Info, MousePointer2, Save } from 'lucid
 import AutocompleteInput from './AutocompleteInput';
 import TerritoryBuilder from './TerritoryBuilder';
 import PythonTextField from './PythonTextField';
+import IconPickerModal from './IconPickerModal';
 import { isPythonValue } from '../utils/pythonValue';
 import { API_BASE } from '../config';
-
-const BUILTIN_ICON_SHAPES = ['circle', 'square', 'triangle', 'diamond', 'cross', 'plus', 'star', 'hexagon', 'pentagon', 'octagon'];
 
 const LayerItem = ({
   element, index, elements, updateElement, updateArg, replaceElement, removeElement,
@@ -19,6 +18,7 @@ const LayerItem = ({
   const [builtinIconsList, setBuiltinIconsList] = useState([]);
   const [musicPeriodText, setMusicPeriodText] = useState('');
   const [musicTimestampsText, setMusicTimestampsText] = useState('');
+  const [iconPickerOpen, setIconPickerOpen] = useState(false);
   
   const isPicking = activePicker && activePicker.id === index && activePicker.context === 'layer';
   const isRiverReferencePicking = activePicker && activePicker.id === index && activePicker.context === 'reference-river';
@@ -258,7 +258,20 @@ const LayerItem = ({
       case 'point':
       case 'text': {
         const iconArg = element.args?.icon;
-        const iconMode = !iconArg ? 'default' : (isPythonValue(iconArg) ? 'custom' : (typeof iconArg === 'string' ? 'builtin' : iconArg.shape ? 'geometric' : 'custom'));
+        const iconSummary = (() => {
+          if (!iconArg) return 'Default Leaflet marker';
+          if (isPythonValue(iconArg)) return 'Raw Python icon expression';
+          if (typeof iconArg === 'string') return `Leaflet built-in: ${iconArg}`;
+          if (typeof iconArg === 'object') {
+            const t = String(iconArg.type || '').toLowerCase();
+            if (t === 'builtin') return `Leaflet built-in: ${iconArg.name || ''}`;
+            if (t === 'bootstrap') return `Bootstrap: ${iconArg.name || ''}`;
+            if (t === 'geometric') return `Geometric: ${iconArg.shape || 'circle'}`;
+            if (t === 'url' || iconArg.icon_url || iconArg.iconUrl) return `Custom URL icon`;
+            if (iconArg.shape) return `Geometric: ${iconArg.shape}`;
+          }
+          return 'Custom icon';
+        })();
         return (
            <div className="grid grid-cols-2 gap-3 mb-2">
             <div>
@@ -293,89 +306,46 @@ const LayerItem = ({
               <div className="col-span-2 space-y-2 pt-1 border-t border-gray-100">
                 <label className="block text-xs text-gray-500 mb-1 flex items-center gap-1">
                   Icon
-                  <span title="Built-in: package icons. Geometric: circle, star, etc. Custom: any image URL.">
+                  <span title="Unified icon browser for Leaflet built-ins, Bootstrap Icons, geometric shapes, and URL icons.">
                     <Info size={12} className="text-blue-500 cursor-help"/>
                   </span>
                 </label>
-                <div className="flex flex-wrap gap-2 items-end">
-                  <select
-                    value={iconMode}
-                    onChange={(e) => {
-                      const m = e.target.value;
-                      if (m === 'default') updateArg(index, 'icon', null);
-                      else if (m === 'builtin') updateArg(index, 'icon', builtinIconsList[0] || 'star.svg');
-                      else if (m === 'geometric') updateArg(index, 'icon', { shape: 'circle', color: '#3388ff', size: 24 });
-                      else updateArg(index, 'icon', { icon_url: '' });
-                    }}
-                    className="text-xs px-2 py-1.5 border border-gray-200 rounded bg-white focus:ring-2 focus:ring-blue-500 outline-none"
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setIconPickerOpen(true)}
+                    className="px-3 py-1.5 rounded border border-blue-200 text-blue-700 bg-blue-50 hover:bg-blue-100 text-xs font-medium"
                   >
-                    <option value="default">Default marker</option>
-                    <option value="builtin">Built-in icon</option>
-                    <option value="geometric">Geometric shape</option>
-                    <option value="custom">Custom URL</option>
-                  </select>
-                  {iconMode === 'builtin' && (
-                    <select
-                      value={typeof iconArg === 'string' ? iconArg : ''}
-                      onChange={(e) => updateArg(index, 'icon', e.target.value || null)}
-                      className="text-xs px-2 py-1.5 border border-gray-200 rounded bg-white focus:ring-2 focus:ring-blue-500 outline-none max-w-[180px]"
-                    >
-                      <option value="">—</option>
-                      {builtinIconsList.map(f => (
-                        <option key={f} value={f}>{f}</option>
-                      ))}
-                    </select>
-                  )}
-                  {iconMode === 'geometric' && (
-                    <>
-                      <select
-                        value={iconArg?.shape || 'circle'}
-                        onChange={(e) => updateArg(index, 'icon', { ...iconArg, shape: e.target.value })}
-                        className="text-xs px-2 py-1.5 border border-gray-200 rounded bg-white focus:ring-2 focus:ring-blue-500 outline-none"
-                      >
-                        {BUILTIN_ICON_SHAPES.map(s => (
-                          <option key={s} value={s}>{s}</option>
-                        ))}
-                      </select>
-                      <PythonField
-                        value={iconArg?.color || '#3388ff'}
-                        onChange={(val) => updateArg(index, 'icon', { ...iconArg, color: val })}
-                        placeholder="Color"
-                        inputClassName="w-20 text-xs px-2 py-1.5 border border-gray-200 rounded font-mono"
-                        title="CSS color, e.g. red or #ff0000"
-                      />
-                      <input
-                        type="number"
-                        min={8}
-                        max={64}
-                        value={iconArg?.size ?? 24}
-                        onChange={(e) => updateArg(index, 'icon', { ...iconArg, size: parseInt(e.target.value) || 24 })}
-                        className="w-14 text-xs px-2 py-1.5 border border-gray-200 rounded"
-                        title="Size in pixels"
-                      />
-                    </>
-                  )}
-                  {iconMode === 'custom' && (
-                    <PythonField
-                      value={isPythonValue(iconArg) ? iconArg : (iconArg?.icon_url || iconArg?.iconUrl || '')}
-                      onChange={(val) => {
-                        if (isPythonValue(val)) {
-                          updateArg(index, 'icon', val);
-                          return;
-                        }
-                        updateArg(index, 'icon', { ...(iconArg && typeof iconArg === 'object' && !isPythonValue(iconArg) ? iconArg : {}), icon_url: val });
-                      }}
-                      placeholder="https://... or data:..."
-                      inputClassName="flex-1 min-w-[160px] text-xs px-2 py-1.5 border border-gray-200 rounded font-mono"
-                    />
-                  )}
+                    Choose Icon
+                  </button>
+                  <button
+                    onClick={() => updateArg(index, 'icon', null)}
+                    className="px-2 py-1.5 rounded border border-gray-200 text-gray-600 hover:bg-gray-50 text-xs"
+                  >
+                    Reset
+                  </button>
+                  <div className="text-xs text-gray-500 truncate">{iconSummary}</div>
                 </div>
+                {isPythonValue(iconArg) && (
+                  <PythonField
+                    value={iconArg}
+                    onChange={(val) => updateArg(index, 'icon', val)}
+                    inputClassName="w-full px-2 py-1.5 border border-gray-200 rounded text-xs focus:border-blue-500 outline-none font-mono"
+                    placeholder="Icon(...)"
+                  />
+                )}
+                <IconPickerModal
+                  open={iconPickerOpen}
+                  onClose={() => setIconPickerOpen(false)}
+                  iconValue={isPythonValue(iconArg) ? null : iconArg}
+                  onChange={(val) => updateArg(index, 'icon', val)}
+                  builtinIcons={builtinIconsList}
+                />
               </div>
             )}
           </div>
         );
       }
-       case 'path':
+      case 'path':
          return (
            <div className="grid grid-cols-2 gap-3 mb-2">
             <div>

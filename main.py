@@ -15,6 +15,8 @@ import sqlite3
 import secrets
 import hashlib
 import hmac
+import urllib.request
+import urllib.error
 from datetime import datetime, timezone, timedelta
 from types import SimpleNamespace
 from collections import OrderedDict, defaultdict
@@ -43,6 +45,8 @@ process_lock = threading.Lock()
 render_cache_lock = threading.Lock()
 RENDER_CACHE_MAX_ENTRIES = 24
 render_cache = OrderedDict()
+_bootstrap_icon_cache_lock = threading.Lock()
+_bootstrap_icon_cache: Dict[str, List[str]] = {}
 
 # Simple in-memory rate limiter (IP-keyed, sliding window)
 _rate_limit_store: Dict[str, List[float]] = defaultdict(list)
@@ -1956,16 +1960,40 @@ def sync_code_to_builder(request: CodeSyncRequest):
                 if isinstance(icon_node, ast.Call):
                     icon_call = _call_name(icon_node.func)
                     if icon_call == "Icon.builtin" and icon_node.args:
-                        args_dict["icon"] = _builder_value_from_node(source_code, icon_node.args[0])
+                        args_dict["icon"] = {
+                            "type": "builtin",
+                            "name": _builder_value_from_node(source_code, icon_node.args[0]) or "",
+                        }
+                    elif icon_call == "Icon.bootstrap" and icon_node.args:
+                        args_dict["icon"] = {
+                            "type": "bootstrap",
+                            "name": _builder_value_from_node(source_code, icon_node.args[0]) or "",
+                            "version": _builder_value_from_node(source_code, next((kw.value for kw in icon_node.keywords if kw.arg == "version"), ast.Constant(value="1.11.3"))),
+                            "base_url": _builder_value_from_node(source_code, next((kw.value for kw in icon_node.keywords if kw.arg == "base_url"), ast.Constant(value=""))) or "",
+                            "icon_size": _builder_value_from_node(source_code, next((kw.value for kw in icon_node.keywords if kw.arg == "icon_size"), ast.Constant(value=24))),
+                            "icon_anchor": _builder_value_from_node(source_code, next((kw.value for kw in icon_node.keywords if kw.arg == "icon_anchor"), ast.Constant(value=None))),
+                            "popup_anchor": _builder_value_from_node(source_code, next((kw.value for kw in icon_node.keywords if kw.arg == "popup_anchor"), ast.Constant(value=None))),
+                        }
                     elif icon_call == "Icon.geometric" and icon_node.args:
                         args_dict["icon"] = {
+                            "type": "geometric",
                             "shape": _builder_value_from_node(source_code, icon_node.args[0]) or "circle",
                             "color": _builder_value_from_node(source_code, next((kw.value for kw in icon_node.keywords if kw.arg == "color"), ast.Constant(value="#3388ff"))),
                             "size": _builder_value_from_node(source_code, next((kw.value for kw in icon_node.keywords if kw.arg == "size"), ast.Constant(value=24))),
+                            "border_color": _builder_value_from_node(source_code, next((kw.value for kw in icon_node.keywords if kw.arg == "border_color"), ast.Constant(value=None))),
+                            "border_width": _builder_value_from_node(source_code, next((kw.value for kw in icon_node.keywords if kw.arg == "border_width"), ast.Constant(value=0))),
+                            "icon_size": _builder_value_from_node(source_code, next((kw.value for kw in icon_node.keywords if kw.arg == "icon_size"), ast.Constant(value=None))),
+                            "icon_anchor": _builder_value_from_node(source_code, next((kw.value for kw in icon_node.keywords if kw.arg == "icon_anchor"), ast.Constant(value=None))),
+                            "popup_anchor": _builder_value_from_node(source_code, next((kw.value for kw in icon_node.keywords if kw.arg == "popup_anchor"), ast.Constant(value=None))),
                         }
                     elif icon_call == "Icon":
                         args_dict["icon"] = {
-                            "icon_url": _builder_value_from_node(source_code, next((kw.value for kw in icon_node.keywords if kw.arg == "icon_url"), ast.Constant(value=""))) or ""
+                            "type": "url",
+                            "icon_url": _builder_value_from_node(source_code, next((kw.value for kw in icon_node.keywords if kw.arg == "icon_url"), ast.Constant(value=""))) or "",
+                            "shadow_url": _builder_value_from_node(source_code, next((kw.value for kw in icon_node.keywords if kw.arg == "shadow_url"), ast.Constant(value=None))),
+                            "icon_size": _builder_value_from_node(source_code, next((kw.value for kw in icon_node.keywords if kw.arg == "icon_size"), ast.Constant(value=None))),
+                            "icon_anchor": _builder_value_from_node(source_code, next((kw.value for kw in icon_node.keywords if kw.arg == "icon_anchor"), ast.Constant(value=None))),
+                            "popup_anchor": _builder_value_from_node(source_code, next((kw.value for kw in icon_node.keywords if kw.arg == "popup_anchor"), ast.Constant(value=None))),
                         }
                     else:
                         append_python_layer(stmt=stmt)
@@ -2062,6 +2090,57 @@ def list_icons():
         )
     except Exception:
         return []
+
+
+def _fetch_bootstrap_icons(version: str = "1.11.3") -> List[str]:
+    """Fetch Bootstrap icon names from jsDelivr's package index."""
+    with _bootstrap_icon_cache_lock:
+        cached = _bootstrap_icon_cache.get(version)
+        if cached is not None:
+            return cached
+
+    url = f"https://data.jsdelivr.com/v1/package/npm/bootstrap-icons@{version}/flat"
+    try:
+        with urllib.request.urlopen(url, timeout=8) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+        names: List[str] = []
+        for entry in payload.get("files", []):
+            name = str(entry.get("name") or "")
+            if not name.startswith("/icons/") or not name.endswith(".svg"):
+                continue
+            stem = name[len("/icons/"):-len(".svg")]
+            if stem:
+                names.append(stem)
+        names = sorted(set(names))
+    except Exception:
+        names = []
+
+    with _bootstrap_icon_cache_lock:
+        _bootstrap_icon_cache[version] = names
+    return names
+
+
+@app.get("/icons/bootstrap")
+def list_bootstrap_icons(q: str = "", offset: int = 0, limit: int = 80, version: str = "1.11.3"):
+    """Search Bootstrap icon names with pagination for the Point icon picker."""
+    all_icons = _fetch_bootstrap_icons(version=version)
+    query = (q or "").strip().lower()
+    if query:
+        filtered = [name for name in all_icons if query in name.lower()]
+    else:
+        filtered = all_icons
+
+    safe_offset = max(0, int(offset or 0))
+    safe_limit = max(1, min(200, int(limit or 80)))
+    items = filtered[safe_offset : safe_offset + safe_limit]
+    return {
+        "items": items,
+        "offset": safe_offset,
+        "limit": safe_limit,
+        "total": len(filtered),
+        "has_more": safe_offset + safe_limit < len(filtered),
+        "version": version,
+    }
 
 @app.get("/territory_library/names")
 def territory_library_names():
@@ -4890,23 +4969,66 @@ def run_rendering_task(task_type, data, result_queue):
                         if icon_arg is not None and icon_arg != "":
                             try:
                                 if isinstance(icon_arg, str):
+                                    # Backward compatibility: legacy string icon means builtin marker filename
                                     args["icon"] = Icon.builtin(icon_arg)
                                 elif isinstance(icon_arg, dict):
-                                    if "shape" in icon_arg:
-                                        args["icon"] = Icon.geometric(
-                                            icon_arg.get("shape", "circle"),
-                                            color=icon_arg.get("color", "#3388ff"),
-                                            size=int(icon_arg.get("size", 24)),
-                                            border_color=icon_arg.get("border_color"),
-                                            border_width=int(icon_arg.get("border_width", 0)),
-                                        )
-                                    elif "icon_url" in icon_arg or "iconUrl" in icon_arg:
+                                    icon_type = str(icon_arg.get("type") or "").strip().lower()
+                                    if icon_type == "builtin" or (not icon_type and "name" in icon_arg and "shape" not in icon_arg and "icon_url" not in icon_arg and "iconUrl" not in icon_arg):
+                                        name = icon_arg.get("name") or ""
+                                        if name:
+                                            icon_kwargs = {}
+                                            if icon_arg.get("icon_size") is not None:
+                                                icon_kwargs["icon_size"] = icon_arg.get("icon_size")
+                                            if icon_arg.get("icon_anchor") is not None:
+                                                icon_kwargs["icon_anchor"] = icon_arg.get("icon_anchor")
+                                            if icon_arg.get("popup_anchor") is not None:
+                                                icon_kwargs["popup_anchor"] = icon_arg.get("popup_anchor")
+                                            args["icon"] = Icon.builtin(name, **icon_kwargs)
+                                    elif icon_type == "bootstrap":
+                                        name = icon_arg.get("name") or ""
+                                        if name:
+                                            bootstrap_kwargs = {}
+                                            if icon_arg.get("version"):
+                                                bootstrap_kwargs["version"] = icon_arg.get("version")
+                                            if icon_arg.get("base_url"):
+                                                bootstrap_kwargs["base_url"] = icon_arg.get("base_url")
+                                            if icon_arg.get("icon_size") is not None:
+                                                bootstrap_kwargs["icon_size"] = icon_arg.get("icon_size")
+                                            if icon_arg.get("icon_anchor") is not None:
+                                                bootstrap_kwargs["icon_anchor"] = icon_arg.get("icon_anchor")
+                                            if icon_arg.get("popup_anchor") is not None:
+                                                bootstrap_kwargs["popup_anchor"] = icon_arg.get("popup_anchor")
+                                            args["icon"] = Icon.bootstrap(name, **bootstrap_kwargs)
+                                    elif icon_type == "geometric" or "shape" in icon_arg:
+                                        geo_kwargs = {
+                                            "color": icon_arg.get("color", "#3388ff"),
+                                            "size": int(icon_arg.get("size", 24)),
+                                            "border_color": icon_arg.get("border_color"),
+                                            "border_width": int(icon_arg.get("border_width", 0)),
+                                        }
+                                        if icon_arg.get("icon_size") is not None:
+                                            geo_kwargs["icon_size"] = icon_arg.get("icon_size")
+                                        if icon_arg.get("icon_anchor") is not None:
+                                            geo_kwargs["icon_anchor"] = icon_arg.get("icon_anchor")
+                                        if icon_arg.get("popup_anchor") is not None:
+                                            geo_kwargs["popup_anchor"] = icon_arg.get("popup_anchor")
+                                        args["icon"] = Icon.geometric(icon_arg.get("shape", "circle"), **geo_kwargs)
+                                    elif icon_type == "url" or "icon_url" in icon_arg or "iconUrl" in icon_arg:
                                         url = icon_arg.get("icon_url") or icon_arg.get("iconUrl")
-                                        args["icon"] = Icon(
-                                            icon_url=url,
-                                            icon_size=tuple(icon_arg.get("icon_size", icon_arg.get("iconSize", (25, 41)))),
-                                            icon_anchor=tuple(icon_arg.get("icon_anchor", icon_arg.get("iconAnchor", (12, 41)))),
-                                        )
+                                        icon_kwargs = {"icon_url": url}
+                                        if icon_arg.get("shadow_url") is not None:
+                                            icon_kwargs["shadow_url"] = icon_arg.get("shadow_url")
+                                        if icon_arg.get("icon_size") is not None:
+                                            icon_kwargs["icon_size"] = tuple(icon_arg.get("icon_size"))
+                                        elif icon_arg.get("iconSize") is not None:
+                                            icon_kwargs["icon_size"] = tuple(icon_arg.get("iconSize"))
+                                        if icon_arg.get("icon_anchor") is not None:
+                                            icon_kwargs["icon_anchor"] = tuple(icon_arg.get("icon_anchor"))
+                                        elif icon_arg.get("iconAnchor") is not None:
+                                            icon_kwargs["icon_anchor"] = tuple(icon_arg.get("iconAnchor"))
+                                        if icon_arg.get("popup_anchor") is not None:
+                                            icon_kwargs["popup_anchor"] = tuple(icon_arg.get("popup_anchor"))
+                                        args["icon"] = Icon(**icon_kwargs)
                                 else:
                                     args["icon"] = icon_arg
                             except Exception:

@@ -3062,11 +3062,45 @@ window.addEventListener('message', function(e) {
                 if (isPythonValue(iconVal)) {
                     iconPy = `icon=${pyVal(iconVal)}`;
                 } else if (typeof iconVal === 'string') {
-                    iconPy = `icon=Icon.builtin("${iconVal}")`;
-                } else if (iconVal.shape) {
-                    iconPy = `icon=Icon.geometric(${pyVal(iconVal.shape || 'circle')}, color=${pyVal(iconVal.color || '#3388ff')}, size=${pyVal(iconVal.size ?? 24)})`;
-                } else if (iconVal.icon_url || iconVal.iconUrl) {
-                    iconPy = `icon=Icon(icon_url=${pyVal(iconVal.icon_url || iconVal.iconUrl)})`;
+                    // Backward compatibility: legacy string means builtin marker filename
+                    iconPy = `icon=Icon.builtin(${pyVal(iconVal)})`;
+                } else if (typeof iconVal === 'object') {
+                    const iconType = String(iconVal.type || '').toLowerCase();
+                    if (iconType === 'builtin' || (!iconType && iconVal.name && !iconVal.shape && !(iconVal.icon_url || iconVal.iconUrl))) {
+                        const kwargs = [];
+                        if (iconVal.icon_size != null) kwargs.push(`icon_size=${pyVal(iconVal.icon_size)}`);
+                        if (iconVal.icon_anchor != null) kwargs.push(`icon_anchor=${pyVal(iconVal.icon_anchor)}`);
+                        if (iconVal.popup_anchor != null) kwargs.push(`popup_anchor=${pyVal(iconVal.popup_anchor)}`);
+                        const kw = kwargs.length ? `, ${kwargs.join(', ')}` : '';
+                        iconPy = `icon=Icon.builtin(${pyVal(iconVal.name || '')}${kw})`;
+                    } else if (iconType === 'bootstrap') {
+                        const kwargs = [];
+                        if (iconVal.icon_size != null) kwargs.push(`icon_size=${pyVal(iconVal.icon_size)}`);
+                        if (iconVal.icon_anchor != null) kwargs.push(`icon_anchor=${pyVal(iconVal.icon_anchor)}`);
+                        if (iconVal.popup_anchor != null) kwargs.push(`popup_anchor=${pyVal(iconVal.popup_anchor)}`);
+                        if (iconVal.version) kwargs.push(`version=${pyVal(iconVal.version)}`);
+                        if (iconVal.base_url) kwargs.push(`base_url=${pyVal(iconVal.base_url)}`);
+                        const kw = kwargs.length ? `, ${kwargs.join(', ')}` : '';
+                        iconPy = `icon=Icon.bootstrap(${pyVal(iconVal.name || '')}${kw})`;
+                    } else if (iconType === 'geometric' || iconVal.shape) {
+                        const kwargs = [
+                            `color=${pyVal(iconVal.color || '#3388ff')}`,
+                            `size=${pyVal(iconVal.size ?? 24)}`,
+                        ];
+                        if (iconVal.border_color != null && iconVal.border_color !== '') kwargs.push(`border_color=${pyVal(iconVal.border_color)}`);
+                        if (iconVal.border_width != null) kwargs.push(`border_width=${pyVal(iconVal.border_width)}`);
+                        if (iconVal.icon_size != null) kwargs.push(`icon_size=${pyVal(iconVal.icon_size)}`);
+                        if (iconVal.icon_anchor != null) kwargs.push(`icon_anchor=${pyVal(iconVal.icon_anchor)}`);
+                        if (iconVal.popup_anchor != null) kwargs.push(`popup_anchor=${pyVal(iconVal.popup_anchor)}`);
+                        iconPy = `icon=Icon.geometric(${pyVal(iconVal.shape || 'circle')}, ${kwargs.join(', ')})`;
+                    } else if (iconType === 'url' || iconVal.icon_url || iconVal.iconUrl) {
+                        const kwargs = [`icon_url=${pyVal(iconVal.icon_url || iconVal.iconUrl || '')}`];
+                        if (iconVal.shadow_url != null && iconVal.shadow_url !== '') kwargs.push(`shadow_url=${pyVal(iconVal.shadow_url)}`);
+                        if (iconVal.icon_size != null) kwargs.push(`icon_size=${pyVal(iconVal.icon_size)}`);
+                        if (iconVal.icon_anchor != null) kwargs.push(`icon_anchor=${pyVal(iconVal.icon_anchor)}`);
+                        if (iconVal.popup_anchor != null) kwargs.push(`popup_anchor=${pyVal(iconVal.popup_anchor)}`);
+                        iconPy = `icon=Icon(${kwargs.join(', ')})`;
+                    }
                 }
             }
             if (iconPy) pointArgsStr = pointArgsStr ? `${pointArgsStr}, ${iconPy}` : `, ${iconPy}`;
