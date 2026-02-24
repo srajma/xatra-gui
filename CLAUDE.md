@@ -28,7 +28,7 @@ Xatra Studio GUI — a full-stack web app for creating interactive historical/ad
 - `LayerItem.jsx` — individual layer configuration
 - `AutocompleteInput.jsx` — GADM territory search
 
-**Rendering pipeline**: Frontend → `POST /render` → backend spawns subprocess → executes xatra Python code → returns HTML string → displayed in iframe.
+**Rendering pipeline**: Frontend → `POST /render/*` → backend spawns subprocess → parses payload to structured builder/runtime form → applies xatra calls → returns HTML string → displayed in iframe.
 
 **Bidirectional sync**: Builder state ↔ Python code. `POST /sync/code_to_builder` parses Python back to Builder JSON. Code-to-builder direction goes through the backend; builder-to-code is done client-side.
 
@@ -40,7 +40,7 @@ Xatra Studio GUI — a full-stack web app for creating interactive historical/ad
 
 ## Layer Types
 
-Flag, River, Admin, AdminRivers, Path, Point, Text, Dataframe, TitleBox, CSS, Python — each has corresponding builder UI and Python code generation.
+Flag, River, Admin, AdminRivers, Path, Point, Text, Dataframe, TitleBox, Music, Python — each has corresponding builder UI and Python code generation. Theme/global styling is represented in Builder Options (basemaps/CSS/color sequences/colormap/zoom/focus/slider), not as a standalone layer item.
 
 ## Database
 
@@ -59,7 +59,7 @@ Both `main.py` and `App.jsx` are ~3200 lines. Key locations:
 **App.jsx**:
 - `generatePythonCode()` — builder→code synthesis (~line 2007)
 - `formatTerritory(value)` — converts builder territory objects to Python expression strings
-- `parseCodeToBuilder()` — calls `/sync/code_to_builder` and updates builder state
+- `parseMainCodeToBuilder()` / `parseRuntimeCodeToBuilder()` — calls `/sync/code_to_builder` for main and Not-for-library segments
 - `handleRender()` — orchestrates render requests
 - `apiFetch()` — authenticated fetch wrapper used throughout
 
@@ -102,7 +102,7 @@ When generating code, check for this wrapper and emit the raw expression instead
 ```javascript
 // elements array — passed as BuilderRequest.elements
 {
-  type: "flag"|"river"|"point"|"text"|"path"|"admin"|"admin_rivers"|"dataframe"|"titlebox"|"css"|"python",
+  type: "flag"|"river"|"point"|"text"|"path"|"admin"|"admin_rivers"|"dataframe"|"titlebox"|"music"|"python",
   label: string,
   value: any,           // territory for flag, [lat,lng] for point, etc.
   args: {
@@ -127,13 +127,19 @@ When generating code, check for this wrapper and emit the raw expression instead
   admin_color_sequences: [{ colors, step_h, step_s, step_l }],
   data_colormap: { type: "LinearSegmented"|<named>, colors?: string }
 }
+
+// Optional runtime (Not-for-library) builder state — passed as BuilderRequest.runtime_*
+{
+  runtime_elements: [...],  // same schema as elements
+  runtime_options: {...}    // same schema as options
+}
 ```
 
 ## API Endpoints Summary
 
 **Rendering**: `POST /render/code`, `/render/builder`, `/render/picker`, `/render/territory-library` · `POST /stop`
 
-**Sync**: `POST /sync/code_to_builder` → `{ elements, options, error?, predefined_code? }`
+**Sync**: `POST /sync/code_to_builder` → `{ elements, options, error?, predefined_code? }` (used for both main code and Not-for-library code segments)
 
 **Search**: `GET /search/gadm?q=`, `GET /search/countries?q=`, `GET /gadm/levels?country=`
 
@@ -151,10 +157,12 @@ When generating code, check for this wrapper and emit the raw expression instead
 
 All rendering runs in a spawned subprocess (not forked) via `multiprocessing`. The subprocess receives a `(task_type, data)` tuple and returns results via a `Queue`. Four task types:
 
-- **`code`** — executes user Python directly; exec globals include xatra, gadm, naturalearth, polygon, overpass, and a `xatrahub()` resolver
-- **`builder`** — converts `BuilderRequest` elements/options to xatra method calls, then renders
+- **`code`** — parses code into builder JSON via `/sync/code_to_builder`, then routes through the builder execution path
+- **`builder`** — converts `BuilderRequest` elements/options (+ optional `runtime_elements`/`runtime_options`) to xatra method calls, then renders
 - **`picker`** — renders a reference admin map for territory selection in the UI
 - **`territory_library`** — renders predefined territories as flags for the library browser
+
+`imports_code` is AST-parsed (`xatrahub(...)` calls only) and applied via the internal resolver; it is not directly `exec`-ed. `xatrahub` imports for `lib`, `css`, and `map` are all applied from parsed structured payloads.
 
 Only one subprocess per task type runs at a time (`current_processes` dict + `process_lock`). Rendered HTML is cached in an `OrderedDict` (max 24 entries) keyed by input hash.
 
@@ -192,7 +200,7 @@ The database is `xatra_hub.db` (SQLite). Current schema (all tables):
 ```sql
 hub_users       (id, username, password_hash, full_name, bio, is_admin, created_at)
 hub_artifacts   (id, user_id, kind, name, alpha_content, alpha_metadata, created_at, updated_at)
-                  -- kind ∈ {"map", "lib", "theme"}
+                  -- kind ∈ {"map", "lib", "css"}
                   -- alpha_content: JSON string of the current working version
                   -- alpha_metadata: JSON string of artifact-level metadata
 hub_artifact_versions (id, artifact_id, version, content, metadata, created_at)
@@ -216,7 +224,7 @@ hub_drafts      (id, owner_key, project_json, updated_at)
 
 There are three distinct JSON formats in use. All loading paths already use `|| ''` / `|| {}` / `|| []` guards, so adding new optional fields is safe. **Removing or renaming fields is a breaking change** — old stored data will silently lose that field.
 
-#### Format A — Hub artifact content (current version: **v1**, no version field yet)
+#### Format A — Hub artifact content (current version: **v2**, no version field yet)
 
 Stored in `hub_artifacts.alpha_content` and `hub_artifact_versions.content`. Written by `buildMapArtifactContent()` (App.jsx ~line 1689). Read by `loadMapFromHub()` (App.jsx ~line 687).
 
@@ -227,6 +235,8 @@ Stored in `hub_artifacts.alpha_content` and `hub_artifact_versions.content`. Wri
   "predefined_code": "string  — predefined/territory library code",
   "map_code":        "string  — main Python map code",
   "runtime_code":    "string  — runtime Python code",
+  "runtime_elements": [...],  // parsed Not-for-library builder layers
+  "runtime_options":  {...},  // parsed Not-for-library builder options
   "picker_options": {
     "entries":     [{ "country": "string", "level": "int" }],
     "adminRivers": "boolean"
@@ -234,6 +244,8 @@ Stored in `hub_artifacts.alpha_content` and `hub_artifact_versions.content`. Wri
   "project": {
     "elements":      [...],   // MapElement[] — builder layer array (see Builder State Schema)
     "options":       {...},   // BuilderOptions (see Builder State Schema)
+    "runtimeElements": [...],
+    "runtimeOptions":  {...},
     "predefinedCode": "string",
     "importsCode":   "string",
     "themeCode":     "string",
@@ -274,6 +286,8 @@ Written by `handleSaveProject()` (App.jsx ~line 1667). This is the user-facing "
 {
   "elements":      [...],
   "options":       {...},
+  "runtimeElements": [...],
+  "runtimeOptions":  {...},
   "predefinedCode": "string",
   "importsCode":   "string",
   "themeCode":     "string",
@@ -338,7 +352,7 @@ No. Saving a draft upserts it — the row is updated in place. The draft persist
 
 ### When does auto-save trigger?
 
-On every edit, debounced by 800ms. A `useEffect` watches all editor state fields (`builderElements`, `builderOptions`, `code`, `predefinedCode`, `importsCode`, `themeCode`, `runtimeCode`, `mapName`) and fires a `PUT /draft/current` 800ms after the last change. There is no "first save" or timer-based trigger — it responds to edits.
+On every edit, debounced by 800ms. A `useEffect` watches all editor state fields (`builderElements`, `builderOptions`, `runtimeBuilderElements`, `runtimeBuilderOptions`, `code`, `predefinedCode`, `importsCode`, `themeCode`, `runtimeCode`, `mapName`) and fires a `PUT /draft/current` 800ms after the last change. There is no "first save" or timer-based trigger — it responds to edits.
 
 For logged-in users editing a named map they own, alpha is also continuously saved to the hub via a separate auto-save path, triggered by the same state changes.
 

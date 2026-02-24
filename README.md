@@ -486,7 +486,7 @@ For eventually publishing this as a website
 - [x] Move GUI to a separate repo instead of being part of the main xatra package
 - [ ] Security
   - [x] Obviously can't allow users to just run any Python code. Instead of blindly running whatever code the user enters in the Code editor, we should convert it into the "Builder" format first and then run _that_.
-      - [ ] "Python" blocks and "Python" input to fields should _only_ be available to "Trusted" users. Other users should not be able to do that or even see the options; however they should be able to import maps from users who did use these blocks. Admin users are always trusted.
+      - [ ] "Python" blocks and "Python" input to fields should _only_ be available to "Trusted" users. Other users should not be able to do that or even see the options; **however they should be able to import maps/libraries/themes from users who did use these blocks.** Admin users are always trusted.
         - [ ] Even that code should only be run in a sandbox, not affecting anything else on the system. You know, like how do platforms like Leetcode do it?
     - [ ] Is the parsing of Python into Builder json, and the parsing of Builder json back into Python code, perfectly secure?
 - [ ] Efficiency and scalability concerns [for now, just answer in words, don't implement anything]
