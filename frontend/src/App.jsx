@@ -1064,6 +1064,17 @@ ${DEFAULT_MAP_CODE}
             : u
         )),
       }));
+      setProfileData((prev) => {
+        if (!prev?.profile || prev.profile.username !== username) return prev;
+        return {
+          ...prev,
+          profile: {
+            ...prev.profile,
+            is_trusted: !!data?.user?.is_trusted,
+            is_admin: !!data?.user?.is_admin,
+          },
+        };
+      });
     } catch (err) {
       setError(err.message || 'Failed to update trust');
     }
@@ -3985,6 +3996,17 @@ window.addEventListener('message', function(e) {
                 {profile?.bio && <div className={`text-sm mt-1 ${isDarkMode ? 'text-slate-400' : 'text-gray-500'}`}>{profile.bio}</div>}
                 <div className={`text-xs mt-1.5 ${isDarkMode ? 'text-slate-500' : 'text-gray-400'}`}>{profile?.maps_count || 0} maps · {profile?.views_count || 0} views</div>
               </div>
+              {currentUser?.user?.is_admin && profile?.username && (
+                <button
+                  type="button"
+                  disabled={!!profile?.is_admin}
+                  onClick={() => setUserTrusted(profile.username, !profile?.is_trusted)}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors flex-shrink-0 disabled:opacity-40 ${isDarkMode ? 'border-slate-700 text-slate-300 hover:bg-slate-800' : 'border-gray-300 text-gray-700 hover:bg-gray-100'}`}
+                  title={profile?.is_admin ? 'Admin users are always trusted' : (profile?.is_trusted ? 'Mark untrusted' : 'Mark trusted')}
+                >
+                  {profile?.is_admin ? 'Admin' : (profile?.is_trusted ? 'Trusted' : 'Untrusted')}
+                </button>
+              )}
               {isOwn && (
                 <button
                   onClick={() => setProfileSettingsOpen((p) => !p)}
