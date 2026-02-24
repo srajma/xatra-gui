@@ -338,6 +338,7 @@ def _init_hub_db():
                 user_id INTEGER NOT NULL REFERENCES hub_users(id) ON DELETE CASCADE,
                 kind TEXT NOT NULL,
                 name TEXT NOT NULL,
+                featured INTEGER NOT NULL DEFAULT 0,
                 alpha_content TEXT NOT NULL DEFAULT '',
                 alpha_metadata TEXT NOT NULL DEFAULT '{}',
                 created_at TEXT NOT NULL,
@@ -415,6 +416,12 @@ def _init_hub_db():
             conn.execute("ALTER TABLE hub_users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0")
         if "is_trusted" not in existing_cols:
             conn.execute("ALTER TABLE hub_users ADD COLUMN is_trusted INTEGER NOT NULL DEFAULT 0")
+        artifact_cols = {
+            row["name"]
+            for row in conn.execute("PRAGMA table_info(hub_artifacts)").fetchall()
+        }
+        if "featured" not in artifact_cols:
+            conn.execute("ALTER TABLE hub_artifacts ADD COLUMN featured INTEGER NOT NULL DEFAULT 0")
 
         # Ensure default admin account exists.
         now = _utc_now_iso()
@@ -607,7 +614,7 @@ def _hub_get_artifact(conn: sqlite3.Connection, username: str, kind: str, name: 
     return conn.execute(
         """
         SELECT
-            a.id, a.user_id, a.kind, a.name, a.alpha_content, a.alpha_metadata, a.created_at, a.updated_at,
+            a.id, a.user_id, a.kind, a.name, a.featured, a.alpha_content, a.alpha_metadata, a.created_at, a.updated_at,
             u.username
         FROM hub_artifacts a
         JOIN hub_users u ON u.id = a.user_id
@@ -624,7 +631,7 @@ def _hub_get_artifact_by_name(conn: sqlite3.Connection, kind: str, name: str) ->
     return conn.execute(
         """
         SELECT
-            a.id, a.user_id, a.kind, a.name, a.alpha_content, a.alpha_metadata, a.created_at, a.updated_at,
+            a.id, a.user_id, a.kind, a.name, a.featured, a.alpha_content, a.alpha_metadata, a.created_at, a.updated_at,
             u.username
         FROM hub_artifacts a
         JOIN hub_users u ON u.id = a.user_id
@@ -715,6 +722,7 @@ def _migrate_to_global_names(conn: sqlite3.Connection) -> None:
             user_id INTEGER NOT NULL REFERENCES hub_users(id) ON DELETE CASCADE,
             kind TEXT NOT NULL,
             name TEXT NOT NULL,
+            featured INTEGER NOT NULL DEFAULT 0,
             alpha_content TEXT NOT NULL DEFAULT '',
             alpha_metadata TEXT NOT NULL DEFAULT '{}',
             created_at TEXT NOT NULL,
@@ -728,9 +736,19 @@ def _migrate_to_global_names(conn: sqlite3.Connection) -> None:
         new_name = id_to_new[int(art['id'])]
         new_content = _update_content_paths(art['alpha_content'], rename_map)
         conn.execute(
-            "INSERT INTO hub_artifacts_new(id, user_id, kind, name, alpha_content, alpha_metadata, created_at, updated_at)"
-            " VALUES(?, ?, ?, ?, ?, ?, ?, ?)",
-            (art['id'], art['user_id'], art['kind'], new_name, new_content, art['alpha_metadata'], art['created_at'], art['updated_at'])
+            "INSERT INTO hub_artifacts_new(id, user_id, kind, name, featured, alpha_content, alpha_metadata, created_at, updated_at)"
+            " VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                art['id'],
+                art['user_id'],
+                art['kind'],
+                new_name,
+                int(art["featured"] or 0) if "featured" in art.keys() else 0,
+                new_content,
+                art['alpha_metadata'],
+                art['created_at'],
+                art['updated_at'],
+            )
         )
     # Update version content
     for ver in conn.execute("SELECT id, content FROM hub_artifact_versions").fetchall():
@@ -1161,6 +1179,9 @@ class PasswordUpdateRequest(BaseModel):
 class UserTrustUpdateRequest(BaseModel):
     trusted: bool
 
+class MapFeaturedUpdateRequest(BaseModel):
+    featured: bool
+
 
 def _hub_kind_label(kind: str) -> str:
     if kind == "map":
@@ -1224,6 +1245,7 @@ def _hub_artifact_response(conn: sqlite3.Connection, artifact: sqlite3.Row, requ
         "published_versions": versions,
         "created_at": artifact["created_at"],
         "updated_at": artifact["updated_at"],
+        "featured": bool(int(artifact["featured"] or 0)) if artifact["kind"] == "map" else False,
         "votes": _map_vote_count(conn, artifact["id"]) if artifact["kind"] == "map" else 0,
         "viewer_voted": _viewer_has_voted(conn, artifact["id"], request) if artifact["kind"] == "map" else False,
         "views": _map_view_count(conn, artifact["id"]) if artifact["kind"] == "map" else 0,
@@ -2810,6 +2832,25 @@ def maps_vote(username: str, map_name: str, request: Request):
         conn.close()
 
 
+@app.put("/maps/{map_name}/featured")
+def maps_set_featured(map_name: str, payload: MapFeaturedUpdateRequest, request: Request):
+    conn = _hub_db_conn()
+    try:
+        _require_admin_user(conn, request)
+        artifact = _hub_get_artifact_by_name(conn, "map", map_name)
+        if artifact is None:
+            raise HTTPException(status_code=404, detail="Map not found")
+        featured = 1 if bool(payload.featured) else 0
+        conn.execute(
+            "UPDATE hub_artifacts SET featured = ? WHERE id = ?",
+            (featured, artifact["id"]),
+        )
+        conn.commit()
+        return {"ok": True, "name": artifact["name"], "featured": bool(featured)}
+    finally:
+        conn.close()
+
+
 @app.get("/explore")
 def maps_explore(
     q: Optional[str] = None,
@@ -2852,6 +2893,7 @@ def maps_explore(
                 a.name,
                 a.updated_at,
                 a.alpha_metadata,
+                a.featured,
                 u.username,
                 u.is_admin,
                 COALESCE(vv.votes_count, 0) AS votes_count,
@@ -2869,7 +2911,7 @@ def maps_explore(
                 GROUP BY artifact_id
             ) mv ON mv.artifact_id = a.id
             {where_sql}
-            ORDER BY a.updated_at DESC
+            ORDER BY a.featured DESC, a.updated_at DESC
             LIMIT ? OFFSET ?
             """,
             (*params, safe_per_page, offset),
@@ -2885,6 +2927,7 @@ def maps_explore(
                 "forked_from": meta.get("forked_from"),
                 "votes": int(row["votes_count"] or 0),
                 "views": int(row["views_count"] or 0),
+                "featured": bool(int(row["featured"] or 0)),
                 "updated_at": row["updated_at"],
                 "thumbnail": meta.get("thumbnail") or "/vite.svg",
             })
@@ -2986,10 +3029,10 @@ def user_profile(username: str, q: Optional[str] = None, page: int = 1, per_page
         total = conn.execute(f"SELECT COUNT(*) AS c FROM hub_artifacts a {where}", tuple(params)).fetchone()["c"]
         rows = conn.execute(
             f"""
-            SELECT a.id, a.name, a.updated_at, a.alpha_metadata
+            SELECT a.id, a.name, a.updated_at, a.alpha_metadata, a.featured
             FROM hub_artifacts a
             {where}
-            ORDER BY a.updated_at DESC
+            ORDER BY a.featured DESC, a.updated_at DESC
             LIMIT ? OFFSET ?
             """,
             (*params, safe_per_page, offset),
@@ -3002,6 +3045,7 @@ def user_profile(username: str, q: Optional[str] = None, page: int = 1, per_page
                 "slug": f"/{row['name']}",
                 "votes": _map_vote_count(conn, row["id"]),
                 "views": _map_view_count(conn, row["id"]),
+                "featured": bool(int(row["featured"] or 0)),
                 "updated_at": row["updated_at"],
                 "thumbnail": meta.get("thumbnail") or "/vite.svg",
             })
@@ -3475,6 +3519,7 @@ def hub_get_artifact_version(username: str, kind: str, name: str, version: str, 
                 "votes": _map_vote_count(conn, artifact["id"]) if artifact["kind"] == "map" else 0,
                 "views": _map_view_count(conn, artifact["id"]) if artifact["kind"] == "map" else 0,
                 "viewer_voted": _viewer_has_voted(conn, artifact["id"], http_request) if artifact["kind"] == "map" else False,
+                "featured": bool(int(artifact["featured"] or 0)) if artifact["kind"] == "map" else False,
             }
         if not str(version).isdigit():
             raise HTTPException(status_code=400, detail="version must be 'alpha' or integer")
@@ -3500,6 +3545,7 @@ def hub_get_artifact_version(username: str, kind: str, name: str, version: str, 
             "votes": _map_vote_count(conn, artifact["id"]) if artifact["kind"] == "map" else 0,
             "views": _map_view_count(conn, artifact["id"]) if artifact["kind"] == "map" else 0,
             "viewer_voted": _viewer_has_voted(conn, artifact["id"], http_request) if artifact["kind"] == "map" else False,
+            "featured": bool(int(artifact["featured"] or 0)) if artifact["kind"] == "map" else False,
         }
     finally:
         conn.close()

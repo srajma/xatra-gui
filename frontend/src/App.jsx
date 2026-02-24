@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Layers, Code, Play, Upload, Download, Image, Plus, Trash2, Keyboard, Copy, Check, Moon, Sun, Menu, Search, Compass, User, Users, LogIn, LogOut, FilePlus2, Import, Save, Triangle, GitFork, CloudUpload, UserX, Settings, Shield } from 'lucide-react';
+import { Layers, Code, Play, Upload, Download, Image, Plus, Trash2, Keyboard, Copy, Check, Moon, Sun, Menu, Search, Compass, User, Users, LogIn, LogOut, FilePlus2, Import, Save, Triangle, GitFork, CloudUpload, UserX, Settings, Shield, Star } from 'lucide-react';
 
 // Components (defined inline for simplicity first, can be split later)
 import Builder from './components/Builder';
@@ -206,6 +206,7 @@ function App() {
   const [mapVotes, setMapVotes] = useState(0);
   const [mapUserVoted, setMapUserVoted] = useState(false);
   const [mapViews, setMapViews] = useState(0);
+  const [mapFeatured, setMapFeatured] = useState(false);
   const [importsCode, setImportsCode] = useState(DEFAULT_INDIC_IMPORT_CODE);
   const [hubImports, setHubImports] = useState([{ ...DEFAULT_INDIC_IMPORT }]);
   const [themeCode, setThemeCode] = useState('');
@@ -807,6 +808,7 @@ ${DEFAULT_MAP_CODE}
           const defaultImportsCode = serializeHubImports(defaultImports);
           setMapName(name);
           setMapOwner(currentUser?.user?.username || owner || 'guest');
+          setMapFeatured(false);
           setBuilderElements(defElements);
           setBuilderOptions(defOptions);
           setRuntimeBuilderElements([]);
@@ -870,6 +872,7 @@ ${DEFAULT_MAP_CODE}
       setMapName(name);
       setMapOwner(actualOwner);
       setMapUserVoted(false);
+      setMapFeatured(!!data.featured);
       // Trigger initial render with fresh data (state updates are async, so pass data directly)
       if (parsed?.project?.elements && parsed?.project?.options) {
         renderMapWithData({
@@ -903,6 +906,7 @@ ${DEFAULT_MAP_CODE}
         setMapVotes(Number(artifactData.votes || 0));
         setMapViews(Number(artifactData.views || 0));
         setMapUserVoted(!!artifactData.viewer_voted);
+        setMapFeatured(!!artifactData.featured);
         setMapVersionLabel(version === 'alpha' ? 'alpha' : String(version));
         const forkSrc = artifactData?.alpha?.metadata?.forked_from;
         setForkedFrom(forkSrc ? String(forkSrc) : null);
@@ -1204,7 +1208,7 @@ ${DEFAULT_MAP_CODE}
     if (route.page === 'explore') { loadExplore(explorePage, exploreQuery); loadUsers(usersPage, usersQuery); }
     if (route.page === 'profile') loadProfile(route.username, profilePage, profileSearch);
     // Reset editor init key when leaving editor so re-entry always reloads draft
-    if (route.page !== 'editor') { editorInitKeyRef.current = ''; return; }
+    if (route.page !== 'editor') { editorInitKeyRef.current = ''; setMapFeatured(false); return; }
     if (route.page === 'editor' && route.map) {
       editorInitKeyRef.current = '';
       if (route.owner) setMapOwner(route.owner);
@@ -1223,6 +1227,7 @@ ${DEFAULT_MAP_CODE}
       if (editorInitKeyRef.current === initKey) return;
       editorInitKeyRef.current = initKey;
       setMapOwner('guest');
+      setMapFeatured(false);
       // Load draft; don't call /maps/default-name afterwards (it would overwrite the draft's map name)
       (async () => {
         const hasDraft = await loadDraft();
@@ -3354,31 +3359,100 @@ window.addEventListener('message', function(e) {
     currentLibraryVersionOptions.some((o) => o.value !== 'alpha') ||
     currentThemeVersionOptions.some((o) => o.value !== 'alpha')
   );
+  const isAdminUser = !!currentUser?.user?.is_admin;
+  const sortMapsFeaturedFirst = (items) => (
+    [...(Array.isArray(items) ? items : [])].sort((a, b) => {
+      const af = a?.featured ? 1 : 0;
+      const bf = b?.featured ? 1 : 0;
+      if (bf !== af) return bf - af;
+      const at = String(a?.updated_at || '');
+      const bt = String(b?.updated_at || '');
+      return bt.localeCompare(at);
+    })
+  );
+  const applyFeaturedUpdateLocal = (name, featured) => {
+    setExploreData((prev) => ({
+      ...prev,
+      items: sortMapsFeaturedFirst((prev.items || []).map((it) => (
+        it?.name === name ? { ...it, featured: !!featured } : it
+      ))),
+    }));
+    setHubSearchResults((prev) => sortMapsFeaturedFirst((prev || []).map((it) => (
+      it?.name === name ? { ...it, featured: !!featured } : it
+    ))));
+    setProfileData((prev) => {
+      if (!prev || !Array.isArray(prev.maps)) return prev;
+      return {
+        ...prev,
+        maps: sortMapsFeaturedFirst(prev.maps.map((it) => (
+          it?.name === name ? { ...it, featured: !!featured } : it
+        ))),
+      };
+    });
+    if (route.page === 'editor' && route.map === name) setMapFeatured(!!featured);
+  };
+  const setFeaturedByAdmin = async (name, featured) => {
+    if (!isAdminUser || !name) return;
+    try {
+      const resp = await apiFetch(`/maps/${encodeURIComponent(name)}/featured`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ featured: !!featured }),
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(getApiErrorMessage(data, 'Failed to update featured state'));
+      applyFeaturedUpdateLocal(name, !!data.featured);
+    } catch (err) {
+      setError(err.message || 'Failed to update featured state');
+    }
+  };
   const importedBaseSet = new Set((hubImports || []).map((imp) => `${imp.kind}:${imp.name}`));
   const renderExploreCatalogCard = (item) => (
-    <button
+    <div
       key={`${item.username}-${item.name}`}
-      type="button"
       onClick={() => navigateTo(item.slug || `/${item.name}`)}
-      className={`block text-left w-full rounded-xl border overflow-hidden shadow-sm hover:shadow-md transition-shadow group ${isDarkMode ? 'bg-slate-800 border-slate-700 hover:border-slate-600' : 'bg-white border-gray-200 hover:border-gray-300'}`}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          navigateTo(item.slug || `/${item.name}`);
+        }
+      }}
+      role="button"
+      tabIndex={0}
+      className={`relative block text-left w-full rounded-xl border overflow-hidden shadow-sm hover:shadow-md transition-shadow group ${isDarkMode ? 'bg-slate-800 border-slate-700 hover:border-slate-600' : 'bg-white border-gray-200 hover:border-gray-300'}`}
     >
+      {(isAdminUser || item.featured) && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            if (!isAdminUser) return;
+            setFeaturedByAdmin(item.name, !item.featured);
+          }}
+          title={isAdminUser ? (item.featured ? 'Unfeature map' : 'Feature map') : 'Featured map'}
+          className={`absolute top-2 left-2 z-10 p-1 rounded border backdrop-blur-sm ${isDarkMode ? 'border-slate-600 bg-slate-900/70' : 'border-gray-200 bg-white/85'} ${isAdminUser ? 'hover:bg-amber-50' : 'cursor-default'}`}
+        >
+          <Star size={12} className={item.featured ? 'text-amber-500 fill-amber-500' : (isDarkMode ? 'text-slate-400' : 'text-gray-400')} />
+        </button>
+      )}
       <img src={item.thumbnail || '/vite.svg'} alt="" className={`w-full h-28 object-cover ${isDarkMode ? 'bg-slate-700' : 'bg-gray-100'}`} />
-        <div className="p-3">
-          <div className={`font-mono text-xs font-medium group-hover:text-blue-500 transition-colors ${isDarkMode ? 'text-slate-200' : 'text-slate-800'}`}>{item.name}</div>
-          <div className={`text-[10px] mt-0.5 truncate inline-flex items-center gap-1 ${isDarkMode ? 'text-slate-400' : 'text-gray-500'}`}>
-            <span>by {item.username}</span>
-            {item.is_admin && (
-              <span className={`inline-flex items-center ${isDarkMode ? 'text-amber-300' : 'text-amber-700'}`} title="Admin user">
-                <Shield size={10} />
-              </span>
-            )}
-          </div>
-          <div className={`flex items-center gap-2 mt-1.5 text-[10px] ${isDarkMode ? 'text-slate-500' : 'text-gray-400'}`}>
-            <span className="inline-flex items-center gap-0.5"><Triangle size={9}/> {item.votes || 0}</span>
-            <span>{item.views || 0} views</span>
-          </div>
+      <div className="p-3">
+        <div className={`font-mono text-xs font-medium group-hover:text-blue-500 transition-colors ${isDarkMode ? 'text-slate-200' : 'text-slate-800'}`}>{item.name}</div>
+        <div className={`text-[10px] mt-0.5 truncate inline-flex items-center gap-1 ${isDarkMode ? 'text-slate-400' : 'text-gray-500'}`}>
+          <span>by {item.username}</span>
+          {item.is_admin && (
+            <span className={`inline-flex items-center ${isDarkMode ? 'text-amber-300' : 'text-amber-700'}`} title="Admin user">
+              <Shield size={10} />
+            </span>
+          )}
         </div>
-    </button>
+        <div className={`flex items-center gap-2 mt-1.5 text-[10px] ${isDarkMode ? 'text-slate-500' : 'text-gray-400'}`}>
+          <span className="inline-flex items-center gap-0.5"><Triangle size={9}/> {item.votes || 0}</span>
+          <span>{item.views || 0} views</span>
+        </div>
+      </div>
+    </div>
   );
 
   const renderImportCatalogCard = (item) => {
@@ -3431,7 +3505,19 @@ window.addEventListener('message', function(e) {
       >
         <img src={item.thumbnail || '/vite.svg'} alt="" className="w-full h-20 object-cover bg-gray-100 rounded-t" />
         <div className="p-2">
-          <a href={item.slug || `/${item.name}`} target="_blank" rel="noreferrer" className="font-mono text-[11px] text-blue-700 hover:underline">{item.name}</a>
+          <div className="flex items-center justify-between gap-2">
+            <a href={item.slug || `/${item.name}`} target="_blank" rel="noreferrer" className="font-mono text-[11px] text-blue-700 hover:underline">{item.name}</a>
+            {(isAdminUser || item.featured) && (
+              <button
+                type="button"
+                onClick={() => { if (isAdminUser) setFeaturedByAdmin(item.name, !item.featured); }}
+                className={`inline-flex items-center p-0.5 rounded border ${isAdminUser ? 'hover:bg-amber-50' : 'cursor-default'} ${item.featured ? 'text-amber-600 border-amber-300 bg-amber-50' : 'text-gray-400 border-gray-200 bg-white'}`}
+                title={isAdminUser ? (item.featured ? 'Unfeature map' : 'Feature map') : 'Featured map'}
+              >
+                <Star size={11} className={item.featured ? 'fill-amber-500' : ''} />
+              </button>
+            )}
+          </div>
           <div className="text-[10px] text-gray-500 truncate inline-flex items-center gap-1">
             <span>by</span>
             <a href={`/user/${item.username}`} target="_blank" rel="noreferrer" className="text-blue-700 hover:underline">{item.username}</a>
@@ -3493,6 +3579,16 @@ window.addEventListener('message', function(e) {
         className={`font-bold text-sm lowercase tracking-tight px-2 py-1 rounded mr-1 ${isDarkMode ? 'text-white hover:bg-slate-800' : 'text-slate-900 hover:bg-gray-100'}`}
         title="Home"
       >xatra</button>
+      {route.page === 'editor' && route.map && isAdminUser && (
+        <button
+          type="button"
+          onClick={() => setFeaturedByAdmin(route.map, !mapFeatured)}
+          title={mapFeatured ? 'Unfeature map' : 'Feature map'}
+          className={`p-1.5 rounded ${isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-gray-100'}`}
+        >
+          <Star size={14} className={mapFeatured ? 'text-amber-500 fill-amber-500' : (isDarkMode ? 'text-slate-400' : 'text-gray-400')} />
+        </button>
+      )}
       {route.page === 'editor' && !isReadOnlyMap && (
         <button
           onClick={() => document.getElementById('xatra-load-input')?.click()}
@@ -3896,16 +3992,30 @@ window.addEventListener('message', function(e) {
                   )}
                   {/* Recent maps */}
                   {(profileData?.maps || []).slice(0, 5).map((item) => (
-                    <a
+                    <div
                       key={item.name}
-                      href={item.slug || `/${item.name}`}
-                      className={`flex-shrink-0 min-w-[130px] h-28 rounded-xl border overflow-hidden shadow-sm hover:shadow-md transition-shadow group ${isDarkMode ? 'bg-slate-800 border-slate-700 hover:border-slate-600' : 'bg-white border-gray-200 hover:border-gray-300'}`}
+                      className={`relative flex-shrink-0 min-w-[130px] h-28 rounded-xl border overflow-hidden shadow-sm hover:shadow-md transition-shadow group ${isDarkMode ? 'bg-slate-800 border-slate-700 hover:border-slate-600' : 'bg-white border-gray-200 hover:border-gray-300'}`}
                     >
-                      <img src={item.thumbnail || '/vite.svg'} alt="" className={`w-full h-16 object-cover ${isDarkMode ? 'bg-slate-700' : 'bg-gray-100'}`} />
-                      <div className="px-2 py-1">
-                        <div className={`font-mono text-[11px] font-medium truncate group-hover:text-blue-500 transition-colors ${isDarkMode ? 'text-slate-200' : 'text-slate-800'}`}>{item.name}</div>
-                      </div>
-                    </a>
+                      {(isAdminUser || item.featured) && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (isAdminUser) setFeaturedByAdmin(item.name, !item.featured);
+                          }}
+                          className={`absolute top-1.5 left-1.5 z-10 p-0.5 rounded border ${isDarkMode ? 'border-slate-600 bg-slate-900/70' : 'border-gray-200 bg-white/85'} ${isAdminUser ? 'hover:bg-amber-50' : 'cursor-default'}`}
+                          title={isAdminUser ? (item.featured ? 'Unfeature map' : 'Feature map') : 'Featured map'}
+                        >
+                          <Star size={11} className={item.featured ? 'text-amber-500 fill-amber-500' : (isDarkMode ? 'text-slate-400' : 'text-gray-400')} />
+                        </button>
+                      )}
+                      <a href={item.slug || `/${item.name}`} className="block h-full">
+                        <img src={item.thumbnail || '/vite.svg'} alt="" className={`w-full h-16 object-cover ${isDarkMode ? 'bg-slate-700' : 'bg-gray-100'}`} />
+                        <div className="px-2 py-1">
+                          <div className={`font-mono text-[11px] font-medium truncate group-hover:text-blue-500 transition-colors ${isDarkMode ? 'text-slate-200' : 'text-slate-800'}`}>{item.name}</div>
+                        </div>
+                      </a>
+                    </div>
                   ))}
                   {/* More → link */}
                   {(profileData?.total || 0) > 5 && (
@@ -4099,6 +4209,16 @@ window.addEventListener('message', function(e) {
               )}
               {maps.map((m) => (
                 <div key={m.slug} className={`relative group rounded-xl border overflow-hidden shadow-sm hover:shadow-md transition-shadow ${isDarkMode ? 'bg-slate-800 border-slate-700 hover:border-slate-600' : 'bg-white border-gray-200 hover:border-gray-300'}`}>
+                  {(isAdminUser || m.featured) && (
+                    <button
+                      type="button"
+                      onClick={() => { if (isAdminUser) setFeaturedByAdmin(m.name, !m.featured); }}
+                      className={`absolute top-2 left-2 z-10 p-1 rounded border ${isDarkMode ? 'bg-slate-800/85 border-slate-600' : 'bg-white/85 border-gray-200'} ${isAdminUser ? 'hover:bg-amber-50' : 'cursor-default'}`}
+                      title={isAdminUser ? (m.featured ? 'Unfeature map' : 'Feature map') : 'Featured map'}
+                    >
+                      <Star size={11} className={m.featured ? 'text-amber-500 fill-amber-500' : (isDarkMode ? 'text-slate-400' : 'text-gray-400')} />
+                    </button>
+                  )}
                   <a href={m.slug} className="block">
                     <img src={m.thumbnail || '/vite.svg'} alt="" className={`w-full h-28 object-cover ${isDarkMode ? 'bg-slate-700' : 'bg-gray-100'}`} />
                     <div className="p-3">
