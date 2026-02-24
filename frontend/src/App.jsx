@@ -34,6 +34,10 @@ const IMPORTABLE_LAYER_TYPES = [
   'TitleBox', 'Music', 'CSS', 'BaseOption', 'FlagColorSequence', 'AdminColorSequence',
   'DataColormap', 'zoom', 'focus', 'slider', 'Python',
 ];
+const THUMBNAIL_MAP_CODE_SMALL_CHARS = 240;
+const THUMBNAIL_LIBRARY_LARGE_CHARS = 1800;
+const THUMBNAIL_LIBRARY_RATIO_MIN = 4;
+const THUMBNAIL_LIBRARY_MAX_NAMES = 48;
 
 const apiFetch = (path, options = {}) => {
   const headers = options.headers || {};
@@ -149,6 +153,7 @@ function App() {
   const autoSaveTimerRef = useRef(null);
   const lastAutoSavedContentRef = useRef(null);
   const lastRenderedThumbnailRef = useRef('');
+  const libraryThumbnailCacheRef = useRef({ key: '', dataUrl: '' });
   const editorReadyRef = useRef(false); // true after initial load phase; guards against spurious auto-saves on first render
   const [guestHasChanges, setGuestHasChanges] = useState(false);
   const [userDraftMeta, setUserDraftMeta] = useState(null); // null | { exists: bool, mapName?: string }
@@ -1982,7 +1987,7 @@ ${DEFAULT_MAP_CODE}
           if (!response.ok || data.error) {
               setError(getApiErrorMessage(data, 'Failed to render territory library'));
           } else if (data.html) {
-              setTerritoryLibraryHtml(injectTerritoryLabelOverlayPatch(data.html));
+              setTerritoryLibraryHtml(injectThumbnailCapture(injectTerritoryLabelOverlayPatch(data.html)));
               const names = dedupeNames(Array.isArray(data.available_names) ? data.available_names : []);
               if (names.length) setTerritoryLibraryNames(names);
           }
@@ -2126,59 +2131,179 @@ window.addEventListener('message', function(e) {
     return html.includes('</body>') ? html.replace('</body>', script + '</body>') : html + script;
   };
 
+  const requestThumbnailFromIframe = async (iframe, timeoutMs = 3000) => {
+    if (!iframe?.contentWindow) return null;
+    return new Promise((resolve) => {
+      const handler = (event) => {
+        if (event.source !== iframe.contentWindow) return;
+        if (event.origin !== 'null' && event.origin !== window.location.origin) return;
+        if (event.data?.type === 'xatra_thumbnail_response') {
+          clearTimeout(timeout);
+          window.removeEventListener('message', handler);
+          resolve(event.data || null);
+        }
+      };
+      const timeout = setTimeout(() => {
+        window.removeEventListener('message', handler);
+        resolve(null);
+      }, timeoutMs);
+      window.addEventListener('message', handler);
+      iframe.contentWindow.postMessage({ type: 'xatra_request_thumbnail' }, '*');
+    });
+  };
+
+  const thumbnailDataUrlFromSvgData = async (svgData) => {
+    if (!svgData?.svg) return '';
+    const { svg, width: srcW, height: srcH } = svgData;
+    const targetW = 480;
+    const targetH = 270;
+    const blob = new Blob([svg], { type: 'image/svg+xml;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    try {
+      const img = await new Promise((resolve, reject) => {
+        const nextImg = new window.Image();
+        nextImg.onload = () => resolve(nextImg);
+        nextImg.onerror = reject;
+        nextImg.src = url;
+      });
+      const canvas = document.createElement('canvas');
+      canvas.width = targetW;
+      canvas.height = targetH;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return '';
+      ctx.fillStyle = isDarkMode ? '#0f172a' : '#f8fafc';
+      ctx.fillRect(0, 0, targetW, targetH);
+      ctx.drawImage(img, 0, 0, srcW, srcH, 0, 0, targetW, targetH);
+      return canvas.toDataURL('image/jpeg', 0.78);
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  };
+
   const captureMapThumbnail = async () => {
     try {
       const iframe = iframeRef.current;
-      if (!iframe?.contentWindow) return '';
-      // The iframe is sandboxed without allow-same-origin, so contentDocument is inaccessible.
-      // Use postMessage to ask the iframe to serialize its own SVG and send it back.
-      const svgData = await new Promise((resolve) => {
-        const timeout = setTimeout(() => resolve(null), 3000);
-        const handler = (event) => {
-          if (event.source !== iframe.contentWindow) return;
-          if (event.origin !== 'null' && event.origin !== window.location.origin) return;
-          if (event.data?.type === 'xatra_thumbnail_response') {
-            clearTimeout(timeout);
-            window.removeEventListener('message', handler);
-            resolve(event.data);
-          }
+      const svgData = await requestThumbnailFromIframe(iframe);
+      return await thumbnailDataUrlFromSvgData(svgData);
+    } catch {
+      return '';
+    }
+  };
+
+  const captureThumbnailFromHtml = async (html) => {
+    if (!html || typeof html !== 'string') return '';
+    const iframe = document.createElement('iframe');
+    iframe.setAttribute('sandbox', 'allow-scripts allow-popups allow-forms');
+    iframe.style.position = 'fixed';
+    iframe.style.left = '-10000px';
+    iframe.style.top = '0';
+    iframe.style.width = '960px';
+    iframe.style.height = '540px';
+    iframe.style.border = '0';
+    iframe.srcdoc = html;
+    document.body.appendChild(iframe);
+    try {
+      await new Promise((resolve) => {
+        let done = false;
+        const finish = () => {
+          if (done) return;
+          done = true;
+          resolve();
         };
-        window.addEventListener('message', handler);
-        iframe.contentWindow.postMessage({ type: 'xatra_request_thumbnail' }, '*');
+        iframe.addEventListener('load', finish, { once: true });
+        setTimeout(finish, 800);
       });
-      if (!svgData?.svg) return '';
-      const { svg, width: srcW, height: srcH } = svgData;
-      const targetW = 480;
-      const targetH = 270;
-      const blob = new Blob([svg], { type: 'image/svg+xml;charset=utf-8' });
-      const url = URL.createObjectURL(blob);
-      try {
-        const img = await new Promise((resolve, reject) => {
-          const nextImg = new window.Image();
-          nextImg.onload = () => resolve(nextImg);
-          nextImg.onerror = reject;
-          nextImg.src = url;
-        });
-        const canvas = document.createElement('canvas');
-        canvas.width = targetW;
-        canvas.height = targetH;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) return '';
-        ctx.fillStyle = isDarkMode ? '#0f172a' : '#f8fafc';
-        ctx.fillRect(0, 0, targetW, targetH);
-        ctx.drawImage(img, 0, 0, srcW, srcH, 0, 0, targetW, targetH);
-        return canvas.toDataURL('image/jpeg', 0.78);
-      } finally {
-        URL.revokeObjectURL(url);
+      // Large map payloads can finish iframe load before Leaflet draws SVG layers.
+      // Retry for a short window so thumbnails don't come back empty.
+      let svgData = null;
+      for (let i = 0; i < 8; i += 1) {
+        svgData = await requestThumbnailFromIframe(iframe, 1200);
+        if (svgData?.svg) break;
+        await new Promise((resolve) => setTimeout(resolve, 300));
       }
+      return await thumbnailDataUrlFromSvgData(svgData);
+    } finally {
+      iframe.remove();
+    }
+  };
+
+  const estimateCodeLengthForThumbnail = (src) => String(src || '').replace(/\s+/g, '').length;
+
+  const shouldPreferCustomLibraryThumbnail = () => {
+    const currentMapCode = (() => {
+      if (activeTab !== 'builder') return code;
+      try {
+        return generatePythonCode(builderElements, builderOptions, { commitMain: false }).code || '';
+      } catch {
+        return code;
+      }
+    })();
+    const mapCodeLen = estimateCodeLengthForThumbnail(currentMapCode);
+    const libCodeLen = estimateCodeLengthForThumbnail(predefinedCode);
+    return (
+      mapCodeLen <= THUMBNAIL_MAP_CODE_SMALL_CHARS
+      && libCodeLen >= THUMBNAIL_LIBRARY_LARGE_CHARS
+      && libCodeLen >= mapCodeLen * THUMBNAIL_LIBRARY_RATIO_MIN
+    );
+  };
+
+  const captureCustomLibraryThumbnail = async () => {
+    const cacheKey = `${predefinedCode || ''}::${JSON.stringify(builderOptions?.basemaps || [])}`;
+    if (libraryThumbnailCacheRef.current.key === cacheKey && libraryThumbnailCacheRef.current.dataUrl) {
+      return libraryThumbnailCacheRef.current.dataUrl;
+    }
+    try {
+      let selectedNames = [];
+      try {
+        const catResp = await apiFetch('/territory_library/catalog', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            source: 'custom',
+            predefined_code: predefinedCode || '',
+          }),
+        });
+        const catData = await catResp.json().catch(() => ({}));
+        if (catResp.ok && !catData.error) {
+          const names = Array.isArray(catData.names) ? catData.names.map((n) => String(n || '').trim()).filter(Boolean) : [];
+          const indexNames = Array.isArray(catData.index_names) ? catData.index_names.map((n) => String(n || '').trim()).filter(Boolean) : [];
+          const pool = (indexNames.length ? indexNames : names);
+          selectedNames = Array.from(new Set(pool)).slice(0, THUMBNAIL_LIBRARY_MAX_NAMES);
+        }
+      } catch {
+        selectedNames = [];
+      }
+      const response = await apiFetch('/render/territory-library', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          source: 'custom',
+          predefined_code: predefinedCode || '',
+          basemaps: builderOptions?.basemaps || [],
+          ...(selectedNames.length ? { selected_names: selectedNames } : {}),
+        }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok || data.error || typeof data.html !== 'string' || !data.html) return '';
+      const patched = injectThumbnailCapture(injectTerritoryLabelOverlayPatch(data.html));
+      const dataUrl = await captureThumbnailFromHtml(patched);
+      if (dataUrl) {
+        libraryThumbnailCacheRef.current = { key: cacheKey, dataUrl };
+      }
+      return dataUrl;
     } catch {
       return '';
     }
   };
 
   const ensureLatestThumbnail = async () => {
-    if (!mapHtml) return;
-    const dataUrl = await captureMapThumbnail();
+    let dataUrl = '';
+    if (shouldPreferCustomLibraryThumbnail()) {
+      dataUrl = await captureCustomLibraryThumbnail();
+    }
+    if (!dataUrl && mapHtml) {
+      dataUrl = await captureMapThumbnail();
+    }
     if (dataUrl) {
       lastRenderedThumbnailRef.current = dataUrl;
     }

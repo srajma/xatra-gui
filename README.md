@@ -437,7 +437,8 @@ U (+): Territory: indic.LEVANT
 
 - [x] For some reason an intersection between a custom territory and another custom territory, or between a custom territory and a gadm unit, produces a random extra point marker on the map. Why? Check if that is a bug in the original xatra package (which I am developing at ../xatra) or in this repo, and fix it.
 - [x] In the search/autocompletes for GADMs and territories, pressing comma should do exactly the same thing as pressing Enter.
-- [ ] When map code length is very small and custom territory library size is very large, use the latter instead for the thumbnail
+- [x] When map code length is very small and custom territory library size is very large, use the latter instead for the thumbnail
+- [ ] Remove xatra.territory_library from the Territory library preview tab, and make sure the default one showed/loaded is one of the imports rather than "Custom Library" (which is often empty)
 
 Development difficulties
 - [x] keeping synchrony between things---this should be documented, i.e. "if you change this, then change this too"
