@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Layers, Code, Play, Upload, Download, Image, Plus, Trash2, Keyboard, Copy, Check, Moon, Sun, Menu, Search, Compass, User, Users, LogIn, LogOut, FilePlus2, Import, Save, Triangle, GitFork, CloudUpload, UserX, Settings } from 'lucide-react';
+import { Layers, Code, Play, Upload, Download, Image, Plus, Trash2, Keyboard, Copy, Check, Moon, Sun, Menu, Search, Compass, User, Users, LogIn, LogOut, FilePlus2, Import, Save, Triangle, GitFork, CloudUpload, UserX, Settings, Shield } from 'lucide-react';
 
 // Components (defined inline for simplicity first, can be split later)
 import Builder from './components/Builder';
@@ -3363,14 +3363,21 @@ window.addEventListener('message', function(e) {
       className={`block text-left w-full rounded-xl border overflow-hidden shadow-sm hover:shadow-md transition-shadow group ${isDarkMode ? 'bg-slate-800 border-slate-700 hover:border-slate-600' : 'bg-white border-gray-200 hover:border-gray-300'}`}
     >
       <img src={item.thumbnail || '/vite.svg'} alt="" className={`w-full h-28 object-cover ${isDarkMode ? 'bg-slate-700' : 'bg-gray-100'}`} />
-      <div className="p-3">
-        <div className={`font-mono text-xs font-medium group-hover:text-blue-500 transition-colors ${isDarkMode ? 'text-slate-200' : 'text-slate-800'}`}>{item.name}</div>
-        <div className={`text-[10px] mt-0.5 truncate ${isDarkMode ? 'text-slate-400' : 'text-gray-500'}`}>by {item.username}</div>
-        <div className={`flex items-center gap-2 mt-1.5 text-[10px] ${isDarkMode ? 'text-slate-500' : 'text-gray-400'}`}>
-          <span className="inline-flex items-center gap-0.5"><Triangle size={9}/> {item.votes || 0}</span>
-          <span>{item.views || 0} views</span>
+        <div className="p-3">
+          <div className={`font-mono text-xs font-medium group-hover:text-blue-500 transition-colors ${isDarkMode ? 'text-slate-200' : 'text-slate-800'}`}>{item.name}</div>
+          <div className={`text-[10px] mt-0.5 truncate inline-flex items-center gap-1 ${isDarkMode ? 'text-slate-400' : 'text-gray-500'}`}>
+            <span>by {item.username}</span>
+            {item.is_admin && (
+              <span className={`inline-flex items-center ${isDarkMode ? 'text-amber-300' : 'text-amber-700'}`} title="Admin user">
+                <Shield size={10} />
+              </span>
+            )}
+          </div>
+          <div className={`flex items-center gap-2 mt-1.5 text-[10px] ${isDarkMode ? 'text-slate-500' : 'text-gray-400'}`}>
+            <span className="inline-flex items-center gap-0.5"><Triangle size={9}/> {item.votes || 0}</span>
+            <span>{item.views || 0} views</span>
+          </div>
         </div>
-      </div>
     </button>
   );
 
@@ -3425,8 +3432,15 @@ window.addEventListener('message', function(e) {
         <img src={item.thumbnail || '/vite.svg'} alt="" className="w-full h-20 object-cover bg-gray-100 rounded-t" />
         <div className="p-2">
           <a href={item.slug || `/${item.name}`} target="_blank" rel="noreferrer" className="font-mono text-[11px] text-blue-700 hover:underline">{item.name}</a>
-          <div className="text-[10px] text-gray-500 truncate">
-            by <a href={`/user/${item.username}`} target="_blank" rel="noreferrer" className="text-blue-700 hover:underline">{item.username}</a> · {item.votes || 0} votes · {item.views || 0} views
+          <div className="text-[10px] text-gray-500 truncate inline-flex items-center gap-1">
+            <span>by</span>
+            <a href={`/user/${item.username}`} target="_blank" rel="noreferrer" className="text-blue-700 hover:underline">{item.username}</a>
+            {item.is_admin && (
+              <span className="inline-flex items-center text-amber-700" title="Admin user">
+                <Shield size={10} />
+              </span>
+            )}
+            <span>· {item.votes || 0} votes · {item.views || 0} views</span>
           </div>
           <div className="mt-2 space-y-1 border rounded border-gray-200 bg-gray-50 p-1.5">
             <div className="text-[10px] font-semibold text-gray-700 px-0.5">Import actions</div>
@@ -3931,7 +3945,15 @@ window.addEventListener('message', function(e) {
               {(usersData.items || []).map((u) => (
                 <div key={u.username} className={`rounded-lg border px-3 py-2 transition-shadow ${isDarkMode ? 'bg-slate-800 border-slate-700 hover:border-slate-600' : 'bg-gray-50 border-gray-200 hover:border-gray-300 hover:bg-white'}`}>
                   <div className="flex items-start justify-between gap-2">
-                    <a href={`/user/${u.username}`} className={`font-mono text-xs font-medium hover:underline ${isDarkMode ? 'text-blue-400' : 'text-blue-700'}`}>{u.username}</a>
+                    <div className="flex items-center gap-1.5">
+                      <a href={`/user/${u.username}`} className={`font-mono text-xs font-medium hover:underline ${isDarkMode ? 'text-blue-400' : 'text-blue-700'}`}>{u.username}</a>
+                      {u.is_admin && (
+                        <span className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border ${isDarkMode ? 'text-amber-300 border-amber-800/70 bg-amber-900/20' : 'text-amber-700 border-amber-300 bg-amber-50'}`}>
+                          <Shield size={10} />
+                          Admin
+                        </span>
+                      )}
+                    </div>
                     {currentUser?.user?.is_admin && (
                       <button
                         type="button"
@@ -3991,7 +4013,15 @@ window.addEventListener('message', function(e) {
             <div className="flex items-start gap-4">
               <div className={`w-14 h-14 rounded-full flex items-center justify-center text-2xl font-bold flex-shrink-0 ${isDarkMode ? 'bg-slate-700 text-slate-300' : 'bg-gray-200 text-gray-600'}`}>{((profile?.username || route.username || '?')[0] || '?').toUpperCase()}</div>
               <div className="flex-1 min-w-0">
-                <div className={`font-mono text-lg font-semibold ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>{profile?.username || route.username}</div>
+                <div className="flex items-center gap-2">
+                  <div className={`font-mono text-lg font-semibold ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>{profile?.username || route.username}</div>
+                  {profile?.is_admin && (
+                    <span className={`inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded border ${isDarkMode ? 'text-amber-300 border-amber-800/70 bg-amber-900/20' : 'text-amber-700 border-amber-300 bg-amber-50'}`}>
+                      <Shield size={11} />
+                      Admin
+                    </span>
+                  )}
+                </div>
                 {profile?.full_name && <div className={`text-sm ${isDarkMode ? 'text-slate-300' : 'text-gray-700'}`}>{profile.full_name}</div>}
                 {profile?.bio && <div className={`text-sm mt-1 ${isDarkMode ? 'text-slate-400' : 'text-gray-500'}`}>{profile.bio}</div>}
                 <div className={`text-xs mt-1.5 ${isDarkMode ? 'text-slate-500' : 'text-gray-400'}`}>{profile?.maps_count || 0} maps · {profile?.views_count || 0} views</div>
@@ -4073,6 +4103,14 @@ window.addEventListener('message', function(e) {
                     <img src={m.thumbnail || '/vite.svg'} alt="" className={`w-full h-28 object-cover ${isDarkMode ? 'bg-slate-700' : 'bg-gray-100'}`} />
                     <div className="p-3">
                       <div className={`font-mono text-xs font-medium truncate group-hover:text-blue-500 transition-colors ${isDarkMode ? 'text-slate-200' : 'text-slate-800'}`}>{m.name}</div>
+                      <div className={`mt-0.5 inline-flex items-center gap-1 text-[10px] ${isDarkMode ? 'text-slate-500' : 'text-gray-500'}`}>
+                        <span>by {profile?.username || route.username}</span>
+                        {profile?.is_admin && (
+                          <span className={`inline-flex items-center ${isDarkMode ? 'text-amber-300' : 'text-amber-700'}`} title="Admin user">
+                            <Shield size={10} />
+                          </span>
+                        )}
+                      </div>
                       <div className={`flex items-center gap-2 mt-1 text-[10px] ${isDarkMode ? 'text-slate-500' : 'text-gray-400'}`}>
                         <span className="inline-flex items-center gap-0.5"><Triangle size={9}/> {m.votes || 0}</span>
                         <span>{m.views || 0} views</span>

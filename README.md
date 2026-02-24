@@ -493,6 +493,51 @@ For eventually publishing this as a website
   - Can this website handle, idk, approx 1000 users making maps? How can we estimate the resources etc. that will cost and the servers we will need? (I'm totally new to this, I have no idea if this makes sense).
   - Is it inefficient that for every change the user makes to the map, it has to be re-rendered from ground up by xatra? Are there better solutions? Do note that the maps can get pretty long (e.g. maps of global territorial evolution over history, etc.)
   - Does all the rendering and everything really need to be handled server-side? Or could all the heavy lifting be done client-side? Is this possible with our current set-up (which uses Python) or would we have to port the whole xatra library to javascript?
+
+  ```
+  Short answer: with current architecture, 1000 total users is fine, but 1000 concurrent map renders is not.
+
+  What I’m basing this on in your code:
+
+  - Each render request creates a new OS process (multiprocessing.Process) and waits synchronously for it, with 60s timeout: main.py (/home/manyu/gdrive/srajma/xatra/xatra_gui/main.py:4868).
+  - Per-user cancellation exists, but there is no global render concurrency cap, so many users can trigger many child processes at once: main.py (/home/manyu/gdrive/srajma/xatra/xatra_gui/
+    main.py:4874).
+  - Render cache is tiny (24 entries), so it won’t help much for actively edited maps: main.py (/home/manyu/gdrive/srajma/xatra/xatra_gui/main.py:44).
+  - Main map rendering is mostly user-triggered (Render Map button), not every keystroke: App.jsx (/home/manyu/gdrive/srajma/xatra/xatra_gui/frontend/src/App.jsx:4246).
+  - But each render is still a full rebuild (xatra.new_map(), then full _export_json() + HTML): main.py (/home/manyu/gdrive/srajma/xatra/xatra_gui/main.py:4239), main.py (/home/manyu/gdrive/
+    srajma/xatra/xatra_gui/main.py:4755), flagmap.py (/home/manyu/gdrive/srajma/xatra.master/src/xatra/flagmap.py:1503).
+
+  For your 3 questions:
+
+  1. Can this handle ~1000 users? How to estimate servers/cost?
+
+  - Yes for 1000 accounts/occasional editing.
+  - No for 1000 simultaneous render-heavy users on one backend.
+  - Use this sizing formula:
+      - required_concurrent_render_slots = peak_render_requests_per_second * p95_render_seconds
+      - Since each render is basically one Python worker process, slots map roughly to CPU cores (plus memory headroom).
+  - Also note SQLite can become a write bottleneck at higher concurrency (autosave/publish traffic), independent of render CPU.
+
+  2. Is full re-render on change inefficient?
+
+  - It is inefficient for large maps, yes.
+  - But right now you are not re-rendering on every small change automatically, so that helps.
+  - Better medium-term design:
+      - Long-lived render worker pool (not one new process per request).
+      - Geometry/layer-level memoization by stable layer hash.
+      - Optional diff/patch preview updates instead of replacing full iframe HTML.
+
+  3. Must rendering be server-side? Could client do heavy lifting?
+
+  - Today, heavy lifting is Python-side (Shapely/Pandas/xatra internals), so full client-side is not drop-in.
+  - To move heavy compute client-side, you’d need either:
+      - A substantial JS/WASM port of the xatra compute core, or
+      - A hybrid: server computes geometry snapshots; client handles interactivity/filtering only.
+  - So yes it’s possible architecturally, but with current Python stack it’s a significant rework, not a config change.
+
+  ```
+
+
 - [ ] Admin can "feature" maps, making them appear on top
 - [ ] Collaborative editing/Github integration
 - [ ] AI agent that makes maps for you --- only for paid users [have to think about exactly how to implement this]

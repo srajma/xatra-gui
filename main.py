@@ -2853,6 +2853,7 @@ def maps_explore(
                 a.updated_at,
                 a.alpha_metadata,
                 u.username,
+                u.is_admin,
                 COALESCE(vv.votes_count, 0) AS votes_count,
                 COALESCE(mv.views_count, 0) AS views_count
             FROM hub_artifacts a
@@ -2878,6 +2879,7 @@ def maps_explore(
             meta = _json_parse(row["alpha_metadata"], {})
             items.append({
                 "username": row["username"],
+                "is_admin": bool(int(row["is_admin"] or 0)),
                 "name": row["name"],
                 "slug": f"/{row['name']}",
                 "forked_from": meta.get("forked_from"),
@@ -3541,7 +3543,7 @@ def hub_registry(
             f"""
             SELECT
                 a.id, a.kind, a.name, a.updated_at, a.alpha_metadata,
-                u.username,
+                u.username, u.is_admin,
                 COALESCE(MAX(v.version), 0) AS latest_version,
                 COUNT(DISTINCT vv.id) AS votes_count,
                 COUNT(DISTINCT mv.id) AS views_count
@@ -3551,7 +3553,7 @@ def hub_registry(
             LEFT JOIN hub_votes vv ON vv.artifact_id = a.id
             LEFT JOIN hub_map_views mv ON mv.artifact_id = a.id
             {where_sql}
-            GROUP BY a.id, a.kind, a.name, a.updated_at, u.username
+            GROUP BY a.id, a.kind, a.name, a.updated_at, u.username, u.is_admin
             ORDER BY votes_count DESC, views_count DESC, a.updated_at DESC
             LIMIT ?
             """,
@@ -3564,6 +3566,7 @@ def hub_registry(
             meta = _json_parse(row["alpha_metadata"], {})
             items.append({
                 "username": row["username"],
+                "is_admin": bool(int(row["is_admin"] or 0)),
                 "kind": kind_label,
                 "name": row["name"],
                 "slug": f'/{kind_label}/{row["name"]}',
