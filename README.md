@@ -439,7 +439,7 @@ U (+): Territory: indic.LEVANT
 - [x] In the search/autocompletes for GADMs and territories, pressing comma should do exactly the same thing as pressing Enter.
 - [x] When map code length is very small and custom territory library size is very large, use the latter instead for the thumbnail
 - [x] Remove xatra.territory_library from the Territory library preview tab, and make sure the default one showed/loaded is one of the imports rather than "Custom Library" (which is often empty)
-- [ ] Icon picker improvements
+- [x] Icon picker improvements
   ```
   1) The form at the top (for icon size and other attributes, as well as the geometric icon specific attributes, and the reset button) occupies much more space than it needs to, all of
   those fields can be very small. Make it compact.
@@ -454,7 +454,7 @@ U (+): Territory: indic.LEVANT
   6) Check that the Builder -> Code and Code -> Builder conversion logic is correct for Icons (just check that it is; IDK if it is fine or not).
 
   ```
-- [ ] Uploading icons
+
 
 Development difficulties
 - [x] keeping synchrony between things---this should be documented, i.e. "if you change this, then change this too"
