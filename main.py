@@ -1964,6 +1964,9 @@ def sync_code_to_builder(request: CodeSyncRequest):
                         args_dict["icon"] = {
                             "type": "builtin",
                             "name": _builder_value_from_node(source_code, icon_node.args[0]) or "",
+                            "icon_size": _builder_value_from_node(source_code, next((kw.value for kw in icon_node.keywords if kw.arg == "icon_size"), ast.Constant(value=None))),
+                            "icon_anchor": _builder_value_from_node(source_code, next((kw.value for kw in icon_node.keywords if kw.arg == "icon_anchor"), ast.Constant(value=None))),
+                            "popup_anchor": _builder_value_from_node(source_code, next((kw.value for kw in icon_node.keywords if kw.arg == "popup_anchor"), ast.Constant(value=None))),
                         }
                     elif icon_call == "Icon.bootstrap" and icon_node.args:
                         args_dict["icon"] = {

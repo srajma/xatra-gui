@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Search, X } from 'lucide-react';
 import { API_BASE } from '../config';
 
@@ -17,10 +18,12 @@ function normalizeIcon(icon, builtinIcons) {
       type: 'geometric',
       shape: icon.shape || 'circle',
       color: icon.color || '#3388ff',
+      size: icon.size ?? 24,
       border_color: icon.border_color || '',
       border_width: Number(icon.border_width || 0),
       icon_size: icon.icon_size || null,
       icon_anchor: icon.icon_anchor || null,
+      popup_anchor: icon.popup_anchor || null,
     };
   }
   if (t === 'bootstrap') {
@@ -28,8 +31,10 @@ function normalizeIcon(icon, builtinIcons) {
       type: 'bootstrap',
       name: icon.name || 'geo-alt-fill',
       version: icon.version || DEFAULT_BOOTSTRAP_VERSION,
+      base_url: icon.base_url || '',
       icon_size: icon.icon_size || null,
       icon_anchor: icon.icon_anchor || null,
+      popup_anchor: icon.popup_anchor || null,
     };
   }
   if (t === 'builtin' || icon.name) {
@@ -38,6 +43,7 @@ function normalizeIcon(icon, builtinIcons) {
       name: icon.name || builtinIcons[0] || 'marker-icon.png',
       icon_size: icon.icon_size || null,
       icon_anchor: icon.icon_anchor || null,
+      popup_anchor: icon.popup_anchor || null,
     };
   }
 
@@ -45,29 +51,20 @@ function normalizeIcon(icon, builtinIcons) {
   return fallback;
 }
 
-function NumberPairInput({ label, value, onChange, disabled = false, placeholder = 'x,y' }) {
-  const text = Array.isArray(value) && value.length === 2 ? `${value[0]}, ${value[1]}` : '';
+function NumberPairInput({ label, value, onChange, disabled = false, placeholder = 'x,y', isDarkMode = false }) {
   return (
     <div>
-      <label className={`block text-[11px] mb-1 ${disabled ? 'text-gray-400' : 'text-gray-500'}`}>{label}</label>
+      <label className={`block text-[10px] mb-1 ${disabled ? (isDarkMode ? 'text-slate-500' : 'text-gray-400') : (isDarkMode ? 'text-slate-300' : 'text-gray-500')}`}>{label}</label>
       <input
         disabled={disabled}
-        value={text}
-        onChange={(e) => {
-          const raw = e.target.value.trim();
-          if (!raw) {
-            onChange(null);
-            return;
-          }
-          const parts = raw.split(',').map((x) => x.trim());
-          if (parts.length !== 2) return;
-          const a = Number(parts[0]);
-          const b = Number(parts[1]);
-          if (Number.isNaN(a) || Number.isNaN(b)) return;
-          onChange([a, b]);
-        }}
+        value={value || ''}
+        onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
-        className={`w-full px-2 py-1.5 border rounded text-xs font-mono outline-none ${disabled ? 'border-gray-100 bg-gray-100 text-gray-400' : 'border-gray-200 focus:border-blue-500'}`}
+        className={`w-full px-2 py-1 border rounded text-[11px] font-mono outline-none ${
+          disabled
+            ? (isDarkMode ? 'border-slate-700 bg-slate-800/70 text-slate-500' : 'border-gray-100 bg-gray-100 text-gray-400')
+            : (isDarkMode ? 'border-slate-600 bg-slate-900 text-slate-100 focus:border-sky-400' : 'border-gray-200 focus:border-blue-500')
+        }`}
       />
     </div>
   );
@@ -125,10 +122,12 @@ function defaultForCurrentType(draft, builtinIcons) {
       type: 'geometric',
       shape: draft.shape || 'circle',
       color: '#3388ff',
+      size: 24,
       border_color: '',
       border_width: 0,
       icon_size: null,
       icon_anchor: null,
+      popup_anchor: null,
     };
   }
   if (draft.type === 'bootstrap') {
@@ -136,8 +135,10 @@ function defaultForCurrentType(draft, builtinIcons) {
       type: 'bootstrap',
       name: draft.name || 'geo-alt-fill',
       version: DEFAULT_BOOTSTRAP_VERSION,
+      base_url: '',
       icon_size: null,
       icon_anchor: null,
+      popup_anchor: null,
     };
   }
   return {
@@ -145,22 +146,68 @@ function defaultForCurrentType(draft, builtinIcons) {
     name: draft.name || builtinIcons[0] || 'marker-icon.png',
     icon_size: null,
     icon_anchor: null,
+    popup_anchor: null,
   };
 }
 
-export default function IconPickerModal({ open, onClose, iconValue, onChange, builtinIcons = [] }) {
+function pairToText(value) {
+  if (Array.isArray(value) && value.length === 2) return `${value[0]}, ${value[1]}`;
+  if (typeof value === 'string') return value;
+  return '';
+}
+
+function parsePairInput(raw, fallback = null) {
+  const text = String(raw || '').trim();
+  if (!text) return null;
+  const cleaned = text.replace(/[\[\]\(\)]/g, '');
+  const parts = cleaned.split(',').map((s) => s.trim());
+  if (parts.length !== 2 || !parts[0] || !parts[1]) return fallback;
+  const a = Number(parts[0]);
+  const b = Number(parts[1]);
+  if (Number.isFinite(a) && Number.isFinite(b)) return [a, b];
+  return fallback;
+}
+
+export default function IconPickerModal({ open, onClose, iconValue, onChange, builtinIcons = [], isDarkMode = false }) {
   const initial = useMemo(() => normalizeIcon(iconValue, builtinIcons), [iconValue, builtinIcons]);
   const [draft, setDraft] = useState(initial);
   const [search, setSearch] = useState('');
+  const [iconSizeText, setIconSizeText] = useState(pairToText(initial?.icon_size));
+  const [iconAnchorText, setIconAnchorText] = useState(pairToText(initial?.icon_anchor));
   const [bootstrapIcons, setBootstrapIcons] = useState([]);
   const [offset, setOffset] = useState(0);
   const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(false);
+  const searchInputRef = useRef(null);
 
   useEffect(() => {
     if (!open) return;
-    setDraft(normalizeIcon(iconValue, builtinIcons));
+    const next = normalizeIcon(iconValue, builtinIcons);
+    setDraft(next);
+    setIconSizeText(pairToText(next?.icon_size));
+    setIconAnchorText(pairToText(next?.icon_anchor));
   }, [open, iconValue, builtinIcons]);
+
+  useEffect(() => {
+    if (!open) return;
+    const id = window.setTimeout(() => {
+      searchInputRef.current?.focus();
+      searchInputRef.current?.select();
+    }, 0);
+    return () => clearTimeout(id);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [open, onClose]);
 
   useEffect(() => {
     if (!open) return;
@@ -214,22 +261,45 @@ export default function IconPickerModal({ open, onClose, iconValue, onChange, bu
         type: 'geometric',
         shape: item.shape,
         color: prev?.type === 'geometric' ? (prev.color || '#3388ff') : '#3388ff',
+        size: prev?.type === 'geometric' ? (prev.size ?? 24) : 24,
         border_color: prev?.type === 'geometric' ? (prev.border_color || '') : '',
         border_width: prev?.type === 'geometric' ? Number(prev.border_width || 0) : 0,
         icon_size: prev?.icon_size || null,
         icon_anchor: prev?.icon_anchor || null,
+        popup_anchor: prev?.popup_anchor || null,
       }));
       return;
     }
     if (item.type === 'builtin') {
-      setDraft((prev) => ({ type: 'builtin', name: item.name, icon_size: prev?.icon_size || null, icon_anchor: prev?.icon_anchor || null }));
+      setDraft((prev) => ({
+        type: 'builtin',
+        name: item.name,
+        icon_size: prev?.icon_size || null,
+        icon_anchor: prev?.icon_anchor || null,
+        popup_anchor: prev?.popup_anchor || null,
+      }));
       return;
     }
-    setDraft((prev) => ({ type: 'bootstrap', name: item.name, version: DEFAULT_BOOTSTRAP_VERSION, icon_size: prev?.icon_size || null, icon_anchor: prev?.icon_anchor || null }));
+    setDraft((prev) => ({
+      type: 'bootstrap',
+      name: item.name,
+      version: DEFAULT_BOOTSTRAP_VERSION,
+      base_url: prev?.type === 'bootstrap' ? (prev.base_url || '') : '',
+      icon_size: prev?.icon_size || null,
+      icon_anchor: prev?.icon_anchor || null,
+      popup_anchor: prev?.popup_anchor || null,
+    }));
   };
 
   const apply = () => {
-    onChange(draft || null);
+    const next = draft
+      ? {
+          ...draft,
+          icon_size: parsePairInput(iconSizeText, draft.icon_size ?? null),
+          icon_anchor: parsePairInput(iconAnchorText, draft.icon_anchor ?? null),
+        }
+      : null;
+    onChange(next);
     onClose();
   };
 
@@ -239,51 +309,63 @@ export default function IconPickerModal({ open, onClose, iconValue, onChange, bu
       ? `Bootstrap: ${draft.name || ''}`
       : `Leaflet built-in: ${draft?.name || ''}`;
 
-  return (
-    <div className="fixed inset-0 z-[1000] bg-black/35 backdrop-blur-[1px] flex items-center justify-center p-4">
-      <div className="w-full max-w-4xl bg-white rounded-2xl shadow-2xl border border-gray-200 overflow-hidden">
-        <div className="px-5 py-4 border-b border-gray-100 flex items-center justify-between bg-gradient-to-r from-sky-50 to-indigo-50">
+  const modal = (
+    <div className="fixed inset-0 z-[5000] bg-black/45 backdrop-blur-[1px] flex items-center justify-center p-4">
+      <div className={`w-full max-w-4xl rounded-2xl shadow-2xl border overflow-hidden ${isDarkMode ? 'bg-slate-950 border-slate-700' : 'bg-white border-gray-200'}`}>
+        <div className={`px-4 py-3 border-b flex items-center justify-between ${isDarkMode ? 'border-slate-700 bg-gradient-to-r from-slate-900 to-slate-800' : 'border-gray-100 bg-gradient-to-r from-sky-50 to-indigo-50'}`}>
           <div>
-            <div className="text-sm font-semibold text-gray-900">Icon Picker</div>
-            <div className="text-xs text-gray-500">Unified browser for geometric shapes, Leaflet markers, and Bootstrap icons.</div>
+            <div className={`text-sm font-semibold ${isDarkMode ? 'text-slate-100' : 'text-gray-900'}`}>Icon Picker</div>
+            <div className={`text-xs ${isDarkMode ? 'text-slate-400' : 'text-gray-500'}`}>Geometric shapes, Leaflet markers, and Bootstrap icons.</div>
           </div>
-          <button onClick={onClose} className="p-1.5 rounded hover:bg-white/70 text-gray-600"><X size={16} /></button>
+          <button onClick={onClose} className={`p-1.5 rounded ${isDarkMode ? 'hover:bg-slate-700/70 text-slate-300' : 'hover:bg-white/70 text-gray-600'}`}><X size={16} /></button>
         </div>
 
-        <div className="p-5 grid grid-cols-1 lg:grid-cols-[1fr,1.2fr] gap-5 max-h-[70vh] overflow-auto">
-          <div className="space-y-3 border border-gray-100 rounded-xl p-3 bg-gray-50/60">
+        <div className="p-3 grid grid-cols-1 lg:grid-cols-[1fr,1.25fr] gap-3 max-h-[72vh] overflow-auto">
+          <div className={`space-y-2 border rounded-xl p-2 ${isDarkMode ? 'border-slate-700 bg-slate-900/60' : 'border-gray-100 bg-gray-50/60'}`}>
             <div className="flex items-center gap-2">
               <IconPreview icon={draft} />
               <div>
-                <div className="text-xs font-semibold text-gray-800">Current selection</div>
-                <div className="text-[11px] text-gray-500">{currentLabel}</div>
+                <div className={`text-xs font-semibold ${isDarkMode ? 'text-slate-100' : 'text-gray-800'}`}>Current selection</div>
+                <div className={`text-[11px] ${isDarkMode ? 'text-slate-400' : 'text-gray-500'}`}>{currentLabel}</div>
               </div>
             </div>
 
-            <NumberPairInput label="Icon size [w, h]" value={draft?.icon_size || null} onChange={(v) => setDraft((prev) => ({ ...(prev || {}), icon_size: v }))} />
-            <NumberPairInput label="Icon anchor [x, y]" value={draft?.icon_anchor || null} onChange={(v) => setDraft((prev) => ({ ...(prev || {}), icon_anchor: v }))} />
-
             <div className="grid grid-cols-2 gap-2">
+              <NumberPairInput
+                label="Icon size [w,h]"
+                value={iconSizeText}
+                onChange={setIconSizeText}
+                isDarkMode={isDarkMode}
+              />
+              <NumberPairInput
+                label="Icon anchor [x,y]"
+                value={iconAnchorText}
+                onChange={setIconAnchorText}
+                isDarkMode={isDarkMode}
+              />
+            </div>
+
+            <div className="grid grid-cols-3 gap-2">
               <div>
-                <label className={`block text-[11px] mb-1 ${isGeometric ? 'text-gray-500' : 'text-gray-400'}`}>Color</label>
+                <label className={`block text-[10px] mb-1 ${isGeometric ? (isDarkMode ? 'text-slate-300' : 'text-gray-500') : (isDarkMode ? 'text-slate-500' : 'text-gray-400')}`}>Color</label>
                 <input
                   disabled={!isGeometric}
                   value={draft?.color || '#3388ff'}
                   onChange={(e) => setDraft((prev) => ({ ...(prev || {}), color: e.target.value }))}
-                  className={`w-full px-2 py-1.5 border rounded text-xs font-mono ${isGeometric ? 'border-gray-200 focus:border-blue-500 outline-none' : 'border-gray-100 bg-gray-100 text-gray-400'}`}
+                  className={`w-full px-2 py-1 border rounded text-[11px] font-mono outline-none ${isGeometric ? (isDarkMode ? 'border-slate-600 bg-slate-900 text-slate-100 focus:border-sky-400' : 'border-gray-200 focus:border-blue-500') : (isDarkMode ? 'border-slate-700 bg-slate-800/70 text-slate-500' : 'border-gray-100 bg-gray-100 text-gray-400')}`}
                 />
               </div>
               <div>
-                <label className={`block text-[11px] mb-1 ${isGeometric ? 'text-gray-500' : 'text-gray-400'}`}>Border color</label>
+                <label className={`block text-[10px] mb-1 ${isGeometric ? (isDarkMode ? 'text-slate-300' : 'text-gray-500') : (isDarkMode ? 'text-slate-500' : 'text-gray-400')}`}>Border color</label>
                 <input
                   disabled={!isGeometric}
                   value={draft?.border_color || ''}
                   onChange={(e) => setDraft((prev) => ({ ...(prev || {}), border_color: e.target.value }))}
-                  className={`w-full px-2 py-1.5 border rounded text-xs font-mono ${isGeometric ? 'border-gray-200 focus:border-blue-500 outline-none' : 'border-gray-100 bg-gray-100 text-gray-400'}`}
+                  className={`w-full px-2 py-1 border rounded text-[11px] font-mono outline-none ${isGeometric ? (isDarkMode ? 'border-slate-600 bg-slate-900 text-slate-100 focus:border-sky-400' : 'border-gray-200 focus:border-blue-500') : (isDarkMode ? 'border-slate-700 bg-slate-800/70 text-slate-500' : 'border-gray-100 bg-gray-100 text-gray-400')}`}
                 />
               </div>
               <div>
-                <label className={`block text-[11px] mb-1 ${isGeometric ? 'text-gray-500' : 'text-gray-400'}`}>Border width</label>
+                <label className={`block text-[10px] mb-1 ${isGeometric ? (isDarkMode ? 'text-slate-300' : 'text-gray-500') : (isDarkMode ? 'text-slate-500' : 'text-gray-400')}`}>Border width</label>
                 <input
                   type="number"
                   min={0}
@@ -291,27 +373,50 @@ export default function IconPickerModal({ open, onClose, iconValue, onChange, bu
                   disabled={!isGeometric}
                   value={Number(draft?.border_width || 0)}
                   onChange={(e) => setDraft((prev) => ({ ...(prev || {}), border_width: Number(e.target.value || 0) }))}
-                  className={`w-full px-2 py-1.5 border rounded text-xs ${isGeometric ? 'border-gray-200 focus:border-blue-500 outline-none' : 'border-gray-100 bg-gray-100 text-gray-400'}`}
+                  className={`w-full px-2 py-1 border rounded text-[11px] outline-none ${isGeometric ? (isDarkMode ? 'border-slate-600 bg-slate-900 text-slate-100 focus:border-sky-400' : 'border-gray-200 focus:border-blue-500') : (isDarkMode ? 'border-slate-700 bg-slate-800/70 text-slate-500' : 'border-gray-100 bg-gray-100 text-gray-400')}`}
                 />
               </div>
             </div>
+            <div>
+              <label className={`block text-[10px] mb-1 ${isGeometric ? (isDarkMode ? 'text-slate-300' : 'text-gray-500') : (isDarkMode ? 'text-slate-500' : 'text-gray-400')}`}>Shape size</label>
+              <input
+                type="number"
+                min={1}
+                disabled={!isGeometric}
+                value={Number(draft?.size ?? 24)}
+                onChange={(e) => setDraft((prev) => ({ ...(prev || {}), size: Number(e.target.value || 24) }))}
+                className={`w-full px-2 py-1 border rounded text-[11px] outline-none ${isGeometric ? (isDarkMode ? 'border-slate-600 bg-slate-900 text-slate-100 focus:border-sky-400' : 'border-gray-200 focus:border-blue-500') : (isDarkMode ? 'border-slate-700 bg-slate-800/70 text-slate-500' : 'border-gray-100 bg-gray-100 text-gray-400')}`}
+              />
+            </div>
 
             <button
-              onClick={() => setDraft(defaultForCurrentType(draft, builtinIcons))}
-              className="w-full px-3 py-1.5 rounded border border-gray-200 text-xs text-gray-700 hover:bg-gray-50"
+              onClick={() => {
+                const next = defaultForCurrentType(draft, builtinIcons);
+                setDraft(next);
+                setIconSizeText(pairToText(next?.icon_size));
+                setIconAnchorText(pairToText(next?.icon_anchor));
+              }}
+              className={`w-full px-3 py-1 rounded border text-[11px] ${isDarkMode ? 'border-slate-600 text-slate-200 hover:bg-slate-800' : 'border-gray-200 text-gray-700 hover:bg-gray-50'}`}
             >
               Reset to Default
             </button>
           </div>
 
-          <div className="space-y-3">
+          <div className="space-y-2">
             <div className="relative">
-              <Search size={14} className="absolute left-2 top-2 text-gray-400" />
+              <Search size={14} className={`absolute left-2 top-2 ${isDarkMode ? 'text-slate-400' : 'text-gray-400'}`} />
               <input
+                ref={searchInputRef}
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    if (listItems[0]) pick(listItems[0]);
+                  }
+                }}
                 placeholder="Search all icons: marker, geo, shield, star..."
-                className="w-full pl-7 pr-2 py-1.5 border border-gray-200 rounded text-xs focus:border-blue-500 outline-none"
+                className={`w-full pl-7 pr-2 py-1.5 border rounded text-xs outline-none ${isDarkMode ? 'border-slate-600 bg-slate-900 text-slate-100 focus:border-sky-400' : 'border-gray-200 focus:border-blue-500'}`}
               />
             </div>
 
@@ -330,13 +435,13 @@ export default function IconPickerModal({ open, onClose, iconValue, onChange, bu
                   <button
                     key={item.key}
                     onClick={() => pick(item)}
-                    className={`p-2 rounded-lg border text-left text-xs transition ${isSelected ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-blue-300'}`}
+                    className={`p-2 rounded-lg border text-left text-xs transition ${isSelected ? (isDarkMode ? 'border-sky-400 bg-sky-900/30' : 'border-blue-500 bg-blue-50') : (isDarkMode ? 'border-slate-600 hover:border-sky-400 bg-slate-900/50' : 'border-gray-200 hover:border-blue-300')}`}
                   >
                     <div className="flex items-center gap-2">
                       <IconPreview icon={preview} />
                       <div className="min-w-0">
-                        <div className="truncate">{item.label}</div>
-                        <div className="text-[10px] text-gray-400 uppercase">{item.type}</div>
+                        <div className={`truncate ${isDarkMode ? 'text-slate-100' : 'text-gray-900'}`}>{item.label}</div>
+                        <div className={`text-[10px] uppercase ${isDarkMode ? 'text-slate-400' : 'text-gray-400'}`}>{item.type}</div>
                       </div>
                     </div>
                   </button>
@@ -345,26 +450,28 @@ export default function IconPickerModal({ open, onClose, iconValue, onChange, bu
             </div>
 
             {!loading && listItems.length === 0 && (
-              <div className="text-[11px] text-gray-400">No icons found.</div>
+              <div className={`text-[11px] ${isDarkMode ? 'text-slate-400' : 'text-gray-400'}`}>No icons found.</div>
             )}
 
             <div className="flex justify-center">
               {hasMore ? (
-                <button onClick={loadMore} className="text-xs px-3 py-1.5 rounded border border-gray-200 hover:border-blue-300 bg-white">
+                <button onClick={loadMore} className={`text-xs px-3 py-1.5 rounded border ${isDarkMode ? 'border-slate-600 hover:border-sky-400 bg-slate-900 text-slate-100' : 'border-gray-200 hover:border-blue-300 bg-white'}`}>
                   {loading ? 'Loading...' : 'Load more Bootstrap icons'}
                 </button>
               ) : (
-                <span className="text-[11px] text-gray-400">{loading ? 'Loading...' : 'All available results loaded'}</span>
+                <span className={`text-[11px] ${isDarkMode ? 'text-slate-400' : 'text-gray-400'}`}>{loading ? 'Loading...' : 'All available results loaded'}</span>
               )}
             </div>
           </div>
         </div>
 
-        <div className="px-5 py-3 border-t border-gray-100 bg-white flex items-center justify-end gap-2">
-          <button onClick={onClose} className="px-3 py-1.5 rounded border border-gray-200 text-xs hover:bg-gray-50">Cancel</button>
+        <div className={`px-4 py-3 border-t flex items-center justify-end gap-2 ${isDarkMode ? 'border-slate-700 bg-slate-950' : 'border-gray-100 bg-white'}`}>
+          <button onClick={onClose} className={`px-3 py-1.5 rounded border text-xs ${isDarkMode ? 'border-slate-600 text-slate-200 hover:bg-slate-800' : 'border-gray-200 hover:bg-gray-50'}`}>Cancel</button>
           <button onClick={apply} className="px-3 py-1.5 rounded bg-blue-600 text-white text-xs hover:bg-blue-700">Apply Icon</button>
         </div>
       </div>
     </div>
   );
+
+  return createPortal(modal, document.body);
 }

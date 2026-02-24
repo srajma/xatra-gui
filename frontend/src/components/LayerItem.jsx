@@ -10,7 +10,7 @@ import { API_BASE } from '../config';
 const LayerItem = ({
   element, index, elements, updateElement, updateArg, replaceElement, removeElement,
   lastMapClick, activePicker, setActivePicker, draftPoints, setDraftPoints,
-  onSaveTerritory, predefinedCode, onStartReferencePick, hubImports = [], trustedUser = false
+  onSaveTerritory, predefinedCode, onStartReferencePick, hubImports = [], trustedUser = false, isDarkMode = false
 }) => {
   const [showMore, setShowMore] = useState(false);
   const pickerTimeoutRef = useRef(null);
@@ -339,6 +339,7 @@ const LayerItem = ({
                   iconValue={isPythonValue(iconArg) ? null : iconArg}
                   onChange={(val) => updateArg(index, 'icon', val)}
                   builtinIcons={builtinIconsList}
+                  isDarkMode={isDarkMode}
                 />
               </div>
             )}

@@ -11,6 +11,7 @@ const Builder = ({
   runtimeElements = [], runtimeSetElements = null, runtimeOptions = {}, runtimeSetOptions = null,
   trustedUser = false,
   readOnly = false,
+  isDarkMode = false,
 }) => {
   const layersEndRef = useRef(null);
   const prevElementsLengthRef = useRef(elements.length);
@@ -274,6 +275,7 @@ const Builder = ({
               onStartReferencePick={onStartReferencePick}
               hubImports={hubImports}
               trustedUser={trustedUser}
+              isDarkMode={isDarkMode}
             />
           ))}
           

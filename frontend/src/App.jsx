@@ -4513,6 +4513,7 @@ window.addEventListener('message', function(e) {
               runtimeSetOptions={setRuntimeBuilderOptions}
               trustedUser={!!currentUser?.user?.is_trusted}
               readOnly={isReadOnlyMap}
+              isDarkMode={isDarkMode}
             />
           ) : (
             <CodeEditor 
