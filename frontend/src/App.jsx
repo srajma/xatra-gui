@@ -3365,6 +3365,12 @@ window.addEventListener('message', function(e) {
       const af = a?.featured ? 1 : 0;
       const bf = b?.featured ? 1 : 0;
       if (bf !== af) return bf - af;
+      const av = Number(a?.votes || 0);
+      const bv = Number(b?.votes || 0);
+      if (bv !== av) return bv - av;
+      const aviews = Number(a?.views || 0);
+      const bviews = Number(b?.views || 0);
+      if (bviews !== aviews) return bviews - aviews;
       const at = String(a?.updated_at || '');
       const bt = String(b?.updated_at || '');
       return bt.localeCompare(at);

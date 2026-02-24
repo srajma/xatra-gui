@@ -2911,7 +2911,11 @@ def maps_explore(
                 GROUP BY artifact_id
             ) mv ON mv.artifact_id = a.id
             {where_sql}
-            ORDER BY a.featured DESC, a.updated_at DESC
+            ORDER BY
+                a.featured DESC,
+                COALESCE(vv.votes_count, 0) DESC,
+                COALESCE(mv.views_count, 0) DESC,
+                a.updated_at DESC
             LIMIT ? OFFSET ?
             """,
             (*params, safe_per_page, offset),
@@ -3029,10 +3033,31 @@ def user_profile(username: str, q: Optional[str] = None, page: int = 1, per_page
         total = conn.execute(f"SELECT COUNT(*) AS c FROM hub_artifacts a {where}", tuple(params)).fetchone()["c"]
         rows = conn.execute(
             f"""
-            SELECT a.id, a.name, a.updated_at, a.alpha_metadata, a.featured
+            SELECT
+                a.id,
+                a.name,
+                a.updated_at,
+                a.alpha_metadata,
+                a.featured,
+                COALESCE(vv.votes_count, 0) AS votes_count,
+                COALESCE(mv.views_count, 0) AS views_count
             FROM hub_artifacts a
+            LEFT JOIN (
+                SELECT artifact_id, COUNT(*) AS votes_count
+                FROM hub_votes
+                GROUP BY artifact_id
+            ) vv ON vv.artifact_id = a.id
+            LEFT JOIN (
+                SELECT artifact_id, COUNT(*) AS views_count
+                FROM hub_map_views
+                GROUP BY artifact_id
+            ) mv ON mv.artifact_id = a.id
             {where}
-            ORDER BY a.featured DESC, a.updated_at DESC
+            ORDER BY
+                a.featured DESC,
+                COALESCE(vv.votes_count, 0) DESC,
+                COALESCE(mv.views_count, 0) DESC,
+                a.updated_at DESC
             LIMIT ? OFFSET ?
             """,
             (*params, safe_per_page, offset),
@@ -3043,8 +3068,8 @@ def user_profile(username: str, q: Optional[str] = None, page: int = 1, per_page
             maps.append({
                 "name": row["name"],
                 "slug": f"/{row['name']}",
-                "votes": _map_vote_count(conn, row["id"]),
-                "views": _map_view_count(conn, row["id"]),
+                "votes": int(row["votes_count"] or 0),
+                "views": int(row["views_count"] or 0),
                 "featured": bool(int(row["featured"] or 0)),
                 "updated_at": row["updated_at"],
                 "thumbnail": meta.get("thumbnail") or "/vite.svg",

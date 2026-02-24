@@ -538,7 +538,7 @@ For eventually publishing this as a website
   ```
 
 
-- [ ] Admin can "feature" maps, making them appear on top
+- [x] Admin can "feature" maps, making them appear on top
 - [ ] Collaborative editing/Github integration
 - [ ] AI agent that makes maps for you --- only for paid users [have to think about exactly how to implement this]
 
