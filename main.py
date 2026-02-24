@@ -2433,13 +2433,85 @@ def _normalize_css_content_for_storage(content: str) -> str:
     return json.dumps(payload, ensure_ascii=False)
 
 
-def _normalize_artifact_content_for_storage(kind: str, content: str) -> str:
+def _strip_python_wrappers_for_storage(value: Any) -> Any:
+    if isinstance(value, dict):
+        if len(value) == 1 and isinstance(value.get(PYTHON_EXPR_KEY), str):
+            return str(value.get(PYTHON_EXPR_KEY) or "")
+        return {k: _strip_python_wrappers_for_storage(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_strip_python_wrappers_for_storage(v) for v in value]
+    return value
+
+
+def _sanitize_untrusted_map_elements(elements: Any) -> List[Any]:
+    out: List[Any] = []
+    if not isinstance(elements, list):
+        return out
+    for item in elements:
+        if not isinstance(item, dict):
+            continue
+        item_type = str(item.get("type", "")).strip().lower()
+        if item_type == "python":
+            continue
+        copied = dict(item)
+        copied["label"] = _strip_python_wrappers_for_storage(copied.get("label"))
+        copied["value"] = _strip_python_wrappers_for_storage(copied.get("value"))
+        copied["args"] = _strip_python_wrappers_for_storage(copied.get("args") if isinstance(copied.get("args"), dict) else {})
+        out.append(copied)
+    return out
+
+
+def _sanitize_untrusted_map_content_for_storage(content: str) -> str:
+    parsed = _json_parse(content or "", None)
+    if not isinstance(parsed, dict):
+        raise HTTPException(status_code=400, detail="Non-trusted map content must be a JSON object")
+
+    payload = dict(parsed)
+    for key in ("imports_code", "theme_code", "predefined_code", "map_code", "code", "runtime_code"):
+        if key in payload:
+            payload[key] = ""
+
+    payload["runtime_elements"] = _sanitize_untrusted_map_elements(payload.get("runtime_elements", []))
+    runtime_options = payload.get("runtime_options", {})
+    payload["runtime_options"] = _strip_python_wrappers_for_storage(runtime_options if isinstance(runtime_options, dict) else {})
+    picker_options = payload.get("picker_options", {})
+    payload["picker_options"] = _strip_python_wrappers_for_storage(picker_options if isinstance(picker_options, dict) else {})
+
+    project = payload.get("project", {})
+    project_dict = dict(project) if isinstance(project, dict) else {}
+    project_dict["elements"] = _sanitize_untrusted_map_elements(project_dict.get("elements", []))
+    project_dict["runtimeElements"] = _sanitize_untrusted_map_elements(project_dict.get("runtimeElements", []))
+    project_dict["options"] = _strip_python_wrappers_for_storage(project_dict.get("options", {}) if isinstance(project_dict.get("options"), dict) else {})
+    project_dict["runtimeOptions"] = _strip_python_wrappers_for_storage(project_dict.get("runtimeOptions", {}) if isinstance(project_dict.get("runtimeOptions"), dict) else {})
+    for key in ("importsCode", "themeCode", "predefinedCode", "code", "runtimeCode"):
+        if key in project_dict:
+            project_dict[key] = ""
+    payload["project"] = project_dict
+
+    return json.dumps(payload, ensure_ascii=False)
+
+
+def _sanitize_untrusted_project_for_draft(project: Any) -> Dict[str, Any]:
+    data = dict(project) if isinstance(project, dict) else {}
+    data["elements"] = _sanitize_untrusted_map_elements(data.get("elements", []))
+    data["runtimeElements"] = _sanitize_untrusted_map_elements(data.get("runtimeElements", []))
+    data["options"] = _strip_python_wrappers_for_storage(data.get("options", {}) if isinstance(data.get("options"), dict) else {})
+    data["runtimeOptions"] = _strip_python_wrappers_for_storage(data.get("runtimeOptions", {}) if isinstance(data.get("runtimeOptions"), dict) else {})
+    for key in ("importsCode", "themeCode", "predefinedCode", "code", "runtimeCode"):
+        if key in data:
+            data[key] = ""
+    return data
+
+
+def _normalize_artifact_content_for_storage(kind: str, content: str, trusted_user: bool = True) -> str:
     normalized_kind = _normalize_hub_kind(kind)
     raw = content or ""
     if normalized_kind == "lib":
         return _normalize_lib_content_for_storage(raw)
     if normalized_kind == "css":
         return _normalize_css_content_for_storage(raw)
+    if normalized_kind == "map" and not trusted_user:
+        return _sanitize_untrusted_map_content_for_storage(raw)
     return raw
 
 @app.post("/territory_library/catalog")
@@ -3109,9 +3181,10 @@ def draft_save(request: Request, response: Response, payload: DraftRequest):
         else:
             owner_key = f"guest:{_ensure_guest_id(request, response=response)}"
         now = _utc_now_iso()
+        safe_project = _sanitize_untrusted_project_for_draft(payload.project or {})
         draft_json = json.dumps({
             "map_name": _normalize_hub_name(payload.map_name or "new_map"),
-            "project": payload.project or {},
+            "project": safe_project,
         }, ensure_ascii=False)
         if len(draft_json.encode("utf-8")) > MAX_ARTIFACT_BYTES:
             raise HTTPException(status_code=413, detail="Content too large (max 10 MB)")
@@ -3189,6 +3262,7 @@ def draft_promote(body: DraftPromoteRequest, request: Request):
             raise HTTPException(status_code=409, detail="Map already exists")
         draft = _json_parse(row["project_json"], {})
         project = draft.get("project", {})
+        trusted_user = _is_user_trusted(user)
         content_obj = {
             "imports_code":    project.get("importsCode", ""),
             "theme_code":      project.get("themeCode", ""),
@@ -3209,7 +3283,7 @@ def draft_promote(body: DraftPromoteRequest, request: Request):
                 "runtimeCode":    project.get("runtimeCode", ""),
             }
         }
-        content = json.dumps(content_obj, ensure_ascii=False)
+        content = _normalize_artifact_content_for_storage("map", json.dumps(content_obj, ensure_ascii=False), trusted_user=trusted_user)
         metadata: Dict[str, Any] = {"updated_at": _utc_now_iso()}
         _hub_upsert_alpha(conn, username, "map", name, content, metadata)
         conn.execute("DELETE FROM hub_drafts WHERE owner_key = ?", (owner_key,))
@@ -3261,8 +3335,8 @@ def hub_save_alpha_by_name(kind: str, name: str, request: HubArtifactWriteReques
         artifact = _hub_get_artifact_by_name(conn, kind, name)
         if artifact is None:
             raise HTTPException(status_code=404, detail="Artifact not found")
-        _require_write_identity(conn, http_request, artifact['username'])
-        content = _normalize_artifact_content_for_storage(kind, request.content or "")
+        user_row = _require_write_identity(conn, http_request, artifact['username'])
+        content = _normalize_artifact_content_for_storage(kind, request.content or "", trusted_user=_is_user_trusted(user_row))
         if len(content.encode("utf-8")) > MAX_ARTIFACT_BYTES:
             raise HTTPException(status_code=413, detail="Content too large (max 10 MB)")
         md = dict(request.metadata or {})
@@ -3293,7 +3367,7 @@ def hub_publish_by_name(kind: str, name: str, request: HubArtifactWriteRequest, 
                 window_seconds=3600,
                 label="Publish rate limit reached. Please wait before publishing again.",
             )
-        content = _normalize_artifact_content_for_storage(kind, request.content or "")
+        content = _normalize_artifact_content_for_storage(kind, request.content or "", trusted_user=_is_user_trusted(user_row))
         if len(content.encode("utf-8")) > MAX_ARTIFACT_BYTES:
             raise HTTPException(status_code=413, detail="Content too large (max 10 MB)")
         md = dict(request.metadata or {})
@@ -3425,8 +3499,8 @@ def hub_rename_artifact(username: str, kind: str, name: str, request: HubArtifac
 def hub_save_alpha(username: str, kind: str, name: str, request: HubArtifactWriteRequest, http_request: Request, response: Response):
     conn = _hub_db_conn()
     try:
-        _require_write_identity(conn, http_request, username)
-        content = _normalize_artifact_content_for_storage(kind, request.content or "")
+        user_row = _require_write_identity(conn, http_request, username)
+        content = _normalize_artifact_content_for_storage(kind, request.content or "", trusted_user=_is_user_trusted(user_row))
         if len(content.encode("utf-8")) > MAX_ARTIFACT_BYTES:
             raise HTTPException(status_code=413, detail="Content too large (max 10 MB)")
         # For map metadata, automatically preserve owner and updated_at.
@@ -3452,7 +3526,7 @@ def hub_publish(username: str, kind: str, name: str, request: HubArtifactWriteRe
                 window_seconds=3600,
                 label="Publish rate limit reached. Please wait before publishing again.",
             )
-        content = _normalize_artifact_content_for_storage(kind, request.content or "")
+        content = _normalize_artifact_content_for_storage(kind, request.content or "", trusted_user=_is_user_trusted(user_row))
         if len(content.encode("utf-8")) > MAX_ARTIFACT_BYTES:
             raise HTTPException(status_code=413, detail="Content too large (max 10 MB)")
         md = dict(request.metadata or {})
