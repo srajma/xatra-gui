@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { Search, X } from 'lucide-react';
 import { API_BASE } from '../config';
@@ -199,18 +199,6 @@ export default function IconPickerModal({ open, onClose, iconValue, onChange, bu
 
   useEffect(() => {
     if (!open) return;
-    const onKeyDown = (e) => {
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        onClose();
-      }
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [open, onClose]);
-
-  useEffect(() => {
-    if (!open) return;
     const query = search.trim();
     setLoading(true);
     fetch(`${API_BASE}/icons/bootstrap?q=${encodeURIComponent(query)}&offset=0&limit=80&version=${DEFAULT_BOOTSTRAP_VERSION}`)
@@ -244,8 +232,6 @@ export default function IconPickerModal({ open, onClose, iconValue, onChange, bu
       .catch(() => {})
       .finally(() => setLoading(false));
   };
-
-  if (!open) return null;
 
   const query = search.trim().toLowerCase();
   const geometricItems = GEOMETRIC_SHAPES.filter((s) => !query || s.includes(query)).map((shape) => ({ type: 'geometric', key: `g:${shape}`, label: shape, shape }));
@@ -291,7 +277,7 @@ export default function IconPickerModal({ open, onClose, iconValue, onChange, bu
     }));
   };
 
-  const apply = () => {
+  const apply = useCallback(() => {
     const next = draft
       ? {
           ...draft,
@@ -301,7 +287,21 @@ export default function IconPickerModal({ open, onClose, iconValue, onChange, bu
       : null;
     onChange(next);
     onClose();
-  };
+  }, [draft, iconSizeText, iconAnchorText, onChange, onClose]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        apply();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [open, apply]);
+
+  if (!open) return null;
 
   const currentLabel = draft?.type === 'geometric'
     ? `Geometric: ${draft.shape || 'circle'}`
@@ -317,7 +317,7 @@ export default function IconPickerModal({ open, onClose, iconValue, onChange, bu
             <div className={`text-sm font-semibold ${isDarkMode ? 'text-slate-100' : 'text-gray-900'}`}>Icon Picker</div>
             <div className={`text-xs ${isDarkMode ? 'text-slate-400' : 'text-gray-500'}`}>Geometric shapes, Leaflet markers, and Bootstrap icons.</div>
           </div>
-          <button onClick={onClose} className={`p-1.5 rounded ${isDarkMode ? 'hover:bg-slate-700/70 text-slate-300' : 'hover:bg-white/70 text-gray-600'}`}><X size={16} /></button>
+          <button onClick={apply} className={`p-1.5 rounded ${isDarkMode ? 'hover:bg-slate-700/70 text-slate-300' : 'hover:bg-white/70 text-gray-600'}`}><X size={16} /></button>
         </div>
 
         <div className="p-3 grid grid-cols-1 lg:grid-cols-[1fr,1.25fr] gap-3 max-h-[72vh] overflow-auto">
@@ -330,76 +330,78 @@ export default function IconPickerModal({ open, onClose, iconValue, onChange, bu
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-2">
-              <NumberPairInput
-                label="Icon size [w,h]"
-                value={iconSizeText}
-                onChange={setIconSizeText}
-                isDarkMode={isDarkMode}
-              />
-              <NumberPairInput
-                label="Icon anchor [x,y]"
-                value={iconAnchorText}
-                onChange={setIconAnchorText}
-                isDarkMode={isDarkMode}
-              />
-            </div>
-
-            <div className="grid grid-cols-3 gap-2">
-              <div>
-                <label className={`block text-[10px] mb-1 ${isGeometric ? (isDarkMode ? 'text-slate-300' : 'text-gray-500') : (isDarkMode ? 'text-slate-500' : 'text-gray-400')}`}>Color</label>
-                <input
-                  disabled={!isGeometric}
-                  value={draft?.color || '#3388ff'}
-                  onChange={(e) => setDraft((prev) => ({ ...(prev || {}), color: e.target.value }))}
-                  className={`w-full px-2 py-1 border rounded text-[11px] font-mono outline-none ${isGeometric ? (isDarkMode ? 'border-slate-600 bg-slate-900 text-slate-100 focus:border-sky-400' : 'border-gray-200 focus:border-blue-500') : (isDarkMode ? 'border-slate-700 bg-slate-800/70 text-slate-500' : 'border-gray-100 bg-gray-100 text-gray-400')}`}
-                />
+            <div className="overflow-x-auto pb-0.5">
+              <div className="flex items-end gap-2 min-w-max">
+                <div className="w-24">
+                  <NumberPairInput
+                    label="Size [w,h]"
+                    value={iconSizeText}
+                    onChange={setIconSizeText}
+                    isDarkMode={isDarkMode}
+                  />
+                </div>
+                <div className="w-24">
+                  <NumberPairInput
+                    label="Anchor [x,y]"
+                    value={iconAnchorText}
+                    onChange={setIconAnchorText}
+                    isDarkMode={isDarkMode}
+                  />
+                </div>
+                <div className="w-20">
+                  <label className={`block text-[10px] mb-1 ${isGeometric ? (isDarkMode ? 'text-slate-300' : 'text-gray-500') : (isDarkMode ? 'text-slate-500' : 'text-gray-400')}`}>Color</label>
+                  <input
+                    disabled={!isGeometric}
+                    value={draft?.color || '#3388ff'}
+                    onChange={(e) => setDraft((prev) => ({ ...(prev || {}), color: e.target.value }))}
+                    className={`w-full px-2 py-1 border rounded text-[11px] font-mono outline-none ${isGeometric ? (isDarkMode ? 'border-slate-600 bg-slate-900 text-slate-100 focus:border-sky-400' : 'border-gray-200 focus:border-blue-500') : (isDarkMode ? 'border-slate-700 bg-slate-800/70 text-slate-500' : 'border-gray-100 bg-gray-100 text-gray-400')}`}
+                  />
+                </div>
+                <div className="w-24">
+                  <label className={`block text-[10px] mb-1 ${isGeometric ? (isDarkMode ? 'text-slate-300' : 'text-gray-500') : (isDarkMode ? 'text-slate-500' : 'text-gray-400')}`}>Border</label>
+                  <input
+                    disabled={!isGeometric}
+                    value={draft?.border_color || ''}
+                    onChange={(e) => setDraft((prev) => ({ ...(prev || {}), border_color: e.target.value }))}
+                    className={`w-full px-2 py-1 border rounded text-[11px] font-mono outline-none ${isGeometric ? (isDarkMode ? 'border-slate-600 bg-slate-900 text-slate-100 focus:border-sky-400' : 'border-gray-200 focus:border-blue-500') : (isDarkMode ? 'border-slate-700 bg-slate-800/70 text-slate-500' : 'border-gray-100 bg-gray-100 text-gray-400')}`}
+                  />
+                </div>
+                <div className="w-24">
+                  <label className={`block text-[10px] mb-1 ${isGeometric ? (isDarkMode ? 'text-slate-300' : 'text-gray-500') : (isDarkMode ? 'text-slate-500' : 'text-gray-400')}`}>Border-width</label>
+                  <input
+                    type="number"
+                    min={0}
+                    max={16}
+                    disabled={!isGeometric}
+                    value={Number(draft?.border_width || 0)}
+                    onChange={(e) => setDraft((prev) => ({ ...(prev || {}), border_width: Number(e.target.value || 0) }))}
+                    className={`w-full px-2 py-1 border rounded text-[11px] outline-none ${isGeometric ? (isDarkMode ? 'border-slate-600 bg-slate-900 text-slate-100 focus:border-sky-400' : 'border-gray-200 focus:border-blue-500') : (isDarkMode ? 'border-slate-700 bg-slate-800/70 text-slate-500' : 'border-gray-100 bg-gray-100 text-gray-400')}`}
+                  />
+                </div>
+                <div className="w-14">
+                  <label className={`block text-[10px] mb-1 ${isGeometric ? (isDarkMode ? 'text-slate-300' : 'text-gray-500') : (isDarkMode ? 'text-slate-500' : 'text-gray-400')}`}>Shape size</label>
+                  <input
+                    type="number"
+                    min={1}
+                    disabled={!isGeometric}
+                    value={Number(draft?.size ?? 24)}
+                    onChange={(e) => setDraft((prev) => ({ ...(prev || {}), size: Number(e.target.value || 24) }))}
+                    className={`w-full px-2 py-1 border rounded text-[11px] outline-none ${isGeometric ? (isDarkMode ? 'border-slate-600 bg-slate-900 text-slate-100 focus:border-sky-400' : 'border-gray-200 focus:border-blue-500') : (isDarkMode ? 'border-slate-700 bg-slate-800/70 text-slate-500' : 'border-gray-100 bg-gray-100 text-gray-400')}`}
+                  />
+                </div>
+                <button
+                  onClick={() => {
+                    const next = defaultForCurrentType(draft, builtinIcons);
+                    setDraft(next);
+                    setIconSizeText(pairToText(next?.icon_size));
+                    setIconAnchorText(pairToText(next?.icon_anchor));
+                  }}
+                  className={`h-7 px-2 rounded border text-[11px] whitespace-nowrap ${isDarkMode ? 'border-slate-600 text-slate-200 hover:bg-slate-800' : 'border-gray-200 text-gray-700 hover:bg-gray-50'}`}
+                >
+                  Reset
+                </button>
               </div>
-              <div>
-                <label className={`block text-[10px] mb-1 ${isGeometric ? (isDarkMode ? 'text-slate-300' : 'text-gray-500') : (isDarkMode ? 'text-slate-500' : 'text-gray-400')}`}>Border color</label>
-                <input
-                  disabled={!isGeometric}
-                  value={draft?.border_color || ''}
-                  onChange={(e) => setDraft((prev) => ({ ...(prev || {}), border_color: e.target.value }))}
-                  className={`w-full px-2 py-1 border rounded text-[11px] font-mono outline-none ${isGeometric ? (isDarkMode ? 'border-slate-600 bg-slate-900 text-slate-100 focus:border-sky-400' : 'border-gray-200 focus:border-blue-500') : (isDarkMode ? 'border-slate-700 bg-slate-800/70 text-slate-500' : 'border-gray-100 bg-gray-100 text-gray-400')}`}
-                />
-              </div>
-              <div>
-                <label className={`block text-[10px] mb-1 ${isGeometric ? (isDarkMode ? 'text-slate-300' : 'text-gray-500') : (isDarkMode ? 'text-slate-500' : 'text-gray-400')}`}>Border width</label>
-                <input
-                  type="number"
-                  min={0}
-                  max={16}
-                  disabled={!isGeometric}
-                  value={Number(draft?.border_width || 0)}
-                  onChange={(e) => setDraft((prev) => ({ ...(prev || {}), border_width: Number(e.target.value || 0) }))}
-                  className={`w-full px-2 py-1 border rounded text-[11px] outline-none ${isGeometric ? (isDarkMode ? 'border-slate-600 bg-slate-900 text-slate-100 focus:border-sky-400' : 'border-gray-200 focus:border-blue-500') : (isDarkMode ? 'border-slate-700 bg-slate-800/70 text-slate-500' : 'border-gray-100 bg-gray-100 text-gray-400')}`}
-                />
-              </div>
             </div>
-            <div>
-              <label className={`block text-[10px] mb-1 ${isGeometric ? (isDarkMode ? 'text-slate-300' : 'text-gray-500') : (isDarkMode ? 'text-slate-500' : 'text-gray-400')}`}>Shape size</label>
-              <input
-                type="number"
-                min={1}
-                disabled={!isGeometric}
-                value={Number(draft?.size ?? 24)}
-                onChange={(e) => setDraft((prev) => ({ ...(prev || {}), size: Number(e.target.value || 24) }))}
-                className={`w-full px-2 py-1 border rounded text-[11px] outline-none ${isGeometric ? (isDarkMode ? 'border-slate-600 bg-slate-900 text-slate-100 focus:border-sky-400' : 'border-gray-200 focus:border-blue-500') : (isDarkMode ? 'border-slate-700 bg-slate-800/70 text-slate-500' : 'border-gray-100 bg-gray-100 text-gray-400')}`}
-              />
-            </div>
-
-            <button
-              onClick={() => {
-                const next = defaultForCurrentType(draft, builtinIcons);
-                setDraft(next);
-                setIconSizeText(pairToText(next?.icon_size));
-                setIconAnchorText(pairToText(next?.icon_anchor));
-              }}
-              className={`w-full px-3 py-1 rounded border text-[11px] ${isDarkMode ? 'border-slate-600 text-slate-200 hover:bg-slate-800' : 'border-gray-200 text-gray-700 hover:bg-gray-50'}`}
-            >
-              Reset to Default
-            </button>
           </div>
 
           <div className="space-y-2">
@@ -466,7 +468,7 @@ export default function IconPickerModal({ open, onClose, iconValue, onChange, bu
         </div>
 
         <div className={`px-4 py-3 border-t flex items-center justify-end gap-2 ${isDarkMode ? 'border-slate-700 bg-slate-950' : 'border-gray-100 bg-white'}`}>
-          <button onClick={onClose} className={`px-3 py-1.5 rounded border text-xs ${isDarkMode ? 'border-slate-600 text-slate-200 hover:bg-slate-800' : 'border-gray-200 hover:bg-gray-50'}`}>Cancel</button>
+          <button onClick={apply} className={`px-3 py-1.5 rounded border text-xs ${isDarkMode ? 'border-slate-600 text-slate-200 hover:bg-slate-800' : 'border-gray-200 hover:bg-gray-50'}`}>Close</button>
           <button onClick={apply} className="px-3 py-1.5 rounded bg-blue-600 text-white text-xs hover:bg-blue-700">Apply Icon</button>
         </div>
       </div>
