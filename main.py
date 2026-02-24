@@ -2472,6 +2472,21 @@ def _map_view_count(conn: sqlite3.Connection, artifact_id: int) -> int:
     return int(row["c"] if row else 0)
 
 
+def _normalize_map_sort(sort: Optional[str]) -> str:
+    key = str(sort or "").strip().lower()
+    return key if key in {"default", "votes", "views", "recency"} else "default"
+
+
+def _map_sort_order_sql(sort: str) -> str:
+    if sort == "votes":
+        return "COALESCE(vv.votes_count, 0) DESC, COALESCE(mv.views_count, 0) DESC, a.updated_at DESC"
+    if sort == "views":
+        return "COALESCE(mv.views_count, 0) DESC, COALESCE(vv.votes_count, 0) DESC, a.updated_at DESC"
+    if sort == "recency":
+        return "a.updated_at DESC, COALESCE(vv.votes_count, 0) DESC, COALESCE(mv.views_count, 0) DESC"
+    return "a.featured DESC, COALESCE(vv.votes_count, 0) DESC, COALESCE(mv.views_count, 0) DESC, a.updated_at DESC"
+
+
 def _require_write_identity(conn: sqlite3.Connection, request: Request, username: str) -> Optional[sqlite3.Row]:
     target = _normalize_hub_user(username, allow_reserved=True)
     user = _request_user(conn, request)
@@ -2856,6 +2871,7 @@ def maps_explore(
     q: Optional[str] = None,
     page: int = 1,
     per_page: int = 12,
+    sort: Optional[str] = "default",
 ):
     query = str(q or "").strip().lower()
     user_filter = None
@@ -2867,6 +2883,8 @@ def maps_explore(
             text_terms.append(token)
     safe_page = max(1, int(page or 1))
     safe_per_page = max(1, min(int(per_page or 12), 30))
+    sort_key = _normalize_map_sort(sort)
+    order_sql = _map_sort_order_sql(sort_key)
     offset = (safe_page - 1) * safe_per_page
     conn = _hub_db_conn()
     try:
@@ -2911,11 +2929,7 @@ def maps_explore(
                 GROUP BY artifact_id
             ) mv ON mv.artifact_id = a.id
             {where_sql}
-            ORDER BY
-                a.featured DESC,
-                COALESCE(vv.votes_count, 0) DESC,
-                COALESCE(mv.views_count, 0) DESC,
-                a.updated_at DESC
+            ORDER BY {order_sql}
             LIMIT ? OFFSET ?
             """,
             (*params, safe_per_page, offset),
@@ -2935,7 +2949,7 @@ def maps_explore(
                 "updated_at": row["updated_at"],
                 "thumbnail": meta.get("thumbnail") or "/vite.svg",
             })
-        return {"items": items, "page": safe_page, "per_page": safe_per_page, "total": int(total or 0)}
+        return {"items": items, "page": safe_page, "per_page": safe_per_page, "total": int(total or 0), "sort": sort_key}
     finally:
         conn.close()
 
@@ -3011,7 +3025,7 @@ def users_list(
 
 
 @app.get("/users/{username}")
-def user_profile(username: str, q: Optional[str] = None, page: int = 1, per_page: int = 10):
+def user_profile(username: str, q: Optional[str] = None, page: int = 1, per_page: int = 10, sort: Optional[str] = "default"):
     uname = _normalize_hub_user(username)
     conn = _hub_db_conn()
     try:
@@ -3021,6 +3035,8 @@ def user_profile(username: str, q: Optional[str] = None, page: int = 1, per_page
         profile = _user_public_profile(conn, user)
         safe_page = max(1, int(page or 1))
         safe_per_page = max(1, min(int(per_page or 10), 30))
+        sort_key = _normalize_map_sort(sort)
+        order_sql = _map_sort_order_sql(sort_key)
         offset = (safe_page - 1) * safe_per_page
         query = str(q or "").strip().lower()
         where = "WHERE a.user_id = ? AND a.kind = 'map'"
@@ -3053,11 +3069,7 @@ def user_profile(username: str, q: Optional[str] = None, page: int = 1, per_page
                 GROUP BY artifact_id
             ) mv ON mv.artifact_id = a.id
             {where}
-            ORDER BY
-                a.featured DESC,
-                COALESCE(vv.votes_count, 0) DESC,
-                COALESCE(mv.views_count, 0) DESC,
-                a.updated_at DESC
+            ORDER BY {order_sql}
             LIMIT ? OFFSET ?
             """,
             (*params, safe_per_page, offset),
@@ -3074,15 +3086,15 @@ def user_profile(username: str, q: Optional[str] = None, page: int = 1, per_page
                 "updated_at": row["updated_at"],
                 "thumbnail": meta.get("thumbnail") or "/vite.svg",
             })
-        return {"profile": profile, "maps": maps, "page": safe_page, "per_page": safe_per_page, "total": int(total or 0)}
+        return {"profile": profile, "maps": maps, "page": safe_page, "per_page": safe_per_page, "total": int(total or 0), "sort": sort_key}
     finally:
         conn.close()
 
 
 @app.get("/user/{username}")
-def user_profile_by_prefix(username: str, q: Optional[str] = None, page: int = 1, per_page: int = 10):
+def user_profile_by_prefix(username: str, q: Optional[str] = None, page: int = 1, per_page: int = 10, sort: Optional[str] = "default"):
     """User profile accessible at /user/{username} (new canonical URL)."""
-    return user_profile(username=username, q=q, page=page, per_page=per_page)
+    return user_profile(username=username, q=q, page=page, per_page=per_page, sort=sort)
 
 
 @app.put("/draft/current")

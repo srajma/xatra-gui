@@ -20,6 +20,12 @@ const RESERVED_MAP_NAMES = new Set([
   'map', 'lib', 'css', 'user', 'hub', 'auth', 'registry', 'render', 'sync',
   'health', 'stop', 'search', 'docs', 'redoc', 'openapi.json', 'favicon.ico',
 ]);
+const MAP_SORT_OPTIONS = [
+  { value: 'default', label: 'Default' },
+  { value: 'votes', label: 'Votes' },
+  { value: 'views', label: 'Views' },
+  { value: 'recency', label: 'Recency' },
+];
 const FIXED_PY_IMPORTS = `import xatra
 from xatra.loaders import gadm, naturalearth, polygon, overpass
 from xatra.icon import Icon
@@ -136,9 +142,11 @@ function App() {
   const [passwordEdit, setPasswordEdit] = useState({ current_password: '', new_password: '' });
   const [profileSearch, setProfileSearch] = useState('');
   const [profilePage, setProfilePage] = useState(1);
+  const [profileSort, setProfileSort] = useState('default');
   const [exploreData, setExploreData] = useState({ items: [], page: 1, per_page: 12, total: 0 });
   const [exploreQuery, setExploreQuery] = useState('');
   const [explorePage, setExplorePage] = useState(1);
+  const [exploreSort, setExploreSort] = useState('default');
   const [usersData, setUsersData] = useState({ items: [], page: 1, per_page: 20, total: 0 });
   const [usersQuery, setUsersQuery] = useState('');
   const [usersPage, setUsersPage] = useState(1);
@@ -213,6 +221,7 @@ function App() {
   const [runtimeCode, setRuntimeCode] = useState('');
   const [hubQuery, setHubQuery] = useState('');
   const [hubSearchResults, setHubSearchResults] = useState([]);
+  const [importSort, setImportSort] = useState('default');
   const [importLayerSelection, setImportLayerSelection] = useState(() => (
     IMPORTABLE_LAYER_TYPES.reduce((acc, key) => ({ ...acc, [key]: true }), {})
   ));
@@ -730,7 +739,7 @@ ${DEFAULT_MAP_CODE}
     setImportLoading(true);
     setExploreQuery(hubQuery);
     try {
-      await loadExplore(1, hubQuery);
+      await loadExplore(1, hubQuery, importSort);
     } finally {
       setImportLoading(false);
     }
@@ -779,6 +788,12 @@ ${DEFAULT_MAP_CODE}
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [importModalOpen, hubSearchResults]);
+
+  useEffect(() => {
+    if (!importModalOpen) return;
+    searchHubRegistry();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [importSort]);
 
   useEffect(() => {
     if (!mapOwner || !route.map || !HUB_NAME_RE.test(route.map)) return;
@@ -989,10 +1004,10 @@ ${DEFAULT_MAP_CODE}
     return () => clearTimeout(t);
   }, [normalizedMapName, builderElements, builderOptions, runtimeBuilderElements, runtimeBuilderOptions, code, predefinedCode, importsCode, themeCode, runtimeCode, pickerOptions, currentUser.is_authenticated]);
 
-  const loadExplore = async (page = 1, query = exploreQuery) => {
+  const loadExplore = async (page = 1, query = exploreQuery, sort = exploreSort) => {
     setExploreLoading(true);
     try {
-      const params = new URLSearchParams({ page: String(page), per_page: '12', q: query || '' });
+      const params = new URLSearchParams({ page: String(page), per_page: '12', q: query || '', sort: sort || 'default' });
       const resp = await apiFetch(`/explore?${params.toString()}`);
       const data = await resp.json();
       if (!resp.ok) throw new Error(getApiErrorMessage(data, 'Failed to load explore'));
@@ -1005,11 +1020,11 @@ ${DEFAULT_MAP_CODE}
     }
   };
 
-  const loadProfile = async (username, page = 1, query = profileSearch) => {
+  const loadProfile = async (username, page = 1, query = profileSearch, sort = profileSort) => {
     if (!username) return;
     setProfileLoading(true);
     try {
-      const params = new URLSearchParams({ page: String(page), per_page: '12', q: query || '' });
+      const params = new URLSearchParams({ page: String(page), per_page: '12', q: query || '', sort: sort || 'default' });
       const resp = await apiFetch(`/users/${username}?${params.toString()}`);
       const data = await resp.json();
       if (!resp.ok) throw new Error(getApiErrorMessage(data, 'Failed to load profile'));
@@ -1205,8 +1220,8 @@ ${DEFAULT_MAP_CODE}
   };
 
   useEffect(() => {
-    if (route.page === 'explore') { loadExplore(explorePage, exploreQuery); loadUsers(usersPage, usersQuery); }
-    if (route.page === 'profile') loadProfile(route.username, profilePage, profileSearch);
+    if (route.page === 'explore') { loadExplore(explorePage, exploreQuery, exploreSort); loadUsers(usersPage, usersQuery); }
+    if (route.page === 'profile') loadProfile(route.username, profilePage, profileSearch, profileSort);
     // Reset editor init key when leaving editor so re-entry always reloads draft
     if (route.page !== 'editor') { editorInitKeyRef.current = ''; setMapFeatured(false); return; }
     if (route.page === 'editor' && route.map) {
@@ -1241,7 +1256,7 @@ ${DEFAULT_MAP_CODE}
       })();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [route.page, route.owner, route.map, route.version, route.newMap, authReady, currentUser.is_authenticated, normalizedHubUsername]);
+  }, [route.page, route.owner, route.map, route.version, route.newMap, authReady, currentUser.is_authenticated, normalizedHubUsername, exploreSort, profileSort]);
 
   useEffect(() => {
     if (route.page === 'explore' && currentUser.is_authenticated && authReady) {
@@ -3360,39 +3375,52 @@ window.addEventListener('message', function(e) {
     currentThemeVersionOptions.some((o) => o.value !== 'alpha')
   );
   const isAdminUser = !!currentUser?.user?.is_admin;
-  const sortMapsFeaturedFirst = (items) => (
+  const sortMapsByMode = (items, mode = 'default') => (
     [...(Array.isArray(items) ? items : [])].sort((a, b) => {
-      const af = a?.featured ? 1 : 0;
-      const bf = b?.featured ? 1 : 0;
-      if (bf !== af) return bf - af;
       const av = Number(a?.votes || 0);
       const bv = Number(b?.votes || 0);
-      if (bv !== av) return bv - av;
       const aviews = Number(a?.views || 0);
       const bviews = Number(b?.views || 0);
-      if (bviews !== aviews) return bviews - aviews;
       const at = String(a?.updated_at || '');
       const bt = String(b?.updated_at || '');
+      if (mode === 'default') {
+        const af = a?.featured ? 1 : 0;
+        const bf = b?.featured ? 1 : 0;
+        if (bf !== af) return bf - af;
+        if (bv !== av) return bv - av;
+        if (bviews !== aviews) return bviews - aviews;
+      } else if (mode === 'votes') {
+        if (bv !== av) return bv - av;
+        if (bviews !== aviews) return bviews - aviews;
+      } else if (mode === 'views') {
+        if (bviews !== aviews) return bviews - aviews;
+        if (bv !== av) return bv - av;
+      } else {
+        if (bt !== at) return bt.localeCompare(at);
+        if (bv !== av) return bv - av;
+        if (bviews !== aviews) return bviews - aviews;
+        return 0;
+      }
       return bt.localeCompare(at);
     })
   );
   const applyFeaturedUpdateLocal = (name, featured) => {
     setExploreData((prev) => ({
       ...prev,
-      items: sortMapsFeaturedFirst((prev.items || []).map((it) => (
+      items: sortMapsByMode((prev.items || []).map((it) => (
         it?.name === name ? { ...it, featured: !!featured } : it
-      ))),
+      )), exploreSort),
     }));
-    setHubSearchResults((prev) => sortMapsFeaturedFirst((prev || []).map((it) => (
+    setHubSearchResults((prev) => sortMapsByMode((prev || []).map((it) => (
       it?.name === name ? { ...it, featured: !!featured } : it
-    ))));
+    )), importSort));
     setProfileData((prev) => {
       if (!prev || !Array.isArray(prev.maps)) return prev;
       return {
         ...prev,
-        maps: sortMapsFeaturedFirst(prev.maps.map((it) => (
+        maps: sortMapsByMode(prev.maps.map((it) => (
           it?.name === name ? { ...it, featured: !!featured } : it
-        ))),
+        )), profileSort),
       };
     });
     if (route.page === 'editor' && route.map === name) setMapFeatured(!!featured);
@@ -4037,16 +4065,24 @@ window.addEventListener('message', function(e) {
             )}
             {exploreLoading && <div className={`mb-4 text-xs px-3 py-2 border rounded-lg ${isDarkMode ? 'bg-blue-900/20 text-blue-300 border-blue-700' : 'bg-blue-50 text-blue-700 border-blue-200'}`}>Loading maps…</div>}
             <div className="flex gap-2 mb-5">
-              <input value={exploreQuery} onChange={(e) => setExploreQuery(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { setExplorePage(1); loadExplore(1, exploreQuery); } }} placeholder='Search maps, e.g. "indica user:srajma"' className={`flex-1 rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300 ${isDarkMode ? 'bg-slate-800 border-slate-600 text-white placeholder-slate-500 focus:border-blue-400' : 'bg-white border-gray-300 focus:border-blue-400'}`} />
-              <button className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 transition-colors" onClick={() => { setExplorePage(1); loadExplore(1, exploreQuery); }}>Search</button>
+              <input value={exploreQuery} onChange={(e) => setExploreQuery(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { setExplorePage(1); loadExplore(1, exploreQuery, exploreSort); } }} placeholder='Search maps, e.g. "indica user:srajma"' className={`flex-1 rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300 ${isDarkMode ? 'bg-slate-800 border-slate-600 text-white placeholder-slate-500 focus:border-blue-400' : 'bg-white border-gray-300 focus:border-blue-400'}`} />
+              <select
+                value={exploreSort}
+                onChange={(e) => { const next = e.target.value; setExploreSort(next); setExplorePage(1); loadExplore(1, exploreQuery, next); }}
+                className={`rounded-lg border px-2 py-2 text-sm ${isDarkMode ? 'bg-slate-800 border-slate-600 text-white' : 'bg-white border-gray-300 text-gray-700'}`}
+                title="Sort maps"
+              >
+                {MAP_SORT_OPTIONS.map((opt) => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+              </select>
+              <button className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 transition-colors" onClick={() => { setExplorePage(1); loadExplore(1, exploreQuery, exploreSort); }}>Search</button>
             </div>
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
               {(exploreData.items || []).map((item) => renderExploreCatalogCard(item))}
             </div>
             <div className={`flex items-center gap-3 mt-5 ${isDarkMode ? 'text-slate-400' : 'text-gray-500'}`}>
-              <button disabled={explorePage <= 1} className={`px-3 py-1.5 rounded-lg border text-xs disabled:opacity-40 transition-colors ${isDarkMode ? 'border-slate-700 hover:bg-slate-800' : 'border-gray-300 hover:bg-gray-100'}`} onClick={() => { const p = Math.max(1, explorePage - 1); setExplorePage(p); loadExplore(p, exploreQuery); }}>← Prev</button>
+              <button disabled={explorePage <= 1} className={`px-3 py-1.5 rounded-lg border text-xs disabled:opacity-40 transition-colors ${isDarkMode ? 'border-slate-700 hover:bg-slate-800' : 'border-gray-300 hover:bg-gray-100'}`} onClick={() => { const p = Math.max(1, explorePage - 1); setExplorePage(p); loadExplore(p, exploreQuery, exploreSort); }}>← Prev</button>
               <span className="text-xs">Page {explorePage} / {totalPages}</span>
-              <button disabled={explorePage >= totalPages} className={`px-3 py-1.5 rounded-lg border text-xs disabled:opacity-40 transition-colors ${isDarkMode ? 'border-slate-700 hover:bg-slate-800' : 'border-gray-300 hover:bg-gray-100'}`} onClick={() => { const p = Math.min(totalPages, explorePage + 1); setExplorePage(p); loadExplore(p, exploreQuery); }}>Next →</button>
+              <button disabled={explorePage >= totalPages} className={`px-3 py-1.5 rounded-lg border text-xs disabled:opacity-40 transition-colors ${isDarkMode ? 'border-slate-700 hover:bg-slate-800' : 'border-gray-300 hover:bg-gray-100'}`} onClick={() => { const p = Math.min(totalPages, explorePage + 1); setExplorePage(p); loadExplore(p, exploreQuery, exploreSort); }}>Next →</button>
             </div>
           </div>
           {/* Users sidebar */}
@@ -4188,8 +4224,16 @@ window.addEventListener('message', function(e) {
           <div className="flex-1 overflow-y-auto px-6 py-5">
             {profileLoading && <div className={`mb-4 text-xs px-3 py-2 border rounded-lg ${isDarkMode ? 'bg-blue-900/20 text-blue-300 border-blue-700' : 'bg-blue-50 text-blue-700 border-blue-200'}`}>Loading maps…</div>}
             <div className="flex gap-2 mb-5">
-              <input value={profileSearch} onChange={(e) => setProfileSearch(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { setProfilePage(1); loadProfile(route.username, 1, profileSearch); } }} className={`flex-1 rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300 ${isDarkMode ? 'bg-slate-800 border-slate-600 text-white placeholder-slate-500 focus:border-blue-400' : 'bg-white border-gray-300 focus:border-blue-400'}`} placeholder="Search maps…" />
-              <button className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 transition-colors" onClick={() => { setProfilePage(1); loadProfile(route.username, 1, profileSearch); }}>Search</button>
+              <input value={profileSearch} onChange={(e) => setProfileSearch(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { setProfilePage(1); loadProfile(route.username, 1, profileSearch, profileSort); } }} className={`flex-1 rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-300 ${isDarkMode ? 'bg-slate-800 border-slate-600 text-white placeholder-slate-500 focus:border-blue-400' : 'bg-white border-gray-300 focus:border-blue-400'}`} placeholder="Search maps…" />
+              <select
+                value={profileSort}
+                onChange={(e) => { const next = e.target.value; setProfileSort(next); setProfilePage(1); loadProfile(route.username, 1, profileSearch, next); }}
+                className={`rounded-lg border px-2 py-2 text-sm ${isDarkMode ? 'bg-slate-800 border-slate-600 text-white' : 'bg-white border-gray-300 text-gray-700'}`}
+                title="Sort maps"
+              >
+                {MAP_SORT_OPTIONS.map((opt) => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+              </select>
+              <button className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 transition-colors" onClick={() => { setProfilePage(1); loadProfile(route.username, 1, profileSearch, profileSort); }}>Search</button>
             </div>
             {maps.length === 0 && !profileLoading && !isOwn && (
               <div className={`text-sm text-center py-12 ${isDarkMode ? 'text-slate-500' : 'text-gray-400'}`}>No maps yet.</div>
@@ -4257,9 +4301,9 @@ window.addEventListener('message', function(e) {
             </div>
             {totalPages > 1 && (
               <div className={`flex items-center gap-3 mt-6 ${isDarkMode ? 'text-slate-400' : 'text-gray-500'}`}>
-                <button disabled={profilePage <= 1} className={`px-3 py-1.5 rounded-lg border text-xs disabled:opacity-40 transition-colors ${isDarkMode ? 'border-slate-700 hover:bg-slate-800' : 'border-gray-300 hover:bg-gray-100'}`} onClick={() => { const p = Math.max(1, profilePage - 1); setProfilePage(p); loadProfile(route.username, p, profileSearch); }}>← Prev</button>
+                <button disabled={profilePage <= 1} className={`px-3 py-1.5 rounded-lg border text-xs disabled:opacity-40 transition-colors ${isDarkMode ? 'border-slate-700 hover:bg-slate-800' : 'border-gray-300 hover:bg-gray-100'}`} onClick={() => { const p = Math.max(1, profilePage - 1); setProfilePage(p); loadProfile(route.username, p, profileSearch, profileSort); }}>← Prev</button>
                 <span className="text-xs">Page {profilePage} / {totalPages}</span>
-                <button disabled={profilePage >= totalPages} className={`px-3 py-1.5 rounded-lg border text-xs disabled:opacity-40 transition-colors ${isDarkMode ? 'border-slate-700 hover:bg-slate-800' : 'border-gray-300 hover:bg-gray-100'}`} onClick={() => { const p = Math.min(totalPages, profilePage + 1); setProfilePage(p); loadProfile(route.username, p, profileSearch); }}>Next →</button>
+                <button disabled={profilePage >= totalPages} className={`px-3 py-1.5 rounded-lg border text-xs disabled:opacity-40 transition-colors ${isDarkMode ? 'border-slate-700 hover:bg-slate-800' : 'border-gray-300 hover:bg-gray-100'}`} onClick={() => { const p = Math.min(totalPages, profilePage + 1); setProfilePage(p); loadProfile(route.username, p, profileSearch, profileSort); }}>Next →</button>
               </div>
             )}
           </div>
@@ -4738,6 +4782,14 @@ window.addEventListener('message', function(e) {
                 placeholder='Search maps/themes/libs, e.g. "indica user:srajma"'
                 className="flex-1 border rounded p-2 text-sm"
               />
+              <select
+                value={importSort}
+                onChange={(e) => { const next = e.target.value; setImportSort(next); }}
+                className="border rounded p-2 text-sm"
+                title="Sort maps"
+              >
+                {MAP_SORT_OPTIONS.map((opt) => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
+              </select>
               <button className="px-3 py-2 border rounded" onClick={searchHubRegistry}>Search</button>
             </div>
             {importLoading && <div className="mx-3 mt-2 text-xs px-2 py-1 border rounded bg-blue-50 text-blue-700 border-blue-200">Loading maps...</div>}
