@@ -47,6 +47,9 @@ render_cache = OrderedDict()
 # Simple in-memory rate limiter (IP-keyed, sliding window)
 _rate_limit_store: Dict[str, List[float]] = defaultdict(list)
 _rate_limit_lock = threading.Lock()
+MAX_PY_INPUT_CHARS = 200_000
+MAX_PY_AST_NODES = 50_000
+MAX_PY_AST_DEPTH = 160
 
 def _check_rate_limit(
     key: str,
@@ -75,6 +78,32 @@ def _check_rate_limit(
                 headers={"Retry-After": str(retry_after)},
             )
         timestamps.append(now)
+
+
+def _enforce_python_input_limits(code: str, label: str) -> None:
+    text = str(code or "")
+    if len(text) > MAX_PY_INPUT_CHARS:
+        raise HTTPException(status_code=413, detail=f"{label} too large")
+    if not text.strip():
+        return
+    try:
+        tree = ast.parse(text)
+    except Exception:
+        return
+    node_count = 0
+    max_depth = 0
+    stack: List[Tuple[ast.AST, int]] = [(tree, 1)]
+    while stack:
+        node, depth = stack.pop()
+        node_count += 1
+        if depth > max_depth:
+            max_depth = depth
+        if node_count > MAX_PY_AST_NODES:
+            raise HTTPException(status_code=413, detail=f"{label} too complex (too many AST nodes)")
+        if max_depth > MAX_PY_AST_DEPTH:
+            raise HTTPException(status_code=413, detail=f"{label} too complex (AST depth limit exceeded)")
+        for child in ast.iter_child_nodes(node):
+            stack.append((child, depth + 1))
 
 # Lock protecting GADM index globals against concurrent mutation from background thread
 _gadm_lock = threading.Lock()
@@ -229,6 +258,19 @@ def _sanitize_artifact_metadata(kind: str, metadata: Any) -> Dict[str, Any]:
         cleaned.pop("description", None)
     return cleaned
 
+def _is_user_trusted(user_row: Optional[sqlite3.Row]) -> bool:
+    if user_row is None:
+        return False
+    try:
+        if int(user_row["is_admin"] or 0) == 1:
+            return True
+    except Exception:
+        pass
+    try:
+        return int(user_row["is_trusted"] or 0) == 1
+    except Exception:
+        return False
+
 
 def _hash_password(password: str) -> str:
     salt = secrets.token_hex(16)
@@ -286,6 +328,7 @@ def _init_hub_db():
                 password_hash TEXT,
                 full_name TEXT NOT NULL DEFAULT '',
                 bio TEXT NOT NULL DEFAULT '',
+                is_trusted INTEGER NOT NULL DEFAULT 0,
                 is_admin INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL
             );
@@ -370,6 +413,8 @@ def _init_hub_db():
             conn.execute("ALTER TABLE hub_users ADD COLUMN bio TEXT NOT NULL DEFAULT ''")
         if "is_admin" not in existing_cols:
             conn.execute("ALTER TABLE hub_users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0")
+        if "is_trusted" not in existing_cols:
+            conn.execute("ALTER TABLE hub_users ADD COLUMN is_trusted INTEGER NOT NULL DEFAULT 0")
 
         # Ensure default admin account exists.
         now = _utc_now_iso()
@@ -380,6 +425,10 @@ def _init_hub_db():
             VALUES(?, ?, ?, ?, ?, ?)
             """,
             (ADMIN_USERNAME, _hash_password(admin_password), ADMIN_USERNAME, "", 1, now),
+        )
+        conn.execute(
+            "UPDATE hub_users SET is_trusted = 1 WHERE username = ?",
+            (ADMIN_USERNAME,),
         )
         if result.rowcount > 0:
             print(f"[xatra] Admin account '{ADMIN_USERNAME}' created. Password: {admin_password}")
@@ -1028,6 +1077,7 @@ class CodeRequest(BaseModel):
     imports_code: Optional[str] = None
     theme_code: Optional[str] = None
     runtime_code: Optional[str] = None
+    trusted_user: bool = False
 
 class CodeSyncRequest(BaseModel):
     code: str
@@ -1048,6 +1098,7 @@ class BuilderRequest(BaseModel):
     runtime_code: Optional[str] = None
     runtime_elements: Optional[List[MapElement]] = None
     runtime_options: Optional[Dict[str, Any]] = None
+    trusted_user: bool = False
 
 class PickerEntry(BaseModel):
     country: str
@@ -1107,6 +1158,9 @@ class PasswordUpdateRequest(BaseModel):
     current_password: str
     new_password: str
 
+class UserTrustUpdateRequest(BaseModel):
+    trusted: bool
+
 
 def _hub_kind_label(kind: str) -> str:
     if kind == "map":
@@ -1114,6 +1168,18 @@ def _hub_kind_label(kind: str) -> str:
     if kind == "lib":
         return "lib"
     return "css"
+
+
+def _require_admin_user(conn: sqlite3.Connection, request: Request) -> sqlite3.Row:
+    user = _request_user(conn, request)
+    if user is None:
+        raise HTTPException(status_code=401, detail="Login required")
+    try:
+        if int(user["is_admin"] or 0) != 1:
+            raise HTTPException(status_code=403, detail="Admin required")
+    except Exception:
+        raise HTTPException(status_code=403, detail="Admin required")
+    return user
 
 
 def _hub_artifact_response(conn: sqlite3.Connection, artifact: sqlite3.Row, request: Optional[Request] = None) -> Dict[str, Any]:
@@ -1198,6 +1264,8 @@ def _user_public_profile(conn: sqlite3.Connection, user_row: sqlite3.Row) -> Dic
         "username": user_row["username"],
         "full_name": user_row["full_name"] if "full_name" in user_row.keys() else "",
         "bio": user_row["bio"] if "bio" in user_row.keys() else "",
+        "is_admin": bool(int(user_row["is_admin"] or 0)) if "is_admin" in user_row.keys() else False,
+        "is_trusted": _is_user_trusted(user_row),
         "maps_count": int(maps_count or 0),
         "views_count": int(views_count or 0),
         "created_at": user_row["created_at"],
@@ -1550,6 +1618,8 @@ def _parse_territory_expr(node: ast.AST) -> List[Dict[str, Any]]:
 
 @app.post("/sync/code_to_builder")
 def sync_code_to_builder(request: CodeSyncRequest):
+    _enforce_python_input_limits(request.code or "", "code")
+    _enforce_python_input_limits(request.predefined_code or "", "predefined_code")
     try:
         tree = ast.parse(request.code or "")
     except Exception as e:
@@ -2527,14 +2597,18 @@ def auth_me(request: Request, response: Response):
                     "username": GUEST_USERNAME,
                     "full_name": "",
                     "bio": "",
+                    "is_admin": False,
                     "maps_count": 0,
                     "views_count": 0,
+                    "is_trusted": False,
                 },
                 "guest_id": guest_id,
             }
+        profile = _user_public_profile(conn, user)
+        profile["is_trusted"] = _is_user_trusted(user)
         return {
             "is_authenticated": True,
-            "user": _user_public_profile(conn, user),
+            "user": profile,
             "guest_id": guest_id,
         }
     finally:
@@ -2588,6 +2662,29 @@ def auth_update_password(request: Request, payload: PasswordUpdateRequest):
         conn.execute("UPDATE hub_users SET password_hash = ? WHERE id = ?", (_hash_password(payload.new_password), user["id"]))
         conn.commit()
         return {"ok": True}
+    finally:
+        conn.close()
+
+
+@app.put("/auth/users/{username}/trusted")
+def auth_set_user_trusted(username: str, payload: UserTrustUpdateRequest, request: Request):
+    conn = _hub_db_conn()
+    try:
+        _require_admin_user(conn, request)
+        target = _normalize_hub_user(username)
+        row = conn.execute("SELECT * FROM hub_users WHERE username = ?", (target,)).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="User not found")
+        trusted = bool(payload.trusted)
+        if int(row["is_admin"] or 0) == 1:
+            trusted = True
+        conn.execute(
+            "UPDATE hub_users SET is_trusted = ? WHERE id = ?",
+            (1 if trusted else 0, row["id"]),
+        )
+        conn.commit()
+        updated = conn.execute("SELECT * FROM hub_users WHERE id = ?", (row["id"],)).fetchone()
+        return {"ok": True, "user": _user_public_profile(conn, updated)}
     finally:
         conn.close()
 
@@ -2824,6 +2921,8 @@ def users_list(
                 u.username,
                 u.full_name,
                 u.bio,
+                u.is_admin,
+                u.is_trusted,
                 u.created_at,
                 COALESCE(mc.maps_count, 0) AS maps_count,
                 COALESCE(vc.views_count, 0) AS views_count
@@ -2851,6 +2950,8 @@ def users_list(
             "username": row["username"],
             "full_name": row["full_name"] or "",
             "bio": row["bio"] or "",
+            "is_admin": bool(int(row["is_admin"] or 0)),
+            "is_trusted": bool(int(row["is_trusted"] or 0)) or bool(int(row["is_admin"] or 0)),
             "maps_count": int(row["maps_count"] or 0),
             "views_count": int(row["views_count"] or 0),
             "created_at": row["created_at"],
@@ -3693,6 +3794,46 @@ def _parse_imports_code_calls(imports_code: str) -> List[Dict[str, Any]]:
         })
     return out
 
+
+def _strip_python_wrappers(value: Any) -> Any:
+    if isinstance(value, dict):
+        if len(value) == 1 and isinstance(value.get(PYTHON_EXPR_KEY), str):
+            return str(value.get(PYTHON_EXPR_KEY) or "")
+        return {k: _strip_python_wrappers(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_strip_python_wrappers(v) for v in value]
+    return value
+
+
+def _sanitize_untrusted_builder_payload(elements: Any, options: Any) -> Tuple[List[Any], Dict[str, Any]]:
+    safe_elements: List[Any] = []
+    if isinstance(elements, list):
+        for item in elements:
+            if isinstance(item, dict):
+                item_type = str(item.get("type", "")).strip().lower()
+                if item_type == "python":
+                    continue
+                copied = dict(item)
+                copied["value"] = _strip_python_wrappers(copied.get("value"))
+                copied["args"] = _strip_python_wrappers(copied.get("args") if isinstance(copied.get("args"), dict) else {})
+                copied["label"] = _strip_python_wrappers(copied.get("label"))
+                safe_elements.append(copied)
+            else:
+                item_type = str(getattr(item, "type", "")).strip().lower()
+                if item_type == "python":
+                    continue
+                copied = {
+                    "type": getattr(item, "type", ""),
+                    "label": _strip_python_wrappers(getattr(item, "label", None)),
+                    "value": _strip_python_wrappers(getattr(item, "value", None)),
+                    "args": _strip_python_wrappers(getattr(item, "args", {}) if isinstance(getattr(item, "args", {}), dict) else {}),
+                }
+                safe_elements.append(copied)
+    safe_options = _strip_python_wrappers(options if isinstance(options, dict) else {})
+    if not isinstance(safe_options, dict):
+        safe_options = {}
+    return safe_elements, safe_options
+
 def run_rendering_task(task_type, data, result_queue):
     music_temp_files: List[str] = []
 
@@ -4176,6 +4317,7 @@ def run_rendering_task(task_type, data, result_queue):
         xatra.new_map()
         m = xatra.get_current_map()
         effective_task_type = task_type
+        trusted_user = bool(getattr(data, "trusted_user", False))
 
         if task_type == "code":
             imports_code = getattr(data, "imports_code", "") or ""
@@ -4193,6 +4335,7 @@ def run_rendering_task(task_type, data, result_queue):
                 runtime_code="",
                 runtime_elements=runtime_payload.get("elements", []),
                 runtime_options=runtime_payload.get("options", {}),
+                trusted_user=trusted_user,
             )
             effective_task_type = "builder"
         
@@ -4259,6 +4402,19 @@ def run_rendering_task(task_type, data, result_queue):
                             continue
                 
         elif effective_task_type == 'builder':
+            if not trusted_user:
+                safe_main_elements, safe_main_options = _sanitize_untrusted_builder_payload(
+                    getattr(data, "elements", []),
+                    getattr(data, "options", {}),
+                )
+                safe_runtime_elements, safe_runtime_options = _sanitize_untrusted_builder_payload(
+                    getattr(data, "runtime_elements", []),
+                    getattr(data, "runtime_options", {}),
+                )
+                setattr(data, "elements", safe_main_elements)
+                setattr(data, "options", safe_main_options)
+                setattr(data, "runtime_elements", safe_runtime_elements)
+                setattr(data, "runtime_options", safe_runtime_options)
             # Apply options
             if "basemaps" in data.options:
                 for bm in data.options["basemaps"]:
@@ -4843,6 +4999,7 @@ def render_picker(request: PickerRequest, http_request: Request):
 
 @app.post("/render/territory-library")
 def render_territory_library(request: TerritoryLibraryRequest, http_request: Request):
+    _enforce_python_input_limits(request.predefined_code or "", "predefined_code")
     actor_key, rate_key = _request_actor_key(http_request)
     _enforce_render_rate_limit("territory_library", rate_key)
     result = run_in_process('territory_library', request, actor_key)
@@ -4852,6 +5009,16 @@ def render_territory_library(request: TerritoryLibraryRequest, http_request: Req
 
 @app.post("/render/code")
 def render_code(request: CodeRequest, http_request: Request):
+    _enforce_python_input_limits(request.code or "", "code")
+    _enforce_python_input_limits(request.predefined_code or "", "predefined_code")
+    _enforce_python_input_limits(request.imports_code or "", "imports_code")
+    _enforce_python_input_limits(request.theme_code or "", "theme_code")
+    _enforce_python_input_limits(request.runtime_code or "", "runtime_code")
+    conn = _hub_db_conn()
+    try:
+        request.trusted_user = _is_user_trusted(_request_user(conn, http_request))
+    finally:
+        conn.close()
     actor_key, rate_key = _request_actor_key(http_request)
     _enforce_render_rate_limit("code", rate_key)
     result = run_in_process('code', request, actor_key)
@@ -4861,6 +5028,15 @@ def render_code(request: CodeRequest, http_request: Request):
 
 @app.post("/render/builder")
 def render_builder(request: BuilderRequest, http_request: Request):
+    _enforce_python_input_limits(request.predefined_code or "", "predefined_code")
+    _enforce_python_input_limits(request.imports_code or "", "imports_code")
+    _enforce_python_input_limits(request.theme_code or "", "theme_code")
+    _enforce_python_input_limits(request.runtime_code or "", "runtime_code")
+    conn = _hub_db_conn()
+    try:
+        request.trusted_user = _is_user_trusted(_request_user(conn, http_request))
+    finally:
+        conn.close()
     actor_key, rate_key = _request_actor_key(http_request)
     _enforce_render_rate_limit("builder", rate_key)
     result = run_in_process('builder', request, actor_key)

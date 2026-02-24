@@ -9,6 +9,7 @@ const Builder = ({
   onSaveTerritory, predefinedCode, onStartReferencePick, addLayerSignal, onConsumeAddLayerSignal,
   hubImports, onOpenImportModal, onRemoveHubImport, getImportVersionOptions, onSwitchHubImportVersion,
   runtimeElements = [], runtimeSetElements = null, runtimeOptions = {}, runtimeSetOptions = null,
+  trustedUser = false,
   readOnly = false,
 }) => {
   const layersEndRef = useRef(null);
@@ -272,6 +273,7 @@ const Builder = ({
               predefinedCode={predefinedCode}
               onStartReferencePick={onStartReferencePick}
               hubImports={hubImports}
+              trustedUser={trustedUser}
             />
           ))}
           
@@ -310,9 +312,11 @@ const Builder = ({
              <button data-kind="music" onClick={() => addElement('music', { focusFirstField: true })} className="xatra-add-layer-btn flex flex-col items-center justify-center p-2 bg-pink-50 text-pink-700 rounded hover:bg-pink-100 text-[10px] gap-1 border border-pink-100">
                <Music size={14}/> Music
              </button>
-             <button data-kind="python" onClick={() => addElement('python', { focusFirstField: true })} className="xatra-add-layer-btn flex flex-col items-center justify-center p-2 bg-amber-50 text-amber-700 rounded hover:bg-amber-100 text-[10px] gap-1 border border-amber-100">
-               <Code2 size={14}/> Python
-             </button>
+             {trustedUser && (
+               <button data-kind="python" onClick={() => addElement('python', { focusFirstField: true })} className="xatra-add-layer-btn flex flex-col items-center justify-center p-2 bg-amber-50 text-amber-700 rounded hover:bg-amber-100 text-[10px] gap-1 border border-amber-100">
+                 <Code2 size={14}/> Python
+               </button>
+             )}
           </div>
         </div>
       </section>
@@ -350,6 +354,7 @@ const Builder = ({
                   predefinedCode={predefinedCode}
                   onStartReferencePick={onStartReferencePick}
                   hubImports={hubImports}
+                  trustedUser={trustedUser}
                 />
               ))}
               {(runtimeElements || []).length === 0 && (
@@ -367,7 +372,9 @@ const Builder = ({
                 <button onClick={() => addRuntimeElement('dataframe')} className="xatra-add-layer-btn flex flex-col items-center justify-center p-2 bg-green-50 text-green-700 rounded hover:bg-green-100 text-[10px] gap-1 border border-green-100"><Table size={14}/> Data</button>
                 <button onClick={() => addRuntimeElement('titlebox')} className="xatra-add-layer-btn flex flex-col items-center justify-center p-2 bg-fuchsia-50 text-fuchsia-700 rounded hover:bg-fuchsia-100 text-[10px] gap-1 border border-fuchsia-100"><Heading size={14}/> TitleBox</button>
                 <button onClick={() => addRuntimeElement('music')} className="xatra-add-layer-btn flex flex-col items-center justify-center p-2 bg-pink-50 text-pink-700 rounded hover:bg-pink-100 text-[10px] gap-1 border border-pink-100"><Music size={14}/> Music</button>
-                <button onClick={() => addRuntimeElement('python')} className="xatra-add-layer-btn flex flex-col items-center justify-center p-2 bg-amber-50 text-amber-700 rounded hover:bg-amber-100 text-[10px] gap-1 border border-amber-100"><Code2 size={14}/> Python</button>
+                {trustedUser && (
+                  <button onClick={() => addRuntimeElement('python')} className="xatra-add-layer-btn flex flex-col items-center justify-center p-2 bg-amber-50 text-amber-700 rounded hover:bg-amber-100 text-[10px] gap-1 border border-amber-100"><Code2 size={14}/> Python</button>
+                )}
               </div>
             </div>
           </section>

@@ -129,7 +129,7 @@ function App() {
   const [statusNotice, setStatusNotice] = useState('');
   const [authMode, setAuthMode] = useState('login');
   const [authForm, setAuthForm] = useState({ username: '', password: '', full_name: '' });
-  const [currentUser, setCurrentUser] = useState({ is_authenticated: false, user: { username: 'guest', full_name: '', bio: '' } });
+  const [currentUser, setCurrentUser] = useState({ is_authenticated: false, user: { username: 'guest', full_name: '', bio: '', is_trusted: false } });
   const [authReady, setAuthReady] = useState(false);
   const [profileData, setProfileData] = useState(null);
   const [profileEdit, setProfileEdit] = useState({ full_name: '', bio: '' });
@@ -1044,6 +1044,28 @@ ${DEFAULT_MAP_CODE}
       setError(err.message);
     } finally {
       setUsersLoading(false);
+    }
+  };
+
+  const setUserTrusted = async (username, trusted) => {
+    try {
+      const resp = await apiFetch(`/auth/users/${encodeURIComponent(username)}/trusted`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ trusted: !!trusted }),
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(getApiErrorMessage(data, 'Failed to update trust'));
+      setUsersData((prev) => ({
+        ...prev,
+        items: (prev.items || []).map((u) => (
+          u.username === username
+            ? { ...u, is_trusted: !!data?.user?.is_trusted, is_admin: !!data?.user?.is_admin }
+            : u
+        )),
+      }));
+    } catch (err) {
+      setError(err.message || 'Failed to update trust');
     }
   };
 
@@ -3896,11 +3918,24 @@ window.addEventListener('message', function(e) {
             </div>
             <div className="space-y-1.5">
               {(usersData.items || []).map((u) => (
-                <a key={u.username} href={`/user/${u.username}`} className={`block rounded-lg border px-3 py-2 hover:shadow-sm transition-shadow ${isDarkMode ? 'bg-slate-800 border-slate-700 hover:border-slate-600' : 'bg-gray-50 border-gray-200 hover:border-gray-300 hover:bg-white'}`}>
-                  <div className={`font-mono text-xs font-medium ${isDarkMode ? 'text-blue-400' : 'text-blue-700'}`}>{u.username}</div>
+                <div key={u.username} className={`rounded-lg border px-3 py-2 transition-shadow ${isDarkMode ? 'bg-slate-800 border-slate-700 hover:border-slate-600' : 'bg-gray-50 border-gray-200 hover:border-gray-300 hover:bg-white'}`}>
+                  <div className="flex items-start justify-between gap-2">
+                    <a href={`/user/${u.username}`} className={`font-mono text-xs font-medium hover:underline ${isDarkMode ? 'text-blue-400' : 'text-blue-700'}`}>{u.username}</a>
+                    {currentUser?.user?.is_admin && (
+                      <button
+                        type="button"
+                        disabled={!!u.is_admin}
+                        onClick={() => setUserTrusted(u.username, !u.is_trusted)}
+                        className={`px-1.5 py-0.5 rounded border text-[10px] disabled:opacity-40 ${isDarkMode ? 'border-slate-600 hover:bg-slate-700' : 'border-gray-300 hover:bg-gray-100'}`}
+                        title={u.is_admin ? 'Admin users are always trusted' : (u.is_trusted ? 'Mark untrusted' : 'Mark trusted')}
+                      >
+                        {u.is_admin ? 'Admin' : (u.is_trusted ? 'Trusted' : 'Untrusted')}
+                      </button>
+                    )}
+                  </div>
                   {u.full_name && <div className={`text-[11px] mt-0.5 truncate ${isDarkMode ? 'text-slate-300' : 'text-gray-600'}`}>{u.full_name}</div>}
                   <div className={`text-[10px] mt-1 ${isDarkMode ? 'text-slate-500' : 'text-gray-400'}`}>{u.maps_count || 0} maps</div>
-                </a>
+                </div>
               ))}
             </div>
             {usersTotalPages > 1 && (
@@ -4212,6 +4247,7 @@ window.addEventListener('message', function(e) {
               runtimeSetElements={setRuntimeBuilderElements}
               runtimeOptions={runtimeBuilderOptions}
               runtimeSetOptions={setRuntimeBuilderOptions}
+              trustedUser={!!currentUser?.user?.is_trusted}
               readOnly={isReadOnlyMap}
             />
           ) : (

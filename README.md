@@ -492,8 +492,8 @@ For eventually publishing this as a website
 - [ ] Efficiency and scalability concerns [for now, just answer in words, don't implement anything]
   - Can this website handle, idk, approx 1000 users making maps? How can we estimate the resources etc. that will cost and the servers we will need? (I'm totally new to this, I have no idea if this makes sense).
   - Is it inefficient that for every change the user makes to the map, it has to be re-rendered from ground up by xatra? Are there better solutions? Do note that the maps can get pretty long (e.g. maps of global territorial evolution over history, etc.)
-  - Does all the rendering and everything really need to be handled server-side? Or could all the heavy lifting be done client-side?
-- [ ] Admin can "featured" maps, making them appear on top
+  - Does all the rendering and everything really need to be handled server-side? Or could all the heavy lifting be done client-side? Is this possible with our current set-up (which uses Python) or would we have to port the whole xatra library to javascript?
+- [ ] Admin can "feature" maps, making them appear on top
 - [ ] Collaborative editing/Github integration
 - [ ] AI agent that makes maps for you --- only for paid users [have to think about exactly how to implement this]
 

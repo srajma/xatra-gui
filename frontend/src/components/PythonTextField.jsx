@@ -5,6 +5,7 @@ import { isPythonValue, toPythonValue, getPythonExpr, toTextValue } from '../uti
 const PythonTextField = ({
   value,
   onChange,
+  allowPython = true,
   multiline = false,
   className = '',
   inputClassName = '',
@@ -28,6 +29,7 @@ const PythonTextField = ({
   }, [shownValue, autoGrow, multiline]);
 
   const handleToggle = () => {
+    if (!allowPython) return;
     if (pythonMode) {
       onChange(getPythonExpr(value));
       return;
@@ -48,8 +50,8 @@ const PythonTextField = ({
       e.currentTarget.style.height = 'auto';
       e.currentTarget.style.height = `${Math.max(e.currentTarget.scrollHeight, 34)}px`;
     },
-    placeholder: pythonMode ? 'Python expression' : placeholder,
-    className: `${inputClassName} pr-8 ${pythonMode ? 'border-amber-400 bg-amber-50 font-mono' : ''}`.trim(),
+      placeholder: (allowPython && pythonMode) ? 'Python expression' : placeholder,
+      className: `${inputClassName} ${(allowPython && pythonMode) ? 'pr-8 border-amber-400 bg-amber-50 font-mono' : ''}`.trim(),
   };
 
   return (
@@ -59,14 +61,16 @@ const PythonTextField = ({
       ) : (
         <input type={type} {...commonProps} />
       )}
-      <button
-        type="button"
-        onClick={handleToggle}
-        className={`absolute right-1 top-1/2 -translate-y-1/2 p-1 rounded transition-colors ${pythonMode ? 'text-amber-700 bg-amber-100 hover:bg-amber-200' : 'text-gray-400 hover:text-gray-700 hover:bg-gray-100'}`}
-        title={title || (pythonMode ? 'Python mode ON (click to switch to text)' : 'Use Python expression')}
-      >
-        <Code2 size={12} />
-      </button>
+      {allowPython && (
+        <button
+          type="button"
+          onClick={handleToggle}
+          className={`absolute right-1 top-1/2 -translate-y-1/2 p-1 rounded transition-colors ${pythonMode ? 'text-amber-700 bg-amber-100 hover:bg-amber-200' : 'text-gray-400 hover:text-gray-700 hover:bg-gray-100'}`}
+          title={title || (pythonMode ? 'Python mode ON (click to switch to text)' : 'Use Python expression')}
+        >
+          <Code2 size={12} />
+        </button>
+      )}
     </div>
   );
 };
