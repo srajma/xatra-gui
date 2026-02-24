@@ -439,6 +439,7 @@ U (+): Territory: indic.LEVANT
 - [x] In the search/autocompletes for GADMs and territories, pressing comma should do exactly the same thing as pressing Enter.
 - [x] When map code length is very small and custom territory library size is very large, use the latter instead for the thumbnail
 - [x] Remove xatra.territory_library from the Territory library preview tab, and make sure the default one showed/loaded is one of the imports rather than "Custom Library" (which is often empty)
+- [ ] Uploading icons
 
 Development difficulties
 - [x] keeping synchrony between things---this should be documented, i.e. "if you change this, then change this too"
@@ -555,6 +556,7 @@ For eventually publishing this as a website
 
 
 - [x] Admin can "feature" maps, making them appear on top
+- [ ] Migrate to Google OAuth instead of using our own accounts system
 - [ ] Collaborative editing/Github integration
 - [ ] AI agent that makes maps for you --- only for paid users [have to think about exactly how to implement this]
 

@@ -30,6 +30,7 @@ sys.path.append(str(Path(__file__).parent.parent / "src"))
 
 from fastapi import FastAPI, HTTPException, Body, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from typing import List, Optional, Any, Dict, Union, Tuple
 
@@ -2142,6 +2143,18 @@ def list_bootstrap_icons(q: str = "", offset: int = 0, limit: int = 80, version:
         "version": version,
     }
 
+
+
+@app.get("/icons/file/{filename}")
+def icon_file(filename: str):
+    """Serve a built-in icon asset for UI previews."""
+    icons_dir = Path(xatra.__file__).parent / "icons"
+    safe_name = Path(filename).name
+    target = (icons_dir / safe_name)
+    if not icons_dir.exists() or not target.exists() or not target.is_file():
+        raise HTTPException(status_code=404, detail="Icon not found")
+    return FileResponse(str(target))
+
 @app.get("/territory_library/names")
 def territory_library_names():
     """Return public names from xatra.territory_library for autocomplete in Territory library."""
@@ -4044,6 +4057,15 @@ def _strip_python_wrappers(value: Any) -> Any:
     return value
 
 
+def _sanitize_untrusted_point_icon(icon: Any) -> Any:
+    """Disallow URL/custom icons in untrusted builder payloads."""
+    if isinstance(icon, dict):
+        icon_type = str(icon.get("type", "")).strip().lower()
+        if icon_type == "url" or "icon_url" in icon or "iconUrl" in icon:
+            return None
+    return icon
+
+
 def _sanitize_untrusted_builder_payload(elements: Any, options: Any) -> Tuple[List[Any], Dict[str, Any]]:
     safe_elements: List[Any] = []
     if isinstance(elements, list):
@@ -4055,6 +4077,8 @@ def _sanitize_untrusted_builder_payload(elements: Any, options: Any) -> Tuple[Li
                 copied = dict(item)
                 copied["value"] = _strip_python_wrappers(copied.get("value"))
                 copied["args"] = _strip_python_wrappers(copied.get("args") if isinstance(copied.get("args"), dict) else {})
+                if isinstance(copied.get("args"), dict) and item_type == "point":
+                    copied["args"]["icon"] = _sanitize_untrusted_point_icon(copied["args"].get("icon"))
                 copied["label"] = _strip_python_wrappers(copied.get("label"))
                 safe_elements.append(copied)
             else:
@@ -4067,6 +4091,8 @@ def _sanitize_untrusted_builder_payload(elements: Any, options: Any) -> Tuple[Li
                     "value": _strip_python_wrappers(getattr(item, "value", None)),
                     "args": _strip_python_wrappers(getattr(item, "args", {}) if isinstance(getattr(item, "args", {}), dict) else {}),
                 }
+                if isinstance(copied.get("args"), dict) and item_type == "point":
+                    copied["args"]["icon"] = _sanitize_untrusted_point_icon(copied["args"].get("icon"))
                 safe_elements.append(copied)
     safe_options = _strip_python_wrappers(options if isinstance(options, dict) else {})
     if not isinstance(safe_options, dict):
