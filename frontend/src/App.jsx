@@ -102,8 +102,8 @@ function App() {
   const [mapPayload, setMapPayload] = useState(null);
   const [pickerHtml, setPickerHtml] = useState('');
   const [territoryLibraryHtml, setTerritoryLibraryHtml] = useState('');
-  const [territoryLibrarySource, setTerritoryLibrarySource] = useState('builtin'); // builtin | custom
-  const [activeLibraryTab, setActiveLibraryTab] = useState('builtin');
+  const [territoryLibrarySource, setTerritoryLibrarySource] = useState('custom'); // custom | hub
+  const [activeLibraryTab, setActiveLibraryTab] = useState('custom');
   const [territoryLibraryNames, setTerritoryLibraryNames] = useState([]);
   const [selectedTerritoryNames, setSelectedTerritoryNames] = useState([]);
   const [territorySearchTerm, setTerritorySearchTerm] = useState('');
@@ -3236,34 +3236,6 @@ window.addEventListener('message', function(e) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mapHtml, editorContextReady]);
 
-  useEffect(() => {
-    if (!editorContextReady) return;
-    if (didPrefetchTerritoryRef.current || !mapHtml) return;
-    didPrefetchTerritoryRef.current = true;
-    (async () => {
-      await loadTerritoryLibraryCatalog('builtin');
-      await renderTerritoryLibrary('builtin', { background: true, useDefaultSelection: true, showLoading: true });
-    })();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mapHtml, editorContextReady]);
-
-  useEffect(() => {
-    if (activePreviewTab !== 'library') return;
-    const exists = libraryTabs.some((t) => t.id === activeLibraryTab);
-    if (!exists) {
-      setActiveLibraryTab('builtin');
-      return;
-    }
-    const tab = libraryTabs.find((t) => t.id === activeLibraryTab) || libraryTabs[0];
-    const src = tab?.source || 'builtin';
-    setTerritoryLibrarySource(src);
-    loadTerritoryLibraryCatalog(src, tab?.hub_path);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activePreviewTab, activeLibraryTab, predefinedCode, hubImports]);
-
-  const filteredTerritoryNames = territoryLibraryNames.filter((name) => (
-    !territorySearchTerm.trim() || name.toLowerCase().includes(territorySearchTerm.trim().toLowerCase())
-  ));
   const importedLibraryTabs = (hubImports || [])
     .filter((imp) => imp.kind === 'lib')
     .map((imp) => ({
@@ -3274,10 +3246,44 @@ window.addEventListener('message', function(e) {
       alias: imp.alias || imp.name,
     }));
   const libraryTabs = [
-    { id: 'builtin', label: 'xatra.territory_library', source: 'builtin' },
-    { id: 'custom', label: 'Custom Library', source: 'custom' },
     ...importedLibraryTabs,
+    { id: 'custom', label: 'Custom Library', source: 'custom' },
   ];
+  const preferredLibraryTabId = importedLibraryTabs[0]?.id || 'custom';
+  useEffect(() => {
+    if (!editorContextReady) return;
+    if (didPrefetchTerritoryRef.current || !mapHtml) return;
+    didPrefetchTerritoryRef.current = true;
+    (async () => {
+      const tab = importedLibraryTabs[0] || { source: 'custom', hub_path: null };
+      const src = tab.source || 'custom';
+      await loadTerritoryLibraryCatalog(src, tab.hub_path);
+      await renderTerritoryLibrary(src, { background: true, useDefaultSelection: true, showLoading: true, hubPath: tab.hub_path || null });
+    })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mapHtml, editorContextReady, hubImports]);
+
+  useEffect(() => {
+    if (activePreviewTab !== 'library') return;
+    const exists = libraryTabs.some((t) => t.id === activeLibraryTab);
+    if (!exists) {
+      setActiveLibraryTab(preferredLibraryTabId);
+      return;
+    }
+    if (importedLibraryTabs.length > 0 && activeLibraryTab === 'custom') {
+      setActiveLibraryTab(preferredLibraryTabId);
+      return;
+    }
+    const tab = libraryTabs.find((t) => t.id === activeLibraryTab) || libraryTabs[0];
+    const src = tab?.source || 'custom';
+    setTerritoryLibrarySource(src);
+    loadTerritoryLibraryCatalog(src, tab?.hub_path);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activePreviewTab, activeLibraryTab, predefinedCode, hubImports, preferredLibraryTabId]);
+
+  const filteredTerritoryNames = territoryLibraryNames.filter((name) => (
+    !territorySearchTerm.trim() || name.toLowerCase().includes(territorySearchTerm.trim().toLowerCase())
+  ));
   const activeLibraryConfig = libraryTabs.find((t) => t.id === activeLibraryTab) || libraryTabs[0];
   // Keep a ref so the message handler closure always has the latest value
   const activeLibraryConfigRef = useRef(activeLibraryConfig);
