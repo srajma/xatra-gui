@@ -318,7 +318,7 @@ const Builder = ({
       </section>
 
       <details className="bg-white p-4 rounded-lg border border-gray-200 shadow-sm" open={false}>
-        <summary className="cursor-pointer text-sm font-semibold text-gray-900 select-none">Not-for-library (Runtime)</summary>
+        <summary className="cursor-pointer text-sm font-semibold text-gray-900 select-none">Layers excluded from importing maps</summary>
         <div className="mt-4 space-y-4">
           <GlobalOptions
             options={runtimeOptions || {}}

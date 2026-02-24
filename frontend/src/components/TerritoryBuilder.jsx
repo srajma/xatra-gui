@@ -298,7 +298,10 @@ const TokenInput = ({
               return;
             }
             if (e.key === ',' || e.key === 'Tab') {
-              if (text.trim()) {
+              if (showSuggestions && activeIndex >= 0 && activeIndex < suggestions.length) {
+                e.preventDefault();
+                handleSelect(suggestions[activeIndex]);
+              } else if (text.trim()) {
                 e.preventDefault();
                 commitTextToken();
               }

@@ -98,7 +98,7 @@ const AutocompleteInput = ({
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
       setActiveIndex((prev) => (prev <= 0 ? suggestions.length - 1 : prev - 1));
-    } else if (e.key === 'Enter') {
+    } else if (e.key === 'Enter' || e.key === ',') {
       if (activeIndex >= 0 && activeIndex < suggestions.length) {
         e.preventDefault();
         handleSelect(suggestions[activeIndex]);

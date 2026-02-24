@@ -1467,7 +1467,7 @@ def _territory_op_from_binop(op_node: ast.AST) -> str:
         return "intersection"
     return "union"
 
-def _compress_multi_value_parts(parts: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+def _compress_multi_value_parts(parts: List[Dict[str, Any]], allow_list_values: bool = False) -> Optional[Dict[str, Any]]:
     if not isinstance(parts, list) or len(parts) < 2:
         return None
     base_type = parts[0].get("type")
@@ -1483,9 +1483,23 @@ def _compress_multi_value_parts(parts: List[Dict[str, Any]]) -> Optional[Dict[st
         if idx > 0 and op != "union":
             return None
         val = part.get("value")
-        if not isinstance(val, str) or not val.strip():
+        if isinstance(val, str):
+            if not val.strip():
+                return None
+            values.append(val.strip())
+        elif isinstance(val, list):
+            if not allow_list_values:
+                return None
+            nested = []
+            for item in val:
+                if not isinstance(item, str) or not item.strip():
+                    return None
+                nested.append(item.strip())
+            if not nested:
+                return None
+            values.extend(nested)
+        else:
             return None
-        values.append(val.strip())
     if len(values) < 2:
         return None
     return {"type": base_type, "value": values}
@@ -1508,6 +1522,8 @@ def _parse_territory_operand(node: ast.AST) -> Optional[Dict[str, Any]]:
         return {"type": "predefined", "value": f"{node.value.id}.{node.attr}"}
     elif isinstance(node, ast.BinOp) and isinstance(node.op, (ast.BitOr, ast.Sub, ast.BitAnd)):
         group_parts = _parse_territory_expr(node)
+        if len(group_parts) == 1 and isinstance(group_parts[0], dict):
+            return group_parts[0]
         compressed = _compress_multi_value_parts(group_parts)
         if compressed:
             return compressed
@@ -1521,6 +1537,10 @@ def _parse_territory_expr(node: ast.AST) -> List[Dict[str, Any]]:
         if right_part:
             right_part["op"] = "union" if len(parts) == 0 else _territory_op_from_binop(node.op)
             parts.append(right_part)
+        if isinstance(node.op, ast.BitOr) and len(parts) >= 3:
+            compressed_all = _compress_multi_value_parts(parts, allow_list_values=True)
+            if compressed_all:
+                parts = [compressed_all]
         return parts
     part = _parse_territory_operand(node)
     if part:

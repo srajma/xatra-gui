@@ -399,8 +399,8 @@ Random misc
   - [x] The interface for the Music layers is wrong. Have you looked at what its fields actually are in xatra? The xatra repo is in ../xatra.master.
     - It should not ask for a path to the mp3 file, but should have a file upload UI (and it should upload from the _user_'s system, not a path on the server system, obviously).
     - It has two optional fields: Period and Timestamps. Both of these are optional fields, so should be collapsed by default in the UI.
-- [ ] Custom territory libraries and themes are currently run as arbitrary Python, without parsing. Instead, territory libraries must be stored and parsed exactly like Flag territories: i.e. every territory must be comprised from trees of operations out of admin units, polygons, and other (perhaps-imported) territories. Similarly, the "Custom theme"s should not directly be exec-ed as code but rather parsed into Layers and Global Options (corresponding to xatra.CSS(), xatra.BaseOption(), xatra.FlagColorSequence(), xatra.AdminColorSequence(), xatra.DataColormap()) first. It should be these parsed versions that get run, stored, published as versions, imported etc. In general we should not have any arbitrary code execution (apart from the specific "Python layers" and "Python outputs" which we will later make "trusted users only").
-- [ ] In the Code -> Builder conversion/parsing, when we convert Flag values into builder syntax, we should always try where possible to convert pure unions of gadms into a single "Admin unit" item in the Flag value (since an Admin unit item can comprise of a list of multiple gadm entries)---and similarly pure unions of custom territories should be converted into a single "Territory" item in the Flag value (since a Territory item can comprise of a list of multiple Territory entries). i.e.
+- [x] Custom territory libraries and themes are currently run as arbitrary Python, without parsing. Instead, territory libraries must be stored and parsed exactly like Flag territories: i.e. every territory must be comprised from trees of operations out of admin units, polygons, and other (perhaps-imported) territories. Similarly, the "Custom theme"s should not directly be exec-ed as code but rather parsed into Layers and Global Options (corresponding to xatra.CSS(), xatra.BaseOption(), xatra.FlagColorSequence(), xatra.AdminColorSequence(), xatra.DataColormap()) first. It should be these parsed versions that get run, stored, published as versions, imported etc. In general we should not have any arbitrary code execution (apart from the specific "Python layers" and "Python outputs" which we will later make "trusted users only").
+- [x] In the Code -> Builder conversion/parsing, when we convert Flag values into builder syntax, we should always try where possible to convert pure unions of gadms into a single "Admin unit" item in the Flag value (since an Admin unit item can comprise of a list of multiple gadm entries)---and similarly pure unions of custom territories should be converted into a single "Territory" item in the Flag value (since a Territory item can comprise of a list of multiple Territory entries). i.e.
 
 ```
 (gadm("IND") | gadm("PAK") | gadm("BGD")) | (indic.KURU | (indic.PANCALA_N | indic.PANCALA_S)) | (gadm("AFG") | indic.TARIM) | indic.GULF | indic.LEVANT
@@ -435,8 +435,9 @@ U (+): Group:
 U (+): Territory: indic.GULF
 U (+): Territory: indic.LEVANT
 
-- [ ] For some reason an intersection between a custom territory and another custom territory, or between a custom territory and a gadm unit, produces a random extra point marker on the map. Why? Check if that is a bug in the original xatra package (which I am developing at ../xatra) or in this repo, and fix it.
-- [ ] In the search/autocompletes for GADMs and territories, pressing comma should do exactly the same thing as pressing Enter.
+- [x] For some reason an intersection between a custom territory and another custom territory, or between a custom territory and a gadm unit, produces a random extra point marker on the map. Why? Check if that is a bug in the original xatra package (which I am developing at ../xatra) or in this repo, and fix it.
+- [x] In the search/autocompletes for GADMs and territories, pressing comma should do exactly the same thing as pressing Enter.
+- [ ] When map code length is very small and custom territory library size is very large, use the latter instead for the thumbnail
 
 Development difficulties
 - [x] keeping synchrony between things---this should be documented, i.e. "if you change this, then change this too"
