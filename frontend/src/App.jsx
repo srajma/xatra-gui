@@ -103,7 +103,7 @@ function App() {
   const [pickerHtml, setPickerHtml] = useState('');
   const [territoryLibraryHtml, setTerritoryLibraryHtml] = useState('');
   const [territoryLibrarySource, setTerritoryLibrarySource] = useState('custom'); // custom | hub
-  const [activeLibraryTab, setActiveLibraryTab] = useState('custom');
+  const [activeLibraryTab, setActiveLibraryTab] = useState('');
   const [territoryLibraryNames, setTerritoryLibraryNames] = useState([]);
   const [selectedTerritoryNames, setSelectedTerritoryNames] = useState([]);
   const [territorySearchTerm, setTerritorySearchTerm] = useState('');
@@ -3267,10 +3267,6 @@ window.addEventListener('message', function(e) {
     if (activePreviewTab !== 'library') return;
     const exists = libraryTabs.some((t) => t.id === activeLibraryTab);
     if (!exists) {
-      setActiveLibraryTab(preferredLibraryTabId);
-      return;
-    }
-    if (importedLibraryTabs.length > 0 && activeLibraryTab === 'custom') {
       setActiveLibraryTab(preferredLibraryTabId);
       return;
     }
