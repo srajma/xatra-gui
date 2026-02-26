@@ -2458,9 +2458,10 @@ window.addEventListener('message', function(e) {
       runtimeCode,
     };
     if (activeTab === 'builder') {
-      const mainGen = generatePythonCode();
+      const mainGen = generatePythonCode(builderElements, builderOptions, { commitMain: false });
       mapCodeText = mainGen.code || '';
-      runtimeCodeText = generateRuntimeCodeFromBuilder() || '';
+      const runtimeGen = generatePythonCode(runtimeBuilderElements, runtimeBuilderOptions, { commitMain: false });
+      runtimeCodeText = [runtimeGen.themeCode || '', runtimeGen.code || ''].filter((x) => String(x).trim()).join('\n');
     } else {
       try {
         const parsed = await parseMainCodeToBuilder();
