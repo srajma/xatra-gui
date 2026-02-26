@@ -160,6 +160,10 @@ function App() {
   const [autoSaveStatus, setAutoSaveStatus] = useState('idle');
   const autoSaveTimerRef = useRef(null);
   const lastAutoSavedContentRef = useRef(null);
+  const libraryAutoSaveTimerRef = useRef(null);
+  const themeAutoSaveTimerRef = useRef(null);
+  const lastLibraryAlphaSavedRef = useRef('');
+  const lastThemeAlphaSavedRef = useRef('');
   const lastRenderedThumbnailRef = useRef('');
   const libraryThumbnailCacheRef = useRef({ key: '', dataUrl: '' });
   const editorReadyRef = useRef(false); // true after initial load phase; guards against spurious auto-saves on first render
@@ -832,6 +836,8 @@ ${DEFAULT_MAP_CODE}
           setThemeCode('');
           setRuntimeCode('');
           setPredefinedCode('');
+          lastLibraryAlphaSavedRef.current = '';
+          lastThemeAlphaSavedRef.current = '';
           setHubImports(defaultImports);
           setImportsCode(defaultImportsCode);
           renderMapWithData({
@@ -858,6 +864,8 @@ ${DEFAULT_MAP_CODE}
         try { return JSON.parse(content || '{}'); } catch { return null; }
       })();
       if (parsed && typeof parsed === 'object') {
+        lastLibraryAlphaSavedRef.current = String(parsed.predefined_code ?? '');
+        lastThemeAlphaSavedRef.current = String(parsed.theme_code || '');
         setImportsCode(parsed.imports_code || '');
         setHubImports(parseImportsCodeToItems(parsed.imports_code || ''));
         setThemeCode(parsed.theme_code || '');
@@ -945,14 +953,20 @@ ${DEFAULT_MAP_CODE}
         setRuntimeBuilderOptions(draft.project.runtimeOptions && typeof draft.project.runtimeOptions === 'object' ? draft.project.runtimeOptions : {});
       }
       if (typeof draft.project?.code === 'string') setCode(draft.project.code);
-      if (typeof draft.project?.predefinedCode === 'string') setPredefinedCode(draft.project.predefinedCode);
+      if (typeof draft.project?.predefinedCode === 'string') {
+        lastLibraryAlphaSavedRef.current = String(draft.project.predefinedCode || '');
+        setPredefinedCode(draft.project.predefinedCode);
+      }
       if (typeof draft.project?.importsCode === 'string') {
         const parsedImports = parseImportsCodeToItems(draft.project.importsCode);
         const safeImports = parsedImports.length ? parsedImports : ensureDefaultIndicImport(parsedImports);
         setHubImports(safeImports);
         setImportsCode(serializeHubImports(safeImports));
       }
-      if (typeof draft.project?.themeCode === 'string') setThemeCode(draft.project.themeCode);
+      if (typeof draft.project?.themeCode === 'string') {
+        lastThemeAlphaSavedRef.current = String(draft.project.themeCode || '');
+        setThemeCode(draft.project.themeCode);
+      }
       if (typeof draft.project?.runtimeCode === 'string') setRuntimeCode(draft.project.runtimeCode);
       if (draft.project?.pickerOptions && typeof draft.project.pickerOptions === 'object') {
         setPickerOptions(draft.project.pickerOptions);
@@ -1123,6 +1137,8 @@ ${DEFAULT_MAP_CODE}
     setStatusNotice('');
     setAutoSaveStatus('idle');
     lastAutoSavedContentRef.current = null;
+    lastLibraryAlphaSavedRef.current = '';
+    lastThemeAlphaSavedRef.current = '';
     setForkedFrom(null);
 
     renderMapWithData({
@@ -2556,6 +2572,38 @@ window.addEventListener('message', function(e) {
     }
   };
 
+  const performArtifactAlphaAutoSave = async (kind, content) => {
+    if (!currentUser.is_authenticated || isReadOnlyMap || !normalizedMapName || !normalizedHubUsername) return false;
+    if (!HUB_NAME_RE.test(normalizedMapName)) return false;
+    if (kind !== 'lib' && kind !== 'css') return false;
+    const payload = kind === 'lib'
+      ? JSON.stringify({
+        predefined_code: content || '',
+        map_name: normalizedMapName,
+      })
+      : JSON.stringify({
+        theme_code: content || '',
+        map_name: normalizedMapName,
+      });
+    try {
+      const resp = await apiFetch(`/hub/${normalizedHubUsername}/${kind}/${normalizedMapName}/alpha`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          content: payload,
+          metadata: {
+            owner: normalizedHubUsername,
+            updated_at: new Date().toISOString(),
+          },
+        }),
+      });
+      if (!resp.ok) return false;
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
   const handlePublishMap = async (skipV1Warn = false) => {
     try {
       if (!currentUser.is_authenticated) {
@@ -2753,6 +2801,7 @@ window.addEventListener('message', function(e) {
         map_name: normalizedMapName,
       });
       await publishHubArtifact('lib', content, { owner: mapOwner, name: normalizedMapName });
+      lastLibraryAlphaSavedRef.current = String(predefinedCode || '');
     } catch (err) {
       setLibraryPublishStatus(null);
       setError(`Publish library failed: ${err.message}`);
@@ -2776,6 +2825,7 @@ window.addEventListener('message', function(e) {
         map_name: normalizedMapName,
       });
       await publishHubArtifact('css', content, { owner: mapOwner, name: normalizedMapName });
+      lastThemeAlphaSavedRef.current = String(themeCode || '');
     } catch (err) {
       setThemePublishStatus(null);
       setError(`Publish theme failed: ${err.message}`);
@@ -3304,6 +3354,42 @@ window.addEventListener('message', function(e) {
     return () => { if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [normalizedMapName, currentUser.is_authenticated, builderElements, builderOptions, runtimeBuilderElements, runtimeBuilderOptions, code, predefinedCode, importsCode, themeCode, runtimeCode]);
+
+  useEffect(() => {
+    if (!editorContextReady) return;
+    if (!route.map && !editorReadyRef.current) return;
+    if (!currentUser.is_authenticated || isReadOnlyMap) return;
+    if (selectedLibraryVersion !== 'alpha') return;
+    if (libraryAutoSaveTimerRef.current) clearTimeout(libraryAutoSaveTimerRef.current);
+    libraryAutoSaveTimerRef.current = setTimeout(async () => {
+      const next = String(predefinedCode || '');
+      if (next === lastLibraryAlphaSavedRef.current) return;
+      const ok = await performArtifactAlphaAutoSave('lib', next);
+      if (ok) lastLibraryAlphaSavedRef.current = next;
+    }, 3000);
+    return () => {
+      if (libraryAutoSaveTimerRef.current) clearTimeout(libraryAutoSaveTimerRef.current);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editorContextReady, route.map, currentUser.is_authenticated, isReadOnlyMap, selectedLibraryVersion, normalizedMapName, normalizedHubUsername, predefinedCode]);
+
+  useEffect(() => {
+    if (!editorContextReady) return;
+    if (!route.map && !editorReadyRef.current) return;
+    if (!currentUser.is_authenticated || isReadOnlyMap) return;
+    if (selectedThemeVersion !== 'alpha') return;
+    if (themeAutoSaveTimerRef.current) clearTimeout(themeAutoSaveTimerRef.current);
+    themeAutoSaveTimerRef.current = setTimeout(async () => {
+      const next = String(themeCode || '');
+      if (next === lastThemeAlphaSavedRef.current) return;
+      const ok = await performArtifactAlphaAutoSave('css', next);
+      if (ok) lastThemeAlphaSavedRef.current = next;
+    }, 3000);
+    return () => {
+      if (themeAutoSaveTimerRef.current) clearTimeout(themeAutoSaveTimerRef.current);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editorContextReady, route.map, currentUser.is_authenticated, isReadOnlyMap, selectedThemeVersion, normalizedMapName, normalizedHubUsername, themeCode]);
 
   // Initial render — for hub maps, loadMapFromHub triggers the render directly;
   // for root/new-map, the route effect handles rendering after draft load or defaults.

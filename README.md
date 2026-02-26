@@ -455,7 +455,6 @@ U (+): Territory: indic.LEVANT
 
   ```
 
-
 Development difficulties
 - [x] keeping synchrony between things---this should be documented, i.e. "if you change this, then change this too"
   - See "Development / Synchrony" section below.
