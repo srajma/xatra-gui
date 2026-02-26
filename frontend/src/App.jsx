@@ -164,6 +164,8 @@ function App() {
   const themeAutoSaveTimerRef = useRef(null);
   const lastLibraryAlphaSavedRef = useRef('');
   const lastThemeAlphaSavedRef = useRef('');
+  const libraryAutoSavePrimedRef = useRef(false);
+  const themeAutoSavePrimedRef = useRef(false);
   const lastRenderedThumbnailRef = useRef('');
   const libraryThumbnailCacheRef = useRef({ key: '', dataUrl: '' });
   const editorReadyRef = useRef(false); // true after initial load phase; guards against spurious auto-saves on first render
@@ -3356,13 +3358,23 @@ window.addEventListener('message', function(e) {
   }, [normalizedMapName, currentUser.is_authenticated, builderElements, builderOptions, runtimeBuilderElements, runtimeBuilderOptions, code, predefinedCode, importsCode, themeCode, runtimeCode]);
 
   useEffect(() => {
+    libraryAutoSavePrimedRef.current = false;
+    themeAutoSavePrimedRef.current = false;
+  }, [normalizedHubUsername, normalizedMapName]);
+
+  useEffect(() => {
     if (!editorContextReady) return;
-    if (!route.map && !editorReadyRef.current) return;
+    if (!editorReadyRef.current) return;
     if (!currentUser.is_authenticated || isReadOnlyMap) return;
     if (selectedLibraryVersion !== 'alpha') return;
     if (libraryAutoSaveTimerRef.current) clearTimeout(libraryAutoSaveTimerRef.current);
     libraryAutoSaveTimerRef.current = setTimeout(async () => {
       const next = String(predefinedCode || '');
+      if (!libraryAutoSavePrimedRef.current) {
+        lastLibraryAlphaSavedRef.current = next;
+        libraryAutoSavePrimedRef.current = true;
+        return;
+      }
       if (next === lastLibraryAlphaSavedRef.current) return;
       const ok = await performArtifactAlphaAutoSave('lib', next);
       if (ok) lastLibraryAlphaSavedRef.current = next;
@@ -3375,12 +3387,17 @@ window.addEventListener('message', function(e) {
 
   useEffect(() => {
     if (!editorContextReady) return;
-    if (!route.map && !editorReadyRef.current) return;
+    if (!editorReadyRef.current) return;
     if (!currentUser.is_authenticated || isReadOnlyMap) return;
     if (selectedThemeVersion !== 'alpha') return;
     if (themeAutoSaveTimerRef.current) clearTimeout(themeAutoSaveTimerRef.current);
     themeAutoSaveTimerRef.current = setTimeout(async () => {
       const next = String(themeCode || '');
+      if (!themeAutoSavePrimedRef.current) {
+        lastThemeAlphaSavedRef.current = next;
+        themeAutoSavePrimedRef.current = true;
+        return;
+      }
       if (next === lastThemeAlphaSavedRef.current) return;
       const ok = await performArtifactAlphaAutoSave('css', next);
       if (ok) lastThemeAlphaSavedRef.current = next;
