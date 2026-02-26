@@ -521,6 +521,7 @@ For eventually publishing this as a website
             - If you want, next step is a concrete execution-isolation layer (containerized worker with no network, RO FS, cgroup/seccomp limits, strict IPC).
         ```
     - [x] Is the parsing of Python into Builder json, and the parsing of Builder json back into Python code, perfectly secure?
+- [ ] Prevent circular in xatrahub imports
 - [ ] Efficiency and scalability concerns [for now, just answer in words, don't implement anything]
   - Can this website handle, idk, approx 1000 users making maps? How can we estimate the resources etc. that will cost and the servers we will need? (I'm totally new to this, I have no idea if this makes sense).
   - Is it inefficient that for every change the user makes to the map, it has to be re-rendered from ground up by xatra? Are there better solutions? Do note that the maps can get pretty long (e.g. maps of global territorial evolution over history, etc.)

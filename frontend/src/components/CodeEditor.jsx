@@ -253,7 +253,7 @@ const CodeEditor = ({
 
         <div>
           <div className={headingClass}>
-            <span>Layers excluded from importing maps</span>
+            <span>Do not expose to importers</span>
           </div>
           <textarea
             className="w-full min-h-[120px] p-2 border border-slate-700 border-t-0 rounded-b bg-slate-950 text-slate-100 font-mono text-xs focus:outline-none"
