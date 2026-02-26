@@ -4476,6 +4476,27 @@ def run_rendering_task(task_type, data, result_queue):
         return {"imports_code": "", "elements": [], "options": {}}
 
     pending_import_elements: List[Any] = []
+    import_resolution_ctx: Dict[str, Any] = {
+        "active_stack": [],
+        "active_set": set(),
+    }
+
+    def _import_key_from_loaded(loaded: Dict[str, Any]) -> Tuple[Optional[str], str, str, str]:
+        username = loaded.get("username")
+        if isinstance(username, str):
+            username = username.strip().lower() or None
+        else:
+            username = None
+        kind = str(loaded.get("kind") or "").strip().lower()
+        name = str(loaded.get("name") or "").strip().lower()
+        version = str(loaded.get("version") if loaded.get("version") is not None else "alpha").strip().lower() or "alpha"
+        return (username, kind, name, version)
+
+    def _import_key_label(key: Tuple[Optional[str], str, str, str]) -> str:
+        username, kind, name, version = key
+        if username:
+            return f"/{username}/{kind}/{name}/{version}"
+        return f"/{kind}/{name}/{version}"
 
     def register_xatrahub(exec_globals):
         def xatrahub(path, filter_only=None, filter_not=None):
@@ -4491,39 +4512,59 @@ def run_rendering_task(task_type, data, result_queue):
                 loaded.get("content", ""),
                 loaded.get("metadata", {}) if isinstance(loaded.get("metadata"), dict) else {},
             )
-            kind = loaded["kind"]
-            only = filter_only if isinstance(filter_only, list) else None
-            not_list = filter_not if isinstance(filter_not, list) else None
-            if kind == "map":
-                payload = _parse_imported_map_payload(loaded.get("content", "") or "")
-                imports_code = payload.get("imports_code", "")
-                if isinstance(imports_code, str) and imports_code.strip():
-                    apply_imports_code_parsed(imports_code, exec_globals)
-                filtered_options = _filter_imported_options(
-                    payload.get("options", {}) if isinstance(payload.get("options"), dict) else {},
-                    only,
-                    not_list,
+            key = _import_key_from_loaded(loaded)
+            if key in import_resolution_ctx["active_set"]:
+                chain = import_resolution_ctx["active_stack"] + [key]
+                chain_str = " -> ".join(_import_key_label(k) for k in chain)
+                print(
+                    f"[xatra] Warning: circular xatrahub import detected; skipping {_import_key_label(key)} ({chain_str})",
+                    file=sys.stderr,
                 )
-                if filtered_options:
-                    apply_scalar_options(filtered_options)
-                    apply_theme_options(_normalize_theme_options_struct(filtered_options))
-                filtered_elements = _filter_imported_elements(
-                    payload.get("elements", []) if isinstance(payload.get("elements"), list) else [],
-                    only,
-                    not_list,
-                )
-                if filtered_elements:
-                    pending_import_elements.extend(filtered_elements)
                 return None
-            if kind == "css":
-                theme_opts = _extract_theme_options_struct(loaded.get("content", "") or "")
-                apply_theme_options(filter_theme_options(theme_opts, only, not_list))
-                return None
-            if kind == "lib":
-                struct = _extract_territory_library_struct(loaded.get("content", "") or "")
-                ns, _ = materialize_library_namespace(struct, exec_globals, include_builtin=True)
-                return ns
-            raise ValueError(f"Unsupported xatrahub kind: {kind}")
+            import_resolution_ctx["active_stack"].append(key)
+            import_resolution_ctx["active_set"].add(key)
+            try:
+                kind = loaded["kind"]
+                only = filter_only if isinstance(filter_only, list) else None
+                not_list = filter_not if isinstance(filter_not, list) else None
+                if kind == "map":
+                    payload = _parse_imported_map_payload(loaded.get("content", "") or "")
+                    imports_code = payload.get("imports_code", "")
+                    if isinstance(imports_code, str) and imports_code.strip():
+                        apply_imports_code_parsed(imports_code, exec_globals)
+                    filtered_options = _filter_imported_options(
+                        payload.get("options", {}) if isinstance(payload.get("options"), dict) else {},
+                        only,
+                        not_list,
+                    )
+                    if filtered_options:
+                        apply_scalar_options(filtered_options)
+                        apply_theme_options(_normalize_theme_options_struct(filtered_options))
+                    filtered_elements = _filter_imported_elements(
+                        payload.get("elements", []) if isinstance(payload.get("elements"), list) else [],
+                        only,
+                        not_list,
+                    )
+                    if filtered_elements:
+                        pending_import_elements.extend(filtered_elements)
+                    return None
+                if kind == "css":
+                    theme_opts = _extract_theme_options_struct(loaded.get("content", "") or "")
+                    apply_theme_options(filter_theme_options(theme_opts, only, not_list))
+                    return None
+                if kind == "lib":
+                    struct = _extract_territory_library_struct(loaded.get("content", "") or "")
+                    ns, _ = materialize_library_namespace(struct, exec_globals, include_builtin=True)
+                    return ns
+                raise ValueError(f"Unsupported xatrahub kind: {kind}")
+            finally:
+                import_resolution_ctx["active_set"].discard(key)
+                if import_resolution_ctx["active_stack"] and import_resolution_ctx["active_stack"][-1] == key:
+                    import_resolution_ctx["active_stack"].pop()
+                else:
+                    import_resolution_ctx["active_stack"] = [
+                        k for k in import_resolution_ctx["active_stack"] if k != key
+                    ]
 
         exec_globals["xatrahub"] = xatrahub
 
