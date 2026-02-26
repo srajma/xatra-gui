@@ -25,7 +25,6 @@ const LayerItem = ({
   const pickerStartedAt = isPicking ? Number(activePicker?.startedAt || 0) : 0;
 
   const [periodText, setPeriodText] = useState(Array.isArray(element.args?.period) ? element.args.period.join(', ') : '');
-  const PythonField = (props) => <PythonTextField {...props} allowPython={trustedUser} />;
 
   // Sync periodText when element changes (e.g. project load)
   useEffect(() => {
@@ -151,7 +150,7 @@ const LayerItem = ({
           <div className="grid grid-cols-1 gap-3 mb-2">
             <div>
               <label className="block text-xs text-gray-500 mb-1">State name</label>
-              <PythonField
+              <PythonTextField allowPython={trustedUser}
                 value={element.label || ''}
                 onChange={(val) => updateElement(index, 'label', val)}
                 data-focus-primary="true"
@@ -196,7 +195,7 @@ const LayerItem = ({
             <div className="grid grid-cols-2 gap-3">
                 <div>
                 <label className="block text-xs text-gray-500 mb-1">Label</label>
-                <PythonField
+                <PythonTextField allowPython={trustedUser}
                     value={element.label || ''}
                     onChange={(val) => updateElement(index, 'label', val)}
                     data-focus-primary="true"
@@ -227,7 +226,7 @@ const LayerItem = ({
             <div>
               <label className="block text-xs text-gray-500 mb-1">ID</label>
               <div className="flex gap-1">
-                <PythonField
+                <PythonTextField allowPython={trustedUser}
                   value={element.value || ''}
                   onChange={(val) => updateElement(index, 'value', val)}
                   inputClassName="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:border-blue-500 outline-none font-mono"
@@ -276,7 +275,7 @@ const LayerItem = ({
            <div className="grid grid-cols-2 gap-3 mb-2">
             <div>
               <label className="block text-xs text-gray-500 mb-1">Label</label>
-                <PythonField
+                <PythonTextField allowPython={trustedUser}
                 value={element.label || ''}
                 onChange={(val) => updateElement(index, 'label', val)}
                 data-focus-primary="true"
@@ -287,7 +286,7 @@ const LayerItem = ({
             <div>
               <label className="block text-xs text-gray-500 mb-1">Position [lat, lon]</label>
               <div className="flex gap-1">
-                  <PythonField
+                  <PythonTextField allowPython={trustedUser}
                     value={element.value || ''}
                     onChange={(val) => updateElement(index, 'value', val)}
                     inputClassName="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:border-blue-500 outline-none font-mono"
@@ -326,7 +325,7 @@ const LayerItem = ({
                   <div className="text-xs text-gray-500 truncate">{iconSummary}</div>
                 </div>
                 {isPythonValue(iconArg) && (
-                  <PythonField
+                  <PythonTextField allowPython={trustedUser}
                     value={iconArg}
                     onChange={(val) => updateArg(index, 'icon', val)}
                     inputClassName="w-full px-2 py-1.5 border border-gray-200 rounded text-xs focus:border-blue-500 outline-none font-mono"
@@ -351,7 +350,7 @@ const LayerItem = ({
            <div className="grid grid-cols-2 gap-3 mb-2">
             <div>
               <label className="block text-xs text-gray-500 mb-1">Label</label>
-              <PythonField
+              <PythonTextField allowPython={trustedUser}
                 value={element.label || ''}
                 onChange={(val) => updateElement(index, 'label', val)}
                 data-focus-primary="true"
@@ -362,7 +361,7 @@ const LayerItem = ({
             <div>
               <label className="block text-xs text-gray-500 mb-1">Coords [[lat,lon]...]</label>
               <div className="flex gap-1 items-start">
-                  <PythonField
+                  <PythonTextField allowPython={trustedUser}
                     value={element.value || ''}
                     onChange={(val) => updateElement(index, 'value', val)}
                     multiline
@@ -386,7 +385,7 @@ const LayerItem = ({
           <div className="space-y-3 mb-2">
             <div>
               <label className="block text-xs text-gray-500 mb-1">CSV Content or File Path</label>
-              <PythonField
+              <PythonTextField allowPython={trustedUser}
                 value={element.value || ''}
                 onChange={(val) => updateElement(index, 'value', val)}
                 data-focus-primary="true"
@@ -447,7 +446,7 @@ const LayerItem = ({
          return (
            <div className="mb-2">
               <label className="block text-xs text-gray-500 mb-1">Sources (JSON list)</label>
-              <PythonField
+              <PythonTextField allowPython={trustedUser}
                 value={element.value || '["naturalearth"]'}
                 onChange={(val) => updateElement(index, 'value', val)}
                 data-focus-primary="true"
@@ -460,7 +459,7 @@ const LayerItem = ({
         return (
           <div className="mb-2">
             <label className="block text-xs text-gray-500 mb-1">TitleBox (HTML)</label>
-            <PythonField
+            <PythonTextField allowPython={trustedUser}
               value={element.value || ''}
               onChange={(val) => updateElement(index, 'value', val)}
               data-focus-primary="true"
@@ -501,7 +500,7 @@ const LayerItem = ({
               <div className="mt-2 grid grid-cols-1 gap-2">
                 <div>
                   <label className="block text-xs text-gray-500 mb-1">Period [start, end]</label>
-                  <PythonField
+                  <PythonTextField allowPython={trustedUser}
                     value={musicPeriodText}
                     onChange={(val) => {
                       if (val && typeof val === 'object' && !Array.isArray(val)) {
@@ -529,7 +528,7 @@ const LayerItem = ({
                 </div>
                 <div>
                   <label className="block text-xs text-gray-500 mb-1">Timestamps [start, end] seconds</label>
-                  <PythonField
+                  <PythonTextField allowPython={trustedUser}
                     value={musicTimestampsText}
                     onChange={(val) => {
                       if (val && typeof val === 'object' && !Array.isArray(val)) {
@@ -592,7 +591,7 @@ const LayerItem = ({
         {/* Classes */}
         <div>
            <label className="block text-xs text-gray-500 mb-1">CSS Classes</label>
-           <PythonField
+           <PythonTextField allowPython={trustedUser}
             value={element.args?.classes || ''}
             onChange={(val) => updateArg(index, 'classes', val)}
             inputClassName="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:border-blue-500 outline-none"
@@ -605,7 +604,7 @@ const LayerItem = ({
             <>
                  <div>
                     <label className="block text-xs text-gray-500 mb-1">Display Label</label>
-                    <PythonField
+                    <PythonTextField allowPython={trustedUser}
                         value={element.args?.display_label || ''}
                         onChange={(val) => updateArg(index, 'display_label', val)}
                         inputClassName="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:border-blue-500 outline-none"
@@ -614,7 +613,7 @@ const LayerItem = ({
                 </div>
                  <div>
                     <label className="block text-xs text-gray-500 mb-1">Color (Hex)</label>
-                    <PythonField
+                    <PythonTextField allowPython={trustedUser}
                         value={element.args?.color || ''}
                         onChange={(val) => updateArg(index, 'color', val)}
                         inputClassName="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:border-blue-500 outline-none"
@@ -680,7 +679,7 @@ const LayerItem = ({
       {element.type !== 'python' && element.type !== 'music' && (
         <div className="mb-2">
             <label className="block text-xs text-gray-500 mb-1">Period [start, end]</label>
-            <PythonField
+            <PythonTextField allowPython={trustedUser}
               value={element.args?.period ?? periodText}
               onChange={handlePeriodChange}
               inputClassName="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:border-blue-500 outline-none font-mono"
@@ -695,7 +694,7 @@ const LayerItem = ({
       {element.type !== 'titlebox' && element.type !== 'python' && element.type !== 'music' && (
         <div>
           <label className="block text-xs text-gray-500 mb-1">Note (Tooltip)</label>
-          <PythonField
+          <PythonTextField allowPython={trustedUser}
             value={element.args?.note || ''}
             onChange={(val) => updateArg(index, 'note', val)}
             multiline
