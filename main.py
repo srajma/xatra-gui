@@ -298,16 +298,65 @@ def _is_xatrahub_line(line: str, require_assignment: bool = False) -> bool:
     return bool(re.match(r'^(?:\w+\s*=\s*)?xatrahub\s*\(', stripped))
 
 
+_THEME_CALL_NAMES = frozenset({"CSS", "BaseOption", "FlagColorSequence", "AdminColorSequence", "DataColormap"})
+
+
+def _is_xatrahub_node(node: ast.stmt) -> bool:
+    """True if node is xatrahub(...) or x = xatrahub(...)."""
+    if isinstance(node, ast.Expr):
+        call = node.value
+        return isinstance(call, ast.Call) and isinstance(call.func, ast.Name) and call.func.id == "xatrahub"
+    if isinstance(node, ast.Assign):
+        return isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Name) and node.value.func.id == "xatrahub"
+    return False
+
+
+def _is_theme_call_node(node: ast.stmt) -> bool:
+    """True if node is xatra.CSS/BaseOption/FlagColorSequence/AdminColorSequence/DataColormap(...)."""
+    if not isinstance(node, ast.Expr):
+        return False
+    call = node.value
+    if not isinstance(call, ast.Call):
+        return False
+    func = call.func
+    return (
+        isinstance(func, ast.Attribute)
+        and isinstance(func.value, ast.Name)
+        and func.value.id == "xatra"
+        and func.attr in _THEME_CALL_NAMES
+    )
+
+
 def _parse_xatra_lib_map_file(content: str) -> Dict[str, str]:
     """
-    Parse a map/ file into four sections:
-    - imports_code: xatrahub(...) or abc = xatrahub(...) lines not inside # <lib> or if __name__
+    Parse a map/ file into five sections:
+    - imports_code: xatrahub(...) or abc = xatrahub(...) calls (top-level, outside # <lib>)
     - predefined_code: content between # <lib> and # </lib> delimiters
-    - map_code: everything else
-    - runtime_code: body of if __name__ == '__main__': (outer 4-space indent stripped)
+    - map_code: remaining top-level statements
+    - theme_code: xatra.CSS/BaseOption/FlagColorSequence/AdminColorSequence/DataColormap calls
+                  (from both top-level and if __name__ body)
+    - runtime_code: body of if __name__ == '__main__': minus theme calls (indent stripped)
     """
-    # Use AST to find the exact line where `if __name__ == "__main__":` starts.
-    # This avoids breaking on multi-line strings whose content has no indentation.
+    lines = content.splitlines(keepends=True)
+
+    # --- Step 1: find # <lib> ... # </lib> line ranges (1-indexed, inclusive) ---
+    lib_line_set: set = set()  # set of 1-indexed line numbers inside lib blocks
+    predefined_lines: List[str] = []
+    lib_start: Optional[int] = None
+    for i, line in enumerate(lines, 1):
+        stripped = line.strip()
+        if stripped == "# <lib>":
+            lib_start = i
+            lib_line_set.add(i)
+        elif stripped == "# </lib>" and lib_start is not None:
+            lib_line_set.add(i)
+            for j in range(lib_start + 1, i):
+                predefined_lines.append(lines[j - 1])
+            lib_start = None
+        elif lib_start is not None:
+            lib_line_set.add(i)
+
+    # --- Step 2: use AST to find if __name__ == "__main__": block ---
     main_lineno: Optional[int] = None
     try:
         tree = ast.parse(content)
@@ -321,59 +370,79 @@ def _parse_xatra_lib_map_file(content: str) -> Dict[str, str]:
                 and isinstance(node.test.comparators[0], ast.Constant)
                 and node.test.comparators[0].value == "__main__"
             ):
-                main_lineno = node.lineno  # 1-indexed
+                main_lineno = node.lineno
                 break
     except SyntaxError:
         pass
 
-    lines = content.splitlines(keepends=True)
-
     if main_lineno is not None:
         before_lines = lines[: main_lineno - 1]
-        body_lines = lines[main_lineno:]  # body of the if __name__ block (still indented)
+        raw_body_lines = lines[main_lineno:]
     else:
         before_lines = lines
-        body_lines = []
+        raw_body_lines = []
 
-    imports_lines: List[str] = []
-    predefined_lines: List[str] = []
-    map_lines: List[str] = []
-    state = "normal"
+    # --- Step 3: classify top-level statements using AST ---
+    imports_segs: List[str] = []
+    map_segs: List[str] = []
+    theme_segs: List[str] = []
 
-    for line in before_lines:
-        stripped = line.strip()
-        if state == "normal":
-            if stripped == "# <lib>":
-                state = "in_lib"
-            elif _is_xatrahub_line(line):
-                imports_lines.append(line)
+    before_content = "".join(before_lines)
+    try:
+        before_tree = ast.parse(before_content)
+        for node in before_tree.body:
+            if node.lineno in lib_line_set:
+                continue  # handled as predefined_code
+            seg = ast.get_source_segment(before_content, node) or ast.unparse(node)
+            seg = seg.rstrip("\n") + "\n"
+            if _is_xatrahub_node(node):
+                imports_segs.append(seg)
+            elif _is_theme_call_node(node):
+                theme_segs.append(seg)
             else:
-                map_lines.append(line)
-        elif state == "in_lib":
-            if stripped == "# </lib>":
-                state = "normal"
-            else:
-                predefined_lines.append(line)
+                map_segs.append(seg)
+    except SyntaxError:
+        # Fallback: line-by-line (no theme separation on syntax error)
+        for line in before_lines:
+            if _is_xatrahub_line(line):
+                imports_segs.append(line)
+            elif line.strip() not in ("# <lib>", "# </lib>") and not any(line is lines[j - 1] for j in lib_line_set):
+                map_segs.append(line)
 
-    # Strip 4-space indent from the runtime body lines
-    runtime_lines: List[str] = []
-    for line in body_lines:
+    # --- Step 4: classify if __name__ body using AST ---
+    runtime_segs: List[str] = []
+    body_lines: List[str] = []
+    for line in raw_body_lines:
         if line.startswith("    "):
-            runtime_lines.append(line[4:])
+            body_lines.append(line[4:])
         elif line.startswith("\t"):
-            runtime_lines.append(line[1:])
+            body_lines.append(line[1:])
         else:
-            runtime_lines.append(line)
+            body_lines.append(line)
+
+    body_content = "".join(body_lines)
+    try:
+        body_tree = ast.parse(body_content)
+        for node in body_tree.body:
+            seg = ast.get_source_segment(body_content, node) or ast.unparse(node)
+            seg = seg.rstrip("\n") + "\n"
+            if _is_theme_call_node(node):
+                theme_segs.append(seg)
+            else:
+                runtime_segs.append(seg)
+    except SyntaxError:
+        runtime_segs = body_lines
 
     def _clean(lst: List[str]) -> str:
         s = "".join(lst).strip()
         return s + "\n" if s else ""
 
     return {
-        "imports_code": _clean(imports_lines),
+        "imports_code": _clean(imports_segs),
         "predefined_code": _clean(predefined_lines),
-        "map_code": _clean(map_lines),
-        "runtime_code": _clean(runtime_lines),
+        "map_code": _clean(map_segs),
+        "theme_code": _clean(theme_segs),
+        "runtime_code": _clean(runtime_segs),
     }
 
 
@@ -478,11 +547,21 @@ def _seed_xatra_lib_artifacts(
             except Exception as e:
                 print(f"[xatra] Warning: failed to populate elements for '{name}': {e}", file=sys.stderr)
 
-    def _build_map_content(imports_code: str, predefined_code: str, map_code: str, runtime_code: str) -> str:
+    def _build_map_content(
+        imports_code: str,
+        predefined_code: str,
+        map_code: str,
+        runtime_code: str,
+        file_theme_code: str = "",
+    ) -> str:
+        # Combine default_theme.py with any map-specific theme calls (CSS etc.)
+        combined_theme = theme_code
+        if file_theme_code.strip():
+            combined_theme = (theme_code.rstrip("\n") + "\n\n" + file_theme_code.strip() + "\n").lstrip("\n")
         elements = _parse_elements(map_code, predefined_code)
         return json.dumps({
             "imports_code": imports_code,
-            "theme_code": theme_code,
+            "theme_code": combined_theme,
             "predefined_code": predefined_code,
             "map_code": map_code,
             "runtime_code": runtime_code,
@@ -491,7 +570,7 @@ def _seed_xatra_lib_artifacts(
                 "elements": elements,
                 "options": {},
                 "importsCode": imports_code,
-                "themeCode": theme_code,
+                "themeCode": combined_theme,
                 "predefinedCode": predefined_code,
                 "runtimeCode": runtime_code,
                 "runtimeImportsCode": "",
@@ -510,6 +589,7 @@ def _seed_xatra_lib_artifacts(
                     predefined_code=parsed["predefined_code"],
                     map_code=parsed["map_code"],
                     runtime_code=parsed["runtime_code"],
+                    file_theme_code=parsed.get("theme_code", ""),
                 ))
             except Exception as e:
                 print(f"[xatra] Warning: failed to seed map '{name}': {e}", file=sys.stderr)
