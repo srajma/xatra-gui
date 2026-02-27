@@ -259,8 +259,6 @@ def _artifact_metadata_dict(metadata: Any) -> Dict[str, Any]:
 
 def _sanitize_artifact_metadata(kind: str, metadata: Any) -> Dict[str, Any]:
     cleaned = _artifact_metadata_dict(metadata)
-    if _normalize_hub_kind(kind) == "map":
-        cleaned.pop("description", None)
     return cleaned
 
 def _is_user_trusted(user_row: Optional[sqlite3.Row]) -> bool:
@@ -507,30 +505,39 @@ def _seed_xatra_lib_artifacts(
         except Exception:
             return []
 
-    def _upsert(kind: str, name: str, alpha_content: str) -> None:
+    def _upsert(kind: str, name: str, alpha_content: str, alpha_metadata: Optional[Dict[str, Any]] = None) -> None:
+        meta_json = json.dumps(alpha_metadata or {}, ensure_ascii=False)
         existing = conn.execute(
-            "SELECT id, alpha_content FROM hub_artifacts WHERE kind = ? AND name = ?", (kind, name)
+            "SELECT id, alpha_content, alpha_metadata FROM hub_artifacts WHERE kind = ? AND name = ?", (kind, name)
         ).fetchone()
         if existing is None:
             conn.execute(
                 """
                 INSERT INTO hub_artifacts(user_id, kind, name, alpha_content, alpha_metadata, created_at, updated_at)
-                VALUES(?, ?, ?, ?, '{}', ?, ?)
+                VALUES(?, ?, ?, ?, ?, ?, ?)
                 """,
-                (user_id, kind, name, alpha_content, now, now),
+                (user_id, kind, name, alpha_content, meta_json, now, now),
             )
             print(f"[xatra] Seeded {kind} artifact '{name}'")
         elif force:
-            conn.execute(
-                "UPDATE hub_artifacts SET alpha_content = ?, updated_at = ? WHERE id = ?",
-                (alpha_content, now, existing["id"]),
-            )
+            update_args = [alpha_content, now]
+            update_sql = "UPDATE hub_artifacts SET alpha_content = ?, updated_at = ?"
+            if alpha_metadata is not None:
+                update_sql += ", alpha_metadata = ?"
+                update_args.append(meta_json)
+            update_sql += " WHERE id = ?"
+            update_args.append(existing["id"])
+            conn.execute(update_sql, update_args)
             print(f"[xatra] Reseeded {kind} artifact '{name}' (--force)")
         elif kind == "map" and code_to_builder_fn is not None:
             # Populate project.elements if currently empty, without overwriting other content.
+            # Also backfill display_type if alpha_metadata was provided.
             try:
                 existing_content = _json_parse(existing["alpha_content"], {})
+                existing_meta = _json_parse(existing["alpha_metadata"], {})
                 proj = existing_content.get("project", {}) if isinstance(existing_content, dict) else {}
+                content_changed = False
+                meta_changed = False
                 if not proj.get("elements"):
                     mc = existing_content.get("map_code", "") if isinstance(existing_content, dict) else ""
                     pc = existing_content.get("predefined_code", "") if isinstance(existing_content, dict) else ""
@@ -539,11 +546,18 @@ def _seed_xatra_lib_artifacts(
                         if not isinstance(existing_content, dict):
                             existing_content = {}
                         existing_content.setdefault("project", {})["elements"] = elements
-                        conn.execute(
-                            "UPDATE hub_artifacts SET alpha_content = ?, updated_at = ? WHERE id = ?",
-                            (json.dumps(existing_content, ensure_ascii=False), now, existing["id"]),
-                        )
+                        content_changed = True
                         print(f"[xatra] Populated builder elements for map '{name}'")
+                if alpha_metadata is not None:
+                    for k, v in alpha_metadata.items():
+                        if existing_meta.get(k) != v:
+                            existing_meta[k] = v
+                            meta_changed = True
+                if content_changed or meta_changed:
+                    conn.execute(
+                        "UPDATE hub_artifacts SET alpha_content = ?, alpha_metadata = ?, updated_at = ? WHERE id = ?",
+                        (json.dumps(existing_content, ensure_ascii=False), json.dumps(existing_meta, ensure_ascii=False), now, existing["id"]),
+                    )
             except Exception as e:
                 print(f"[xatra] Warning: failed to populate elements for '{name}': {e}", file=sys.stderr)
 
@@ -607,7 +621,7 @@ def _seed_xatra_lib_artifacts(
                     predefined_code=parsed["predefined_code"],
                     map_code="",
                     runtime_code="",
-                ))
+                ), alpha_metadata={"display_type": "territory_library"})
             except Exception as e:
                 print(f"[xatra] Warning: failed to seed lib '{name}': {e}", file=sys.stderr)
 
@@ -752,7 +766,7 @@ def _init_hub_db():
         user_row = conn.execute("SELECT id FROM hub_users WHERE username = ?", (ADMIN_USERNAME,)).fetchone()
         if user_row is not None:
             _seed_xatra_lib_artifacts(conn, user_row["id"], now, force=False)
-        # Migration: maps no longer support descriptions; strip description keys from stored metadata.
+        # (Historical migration: once stripped description from map metadata; now a no-op since descriptions are supported again.)
         map_rows = conn.execute(
             "SELECT id, alpha_metadata FROM hub_artifacts WHERE kind = 'map'"
         ).fetchall()
@@ -3915,6 +3929,116 @@ def hub_get_artifact(username: str, kind: str, name: str, http_request: Request)
         if artifact is None:
             raise HTTPException(status_code=404, detail="Artifact not found")
         return _hub_artifact_response(conn, artifact, request=http_request)
+    finally:
+        conn.close()
+
+
+@app.get("/hub/{username}/{kind}/{name}/info")
+def hub_artifact_info(username: str, kind: str, name: str, forks_limit: int = 5, importers_limit: int = 5):
+    conn = _hub_db_conn()
+    try:
+        artifact = _hub_get_artifact(conn, username, kind, name)
+        if artifact is None:
+            raise HTTPException(status_code=404, detail="Artifact not found")
+        meta = _artifact_metadata_dict(artifact["alpha_metadata"])
+        kind_label = _hub_kind_label(artifact["kind"])
+        # Forks: maps where forked_from metadata contains this artifact's slug
+        slug = f"/{artifact['name']}"
+        safe_forks_limit = max(1, min(int(forks_limit), 50))
+        fork_rows = conn.execute(
+            """
+            SELECT a.name, u.username, a.alpha_metadata, a.updated_at
+            FROM hub_artifacts a
+            JOIN hub_users u ON u.id = a.user_id
+            WHERE a.kind = 'map'
+              AND a.alpha_metadata LIKE ?
+            ORDER BY a.updated_at DESC
+            LIMIT ?
+            """,
+            (f'%"forked_from":"{slug}"%', safe_forks_limit + 1),
+        ).fetchall()
+        forks_has_more = len(fork_rows) > safe_forks_limit
+        forks = []
+        for row in fork_rows[:safe_forks_limit]:
+            fork_meta = _json_parse(row["alpha_metadata"], {})
+            forks.append({
+                "username": row["username"],
+                "name": row["name"],
+                "slug": f"/{row['name']}",
+                "thumbnail": fork_meta.get("thumbnail") or "/vite.svg",
+                "updated_at": row["updated_at"],
+            })
+        # Importers: artifacts whose alpha_content references this artifact
+        safe_imp_limit = max(1, min(int(importers_limit), 50))
+        import_search = f"%/{kind_label}/{artifact['name']}/%"
+        imp_rows = conn.execute(
+            """
+            SELECT a.name, a.kind, u.username, a.updated_at
+            FROM hub_artifacts a
+            JOIN hub_users u ON u.id = a.user_id
+            WHERE a.id != ?
+              AND a.alpha_content LIKE ?
+            ORDER BY a.updated_at DESC
+            LIMIT ?
+            """,
+            (artifact["id"], import_search, safe_imp_limit + 1),
+        ).fetchall()
+        importers_has_more = len(imp_rows) > safe_imp_limit
+        importers = []
+        for row in imp_rows[:safe_imp_limit]:
+            importers.append({
+                "username": row["username"],
+                "kind": _hub_kind_label(row["kind"]),
+                "name": row["name"],
+                "slug": f"/{_hub_kind_label(row['kind'])}/{row['name']}",
+                "updated_at": row["updated_at"],
+            })
+        # Timeline
+        versions_rows = conn.execute(
+            "SELECT version, created_at FROM hub_artifact_versions WHERE artifact_id = ? ORDER BY version ASC",
+            (artifact["id"],),
+        ).fetchall()
+        timeline = {
+            "created_at": artifact["created_at"],
+            "updated_at": artifact["updated_at"],
+            "versions": [{"version": int(r["version"]), "created_at": r["created_at"]} for r in versions_rows],
+        }
+        return {
+            "description": meta.get("description") or "",
+            "display_type": meta.get("display_type") or "map",
+            "forks": forks,
+            "forks_has_more": forks_has_more,
+            "importers": importers,
+            "importers_has_more": importers_has_more,
+            "timeline": timeline,
+        }
+    finally:
+        conn.close()
+
+
+@app.put("/hub/{username}/{kind}/{name}/meta")
+async def hub_update_artifact_meta(username: str, kind: str, name: str, http_request: Request):
+    body = await http_request.json()
+    conn = _hub_db_conn()
+    try:
+        _require_write_identity(conn, http_request, username)
+        artifact = _hub_get_artifact(conn, username, kind, name)
+        if artifact is None:
+            raise HTTPException(status_code=404, detail="Artifact not found")
+        existing_meta = _artifact_metadata_dict(artifact["alpha_metadata"])
+        if "description" in body:
+            existing_meta["description"] = str(body["description"] or "")
+        if "display_type" in body:
+            dt = str(body.get("display_type") or "map")
+            if dt not in ("map", "territory_library", "theme"):
+                raise HTTPException(status_code=400, detail="display_type must be 'map', 'territory_library', or 'theme'")
+            existing_meta["display_type"] = dt
+        conn.execute(
+            "UPDATE hub_artifacts SET alpha_metadata = ?, updated_at = ? WHERE id = ?",
+            (json.dumps(existing_meta, ensure_ascii=False), _utc_now_iso(), artifact["id"]),
+        )
+        conn.commit()
+        return {"ok": True, "description": existing_meta.get("description", ""), "display_type": existing_meta.get("display_type", "map")}
     finally:
         conn.close()
 

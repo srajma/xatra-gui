@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Layers, Code, Play, Upload, Download, Image, Plus, Trash2, Keyboard, Copy, Check, Moon, Sun, Menu, Search, Compass, User, Users, LogIn, LogOut, FilePlus2, Import, Save, Triangle, GitFork, CloudUpload, UserX, Settings, Shield, Star } from 'lucide-react';
+import { Layers, Code, Play, Upload, Download, Image, Plus, Trash2, Keyboard, Copy, Check, Moon, Sun, Menu, Search, Compass, User, Users, LogIn, LogOut, FilePlus2, Import, Save, Triangle, GitFork, CloudUpload, UserX, Settings, Shield, Star, Info, X, Clock, ChevronDown, ChevronUp } from 'lucide-react';
 
 // Components (defined inline for simplicity first, can be split later)
 import Builder from './components/Builder';
@@ -41,9 +41,6 @@ const IMPORTABLE_LAYER_TYPES = [
   'TitleBox', 'Music', 'CSS', 'BaseOption', 'FlagColorSequence', 'AdminColorSequence',
   'DataColormap', 'zoom', 'focus', 'slider', 'Python',
 ];
-const THUMBNAIL_MAP_CODE_SMALL_CHARS = 240;
-const THUMBNAIL_LIBRARY_LARGE_CHARS = 1800;
-const THUMBNAIL_LIBRARY_RATIO_MIN = 4;
 const THUMBNAIL_LIBRARY_MAX_NAMES = 48;
 
 const apiFetch = (path, options = {}) => {
@@ -222,6 +219,15 @@ function App() {
   const [mapUserVoted, setMapUserVoted] = useState(false);
   const [mapViews, setMapViews] = useState(0);
   const [mapFeatured, setMapFeatured] = useState(false);
+  const [mapDescription, setMapDescription] = useState('');
+  const [mapDisplayType, setMapDisplayType] = useState('map');
+  const [showInfoPopup, setShowInfoPopup] = useState(false);
+  const [infoData, setInfoData] = useState(null);
+  const [infoLoading, setInfoLoading] = useState(false);
+  const [infoDescDraft, setInfoDescDraft] = useState('');
+  const [infoDescSaving, setInfoDescSaving] = useState(false);
+  const [infoForksLimit, setInfoForksLimit] = useState(5);
+  const [infoImportersLimit, setInfoImportersLimit] = useState(5);
   const [importsCode, setImportsCode] = useState(DEFAULT_INDIC_IMPORT_CODE);
   const [hubImports, setHubImports] = useState(DEFAULT_IMPORTS.map((x) => ({ ...x })));
   const [runtimeImportsCode, setRuntimeImportsCode] = useState('');
@@ -454,6 +460,19 @@ ${DEFAULT_MAP_CODE}
   }, [importModalOpen]);
 
   useEffect(() => {
+    if (!showInfoPopup || !route.map) { setInfoData(null); return; }
+    setInfoLoading(true);
+    setInfoDescDraft(mapDescription);
+    setInfoForksLimit(5);
+    setInfoImportersLimit(5);
+    apiFetch(`/hub/${mapOwner}/map/${route.map}/info?forks_limit=5&importers_limit=5`)
+      .then((r) => r.json())
+      .then((d) => { setInfoData(d); setInfoLoading(false); })
+      .catch(() => setInfoLoading(false));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showInfoPopup, route.map, mapOwner]);
+
+  useEffect(() => {
     const v = String(route?.version || 'alpha');
     setMapVersionLabel(v);
     setSelectedLibraryVersion(v);
@@ -464,6 +483,7 @@ ${DEFAULT_MAP_CODE}
     if (window.location.pathname !== path) {
       window.history.pushState({}, '', path);
       setRoute(parsePath(path));
+      setShowInfoPopup(false);
     }
   };
 
@@ -650,6 +670,8 @@ ${DEFAULT_MAP_CODE}
     username: normalizedHubUsername,
     updated_from: activeTab,
     ...(kind === 'map' && lastRenderedThumbnailRef.current ? { thumbnail: lastRenderedThumbnailRef.current } : {}),
+    description: mapDescription || '',
+    display_type: mapDisplayType || 'map',
   });
 
   const publishHubArtifact = async (kind, content, opts = {}) => {
@@ -816,6 +838,8 @@ ${DEFAULT_MAP_CODE}
     setAutoSaveStatus('idle');
     lastAutoSavedContentRef.current = null;
     setForkedFrom(null);
+    setMapDescription('');
+    setMapDisplayType('map');
     try {
       const endpoint = owner
         ? `/maps/${owner}/${name}?version=${encodeURIComponent(version || 'alpha')}`
@@ -949,6 +973,14 @@ ${DEFAULT_MAP_CODE}
         setMapVersionLabel(version === 'alpha' ? 'alpha' : String(version));
         const forkSrc = artifactData?.alpha?.metadata?.forked_from;
         setForkedFrom(forkSrc ? String(forkSrc) : null);
+        const desc = artifactData?.alpha?.metadata?.description || '';
+        setMapDescription(desc);
+        const dt = artifactData?.alpha?.metadata?.display_type || 'map';
+        setMapDisplayType(dt);
+        if (dt === 'territory_library') {
+          setActivePreviewTab('library');
+          setActiveLibraryTab('custom');
+        }
       }
     } catch (err) {
       setError(err.message);
@@ -1907,6 +1939,11 @@ ${DEFAULT_MAP_CODE}
         setImportModalOpen(false);
         return;
       }
+      if (e.key === 'Escape' && showInfoPopup) {
+        e.preventDefault();
+        setShowInfoPopup(false);
+        return;
+      }
       if (e.key === 'Escape' && activePicker?.context === 'reference-gadm' && referencePickTarget?.kind === 'gadm') {
         e.preventDefault();
         setActivePicker(null);
@@ -2320,24 +2357,8 @@ window.addEventListener('message', function(e) {
     }
   };
 
-  const estimateCodeLengthForThumbnail = (src) => String(src || '').replace(/\s+/g, '').length;
-
   const shouldPreferCustomLibraryThumbnail = () => {
-    const currentMapCode = (() => {
-      if (activeTab !== 'builder') return code;
-      try {
-        return generatePythonCode(builderElements, builderOptions, { commitMain: false }).code || '';
-      } catch {
-        return code;
-      }
-    })();
-    const mapCodeLen = estimateCodeLengthForThumbnail(currentMapCode);
-    const libCodeLen = estimateCodeLengthForThumbnail(predefinedCode);
-    return (
-      mapCodeLen <= THUMBNAIL_MAP_CODE_SMALL_CHARS
-      && libCodeLen >= THUMBNAIL_LIBRARY_LARGE_CHARS
-      && libCodeLen >= mapCodeLen * THUMBNAIL_LIBRARY_RATIO_MIN
-    );
+    return mapDisplayType === 'territory_library';
   };
 
   const captureCustomLibraryThumbnail = async () => {
@@ -3987,8 +4008,204 @@ window.addEventListener('message', function(e) {
     );
   }
 
+  const saveInfoMeta = async (patch) => {
+    if (!route.map || !isMapAuthor) return;
+    setInfoDescSaving(true);
+    try {
+      const resp = await apiFetch(`/hub/${mapOwner}/map/${route.map}/meta`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch),
+      });
+      const d = await resp.json();
+      if (resp.ok) {
+        if ('description' in patch) setMapDescription(d.description || '');
+        if ('display_type' in patch) setMapDisplayType(d.display_type || 'map');
+      }
+    } finally {
+      setInfoDescSaving(false);
+    }
+  };
+
+  const loadInfoMore = async (kind) => {
+    if (!route.map) return;
+    const newLimit = kind === 'forks' ? infoForksLimit + 10 : infoImportersLimit + 10;
+    if (kind === 'forks') setInfoForksLimit(newLimit);
+    else setInfoImportersLimit(newLimit);
+    try {
+      const r = await apiFetch(`/hub/${mapOwner}/map/${route.map}/info?forks_limit=${kind === 'forks' ? newLimit : infoForksLimit}&importers_limit=${kind === 'importers' ? newLimit : infoImportersLimit}`);
+      const d = await r.json();
+      setInfoData(d);
+    } catch { /* ignore */ }
+  };
+
+  const renderInfoPopup = () => {
+    if (!showInfoPopup) return null;
+    const fmtDate = (iso) => {
+      if (!iso) return '—';
+      try { return new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }); } catch { return iso; }
+    };
+    const DISPLAY_TYPE_OPTIONS = [
+      { value: 'map', label: 'Map' },
+      { value: 'territory_library', label: 'Territory Library' },
+      { value: 'theme', label: 'Theme' },
+    ];
+    return (
+      <div
+        className="fixed inset-0 bg-black/40 z-[200] flex items-center justify-center p-4"
+        onClick={(e) => { if (e.target === e.currentTarget) setShowInfoPopup(false); }}
+        role="dialog"
+        aria-modal="true"
+      >
+        <div className="bg-white rounded-xl shadow-2xl border border-gray-200 w-[520px] max-w-full max-h-[85vh] flex flex-col">
+          {/* Header */}
+          <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+            <div className="font-semibold text-sm text-gray-800 flex items-center gap-2">
+              <Info size={15} className="text-blue-500" />
+              Map Info
+            </div>
+            <button onClick={() => setShowInfoPopup(false)} className="text-gray-400 hover:text-gray-700 p-1 rounded" title="Close (Esc)">
+              <X size={16} />
+            </button>
+          </div>
+
+          <div className="overflow-y-auto flex-1 px-5 py-4 space-y-5 text-sm">
+            {/* Author */}
+            <div>
+              <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Author</div>
+              <a href={`/user/${mapOwner}`} className="text-blue-600 hover:underline font-medium">{mapOwner}</a>
+            </div>
+
+            {/* Description */}
+            <div>
+              <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Description</div>
+              {isMapAuthor ? (
+                <div className="space-y-1">
+                  <textarea
+                    value={infoDescDraft}
+                    onChange={(e) => setInfoDescDraft(e.target.value)}
+                    onBlur={() => { if (infoDescDraft !== mapDescription) saveInfoMeta({ description: infoDescDraft }); }}
+                    rows={3}
+                    placeholder="Add a description…"
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm resize-none focus:border-blue-400 outline-none"
+                  />
+                  {infoDescSaving && <span className="text-xs text-gray-400">Saving…</span>}
+                </div>
+              ) : (
+                <p className="text-gray-700 whitespace-pre-wrap">{mapDescription || <span className="text-gray-400 italic">No description.</span>}</p>
+              )}
+            </div>
+
+            {/* Display type */}
+            <div>
+              <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Display as</div>
+              {isMapAuthor ? (
+                <div className="flex gap-2">
+                  {DISPLAY_TYPE_OPTIONS.map((opt) => (
+                    <button
+                      key={opt.value}
+                      onClick={() => { setMapDisplayType(opt.value); saveInfoMeta({ display_type: opt.value }); }}
+                      className={`px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors ${mapDisplayType === opt.value ? 'bg-blue-600 border-blue-600 text-white' : 'border-gray-200 text-gray-600 hover:bg-gray-50'}`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <span className="text-gray-700">{DISPLAY_TYPE_OPTIONS.find((o) => o.value === mapDisplayType)?.label || 'Map'}</span>
+              )}
+            </div>
+
+            {/* Forks */}
+            <div>
+              <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1 flex items-center gap-1">
+                <GitFork size={11} /> Forks
+              </div>
+              {infoLoading ? (
+                <div className="text-xs text-gray-400">Loading…</div>
+              ) : infoData?.forks?.length > 0 ? (
+                <div className="space-y-1">
+                  {infoData.forks.map((f) => (
+                    <div key={f.slug} className="flex items-center gap-2 py-1 border-b border-gray-50 last:border-0">
+                      <a href={f.slug} className="text-blue-600 hover:underline text-xs flex-1">{f.slug}</a>
+                      <span className="text-gray-400 text-[11px]">by {f.username}</span>
+                    </div>
+                  ))}
+                  {infoData.forks_has_more && (
+                    <button onClick={() => loadInfoMore('forks')} className="text-xs text-blue-600 hover:underline mt-1">
+                      Load more
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <div className="text-xs text-gray-400">No forks yet.</div>
+              )}
+            </div>
+
+            {/* Importers */}
+            <div>
+              <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Used by</div>
+              {infoLoading ? (
+                <div className="text-xs text-gray-400">Loading…</div>
+              ) : infoData?.importers?.length > 0 ? (
+                <div className="space-y-1">
+                  {infoData.importers.map((imp) => (
+                    <div key={imp.slug} className="flex items-center gap-2 py-1 border-b border-gray-50 last:border-0">
+                      <a href={imp.slug} className="text-blue-600 hover:underline text-xs flex-1">{imp.slug}</a>
+                      <span className="text-gray-400 text-[11px]">{imp.kind} by {imp.username}</span>
+                    </div>
+                  ))}
+                  {infoData.importers_has_more && (
+                    <button onClick={() => loadInfoMore('importers')} className="text-xs text-blue-600 hover:underline mt-1">
+                      Load more
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <div className="text-xs text-gray-400">Not imported by any maps yet.</div>
+              )}
+            </div>
+
+            {/* Timeline */}
+            <div>
+              <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2 flex items-center gap-1">
+                <Clock size={11} /> Timeline
+              </div>
+              {infoLoading ? (
+                <div className="text-xs text-gray-400">Loading…</div>
+              ) : infoData?.timeline ? (
+                <div className="relative pl-4 border-l-2 border-gray-200 space-y-2">
+                  <div className="relative text-xs text-gray-600">
+                    <span className="absolute -left-[17px] w-3 h-3 rounded-full bg-blue-500 border-2 border-white top-0.5"></span>
+                    <span className="font-medium text-gray-700">Created</span>
+                    <span className="ml-2 text-gray-400">{fmtDate(infoData.timeline.created_at)}</span>
+                  </div>
+                  {(infoData.timeline.versions || []).map((v) => (
+                    <div key={v.version} className="relative text-xs text-gray-600">
+                      <span className="absolute -left-[17px] w-3 h-3 rounded-full bg-green-400 border-2 border-white top-0.5"></span>
+                      <span className="font-medium text-gray-700">v{v.version} published</span>
+                      <span className="ml-2 text-gray-400">{fmtDate(v.created_at)}</span>
+                    </div>
+                  ))}
+                  {infoData.timeline.updated_at && infoData.timeline.updated_at !== infoData.timeline.created_at && (
+                    <div className="relative text-xs text-gray-600">
+                      <span className="absolute -left-[17px] w-3 h-3 rounded-full bg-gray-400 border-2 border-white top-0.5"></span>
+                      <span className="font-medium text-gray-700">Last edited</span>
+                      <span className="ml-2 text-gray-400">{fmtDate(infoData.timeline.updated_at)}</span>
+                    </div>
+                  )}
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   const renderGlobalModals = () => (
     <>
+      {renderInfoPopup()}
       {publishV1WarnOpen && (
         <div className="fixed inset-0 bg-black/40 z-[100] flex items-center justify-center" onClick={(e) => { if (e.target === e.currentTarget) setPublishV1WarnOpen(false); }}>
           <div className={`rounded-lg border shadow-xl p-6 w-96 ${isDarkMode ? 'bg-slate-900 border-slate-700 text-slate-100' : 'bg-white border-gray-200 text-slate-800'}`}>
@@ -4572,6 +4789,15 @@ window.addEventListener('message', function(e) {
               <div className="text-xs text-gray-600 flex items-center gap-2">
                 <span>by</span>
                 <a href={`/user/${mapOwner}`} className="text-blue-700 hover:underline">{mapOwner}</a>
+                {route.map && (
+                  <button
+                    onClick={() => setShowInfoPopup(true)}
+                    className="text-gray-400 hover:text-blue-600 transition-colors"
+                    title="Map info"
+                  >
+                    <Info size={13} />
+                  </button>
+                )}
                 <span>·</span>
                 <button
                   onClick={isMapAuthor ? undefined : handleVoteMap}

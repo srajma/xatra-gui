@@ -186,8 +186,8 @@ const Builder = ({
   };
 
   return (
-    <div className={`space-y-6 ${readOnly ? 'pointer-events-none opacity-70' : ''}`}>
-      <section className="bg-white p-4 rounded-lg border border-gray-200 shadow-sm">
+    <div className={`space-y-6 ${readOnly ? 'opacity-70' : ''}`}>
+      <section className={`bg-white p-4 rounded-lg border border-gray-200 shadow-sm ${readOnly ? 'pointer-events-none' : ''}`}>
         <div className="flex items-center justify-between mb-2">
           <h3 className="text-sm font-semibold text-gray-900">Imports</h3>
           <button
@@ -241,12 +241,14 @@ const Builder = ({
       </section>
 
       {/* Global Options */}
-      <GlobalOptions 
-        options={options} 
-        setOptions={setOptions} 
-        elements={elements} 
-        onGetCurrentView={onGetCurrentView}
-      />
+      <div className={readOnly ? 'pointer-events-none' : ''}>
+        <GlobalOptions
+          options={options}
+          setOptions={setOptions}
+          elements={elements}
+          onGetCurrentView={onGetCurrentView}
+        />
+      </div>
 
       {/* Layers */}
       <section>
@@ -256,12 +258,12 @@ const Builder = ({
 
         <div className="space-y-3 overflow-auto max-h-[70vh]" id="layers-container">
           {elements.map((el, index) => (
-            <LayerItem 
-              key={index} 
-              element={el} 
-              index={index} 
+            <LayerItem
+              key={index}
+              element={el}
+              index={index}
               elements={elements}
-              updateElement={updateElement} 
+              updateElement={updateElement}
               updateArg={updateArg}
               replaceElement={replaceElement}
               removeElement={removeElement}
@@ -276,6 +278,7 @@ const Builder = ({
               hubImports={hubImports}
               trustedUser={trustedUser}
               isDarkMode={isDarkMode}
+              readOnly={readOnly}
             />
           ))}
           
@@ -286,7 +289,7 @@ const Builder = ({
           )}
 
           {/* Add layer panel at bottom so new layers appear above it */}
-          <div ref={layersEndRef} className="grid grid-cols-3 gap-2 pt-2 sm:grid-cols-4">
+          <div ref={layersEndRef} className={`grid grid-cols-3 gap-2 pt-2 sm:grid-cols-4 ${readOnly ? 'pointer-events-none' : ''}`}>
              <button data-kind="flag" onClick={() => addElement('flag', { focusFirstField: true })} className="xatra-add-layer-btn flex flex-col items-center justify-center p-2 bg-blue-50 text-blue-700 rounded hover:bg-blue-100 text-[10px] gap-1 border border-blue-100">
                <Map size={14}/> Flag
              </button>
@@ -326,12 +329,14 @@ const Builder = ({
       <details className="bg-white p-4 rounded-lg border border-gray-200 shadow-sm" open={false}>
         <summary className="cursor-pointer text-sm font-semibold text-gray-900 select-none">Do not expose to importers</summary>
         <div className="mt-4 space-y-4">
-          <GlobalOptions
-            options={runtimeOptions || {}}
-            setOptions={typeof runtimeSetOptions === 'function' ? runtimeSetOptions : (() => {})}
-            elements={runtimeElements || []}
-            onGetCurrentView={onGetCurrentView}
-          />
+          <div className={readOnly ? 'pointer-events-none' : ''}>
+            <GlobalOptions
+              options={runtimeOptions || {}}
+              setOptions={typeof runtimeSetOptions === 'function' ? runtimeSetOptions : (() => {})}
+              elements={runtimeElements || []}
+              onGetCurrentView={onGetCurrentView}
+            />
+          </div>
           <section>
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-sm font-semibold text-gray-900">Runtime Layers</h3>
@@ -357,6 +362,7 @@ const Builder = ({
                   onStartReferencePick={onStartReferencePick}
                   hubImports={hubImports}
                   trustedUser={trustedUser}
+                  readOnly={readOnly}
                 />
               ))}
               {(runtimeElements || []).length === 0 && (
@@ -364,7 +370,7 @@ const Builder = ({
                   No runtime layers yet.
                 </div>
               )}
-              <div className="grid grid-cols-3 gap-2 pt-2 sm:grid-cols-4">
+              <div className={`grid grid-cols-3 gap-2 pt-2 sm:grid-cols-4 ${readOnly ? 'pointer-events-none' : ''}`}>
                 <button onClick={() => addRuntimeElement('flag')} className="xatra-add-layer-btn flex flex-col items-center justify-center p-2 bg-blue-50 text-blue-700 rounded hover:bg-blue-100 text-[10px] gap-1 border border-blue-100"><Map size={14}/> Flag</button>
                 <button onClick={() => addRuntimeElement('river')} className="xatra-add-layer-btn flex flex-col items-center justify-center p-2 bg-cyan-50 text-cyan-700 rounded hover:bg-cyan-100 text-[10px] gap-1 border border-cyan-100"><span className="text-lg leading-3">~</span> River</button>
                 <button onClick={() => addRuntimeElement('point')} className="xatra-add-layer-btn flex flex-col items-center justify-center p-2 bg-purple-50 text-purple-700 rounded hover:bg-purple-100 text-[10px] gap-1 border border-purple-100"><MapPin size={14}/> Point</button>

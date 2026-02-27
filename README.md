@@ -457,8 +457,8 @@ U (+): Territory: indic.LEVANT
 - [x] Changes to importing libraries
     1) Make it so that importing a lib also recursively imports the lib imports in that corresponding map, with cycle protection.
     2) Make it so that runtime code's xatrahub() imports *are* parsed (and correspondingly in the Builder UI there should be an "Imports" section under "Do not expose to importers").
-- [ ] Make Builder Scrollable even when greyed out (builder UI is greyed-out for other users' maps and for non-alpha versions of any map including one's own). I.e. only disable interactions that modify inputs, not things like scrolling and expanding/collapsing things
-- [ ] Add a little "info" icon on the map byline (the line containing the map author etc.). When clicked, it should create a nice popup with info like:
+- [x] Make Builder Scrollable even when greyed out (builder UI is greyed-out for other users' maps and for non-alpha versions of any map including one's own). I.e. only disable interactions that modify inputs, not things like scrolling and expanding/collapsing things
+- [x] Add a little "info" icon on the map byline (the line containing the map author etc.). When clicked, it should create a nice popup with info like:
     - author name
     - a description, editable by the author
     - a selection between [Map | Territory library | Theme] toggle, settable by the author and set to "Map" by default. This should control:

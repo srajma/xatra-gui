@@ -10,7 +10,8 @@ import { API_BASE } from '../config';
 const LayerItem = ({
   element, index, elements, updateElement, updateArg, replaceElement, removeElement,
   lastMapClick, activePicker, setActivePicker, draftPoints, setDraftPoints,
-  onSaveTerritory, predefinedCode, onStartReferencePick, hubImports = [], trustedUser = false, isDarkMode = false
+  onSaveTerritory, predefinedCode, onStartReferencePick, hubImports = [], trustedUser = false, isDarkMode = false,
+  readOnly = false,
 }) => {
   const [showMore, setShowMore] = useState(false);
   const pickerTimeoutRef = useRef(null);
@@ -659,14 +660,16 @@ const LayerItem = ({
 
   return (
     <div data-layer-index={index} className="xatra-layer-card bg-white p-3 rounded-lg border border-gray-200 shadow-sm relative group hover:border-blue-300 transition-colors">
-      <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
-        <button 
-          onClick={() => removeElement(index)}
-          className="text-red-400 hover:text-red-600 p-1"
-        >
-          <Trash2 size={14} />
-        </button>
-      </div>
+      {!readOnly && (
+        <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
+          <button
+            onClick={() => removeElement(index)}
+            className="text-red-400 hover:text-red-600 p-1"
+          >
+            <Trash2 size={14} />
+          </button>
+        </div>
+      )}
 
       <div className="flex items-center gap-2 mb-2">
         <span className={`text-[10px] uppercase font-bold px-1.5 py-0.5 rounded bg-gray-100 text-gray-700`}>
@@ -674,49 +677,55 @@ const LayerItem = ({
         </span>
       </div>
 
-      {renderSpecificFields()}
+      <div className={readOnly ? 'pointer-events-none' : ''}>
+        {renderSpecificFields()}
 
-      {element.type !== 'python' && element.type !== 'music' && (
-        <div className="mb-2">
-            <label className="block text-xs text-gray-500 mb-1">Period [start, end]</label>
+        {element.type !== 'python' && element.type !== 'music' && (
+          <div className="mb-2">
+              <label className="block text-xs text-gray-500 mb-1">Period [start, end]</label>
+              <PythonTextField allowPython={trustedUser}
+                value={element.args?.period ?? periodText}
+                onChange={handlePeriodChange}
+                inputClassName="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:border-blue-500 outline-none font-mono"
+                placeholder="e.g. -320, -180"
+              />
+               <div className="text-[10px] text-gray-400 mt-0.5 flex items-center gap-1">
+                   <Info size={10}/> Use negative numbers for BC years (e.g. -320, -180)
+               </div>
+          </div>
+        )}
+
+        {element.type !== 'titlebox' && element.type !== 'python' && element.type !== 'music' && (
+          <div>
+            <label className="block text-xs text-gray-500 mb-1">Note (Tooltip)</label>
             <PythonTextField allowPython={trustedUser}
-              value={element.args?.period ?? periodText}
-              onChange={handlePeriodChange}
-              inputClassName="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:border-blue-500 outline-none font-mono"
-              placeholder="e.g. -320, -180"
+              value={element.args?.note || ''}
+              onChange={(val) => updateArg(index, 'note', val)}
+              multiline
+              autoGrow
+              rows={1}
+              inputClassName="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:border-blue-500 outline-none font-mono resize-none overflow-hidden"
+              placeholder="Optional description..."
             />
-             <div className="text-[10px] text-gray-400 mt-0.5 flex items-center gap-1">
-                 <Info size={10}/> Use negative numbers for BC years (e.g. -320, -180)
-             </div>
-        </div>
-      )}
-
-      {element.type !== 'titlebox' && element.type !== 'python' && element.type !== 'music' && (
-        <div>
-          <label className="block text-xs text-gray-500 mb-1">Note (Tooltip)</label>
-          <PythonTextField allowPython={trustedUser}
-            value={element.args?.note || ''}
-            onChange={(val) => updateArg(index, 'note', val)}
-            multiline
-            autoGrow
-            rows={1}
-            inputClassName="w-full px-2 py-1.5 border border-gray-200 rounded text-sm focus:border-blue-500 outline-none font-mono resize-none overflow-hidden"
-            placeholder="Optional description..."
-          />
-        </div>
-      )}
+          </div>
+        )}
+      </div>
 
       {element.type !== 'titlebox' && element.type !== 'python' && element.type !== 'music' && (
         <>
-          <button 
+          <button
             onClick={() => setShowMore(!showMore)}
             className="mt-2 text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1 font-medium"
           >
             {showMore ? <ChevronUp size={12}/> : <ChevronDown size={12}/>}
             {showMore ? 'Less Options' : 'More Options'}
           </button>
-          
-          {showMore && renderMoreOptions()}
+
+          {showMore && (
+            <div className={readOnly ? 'pointer-events-none' : ''}>
+              {renderMoreOptions()}
+            </div>
+          )}
         </>
       )}
     </div>
