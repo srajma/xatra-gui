@@ -283,30 +283,253 @@ def _hash_password(password: str) -> str:
     return f"pbkdf2_sha256${salt}${dk.hex()}"
 
 
-def _territory_library_seed_code() -> str:
+def _xatra_lib_dir() -> Path:
+    """Return the path to the xatra_lib/ directory."""
+    return Path(__file__).resolve().parent / "xatra_lib"
+
+
+def _is_xatrahub_line(line: str, require_assignment: bool = False) -> bool:
+    """Return True if the line is a xatrahub import statement."""
+    stripped = line.strip()
+    if not stripped or stripped.startswith('#'):
+        return False
+    if require_assignment:
+        return bool(re.match(r'^\w+\s*=\s*xatrahub\s*\(', stripped))
+    return bool(re.match(r'^(?:\w+\s*=\s*)?xatrahub\s*\(', stripped))
+
+
+def _parse_xatra_lib_map_file(content: str) -> Dict[str, str]:
     """
-    Load xatra.territory_library source from ../xatra.master and drop import lines.
+    Parse a map/ file into four sections:
+    - imports_code: xatrahub(...) or abc = xatrahub(...) lines not inside # <lib> or if __name__
+    - predefined_code: content between # <lib> and # </lib> delimiters
+    - map_code: everything else
+    - runtime_code: body of if __name__ == '__main__': (outer 4-space indent stripped)
     """
-    candidates = [
-        Path(__file__).resolve().parent.parent / "xatra.master" / "src" / "xatra" / "territory_library.py",
-        Path(__file__).resolve().parent / "src" / "xatra" / "territory_library.py",
-    ]
-    raw = ""
-    for p in candidates:
-        if p.exists():
-            try:
-                raw = p.read_text(encoding="utf-8")
+    # Use AST to find the exact line where `if __name__ == "__main__":` starts.
+    # This avoids breaking on multi-line strings whose content has no indentation.
+    main_lineno: Optional[int] = None
+    try:
+        tree = ast.parse(content)
+        for node in tree.body:
+            if (
+                isinstance(node, ast.If)
+                and isinstance(node.test, ast.Compare)
+                and isinstance(node.test.left, ast.Name)
+                and node.test.left.id == "__name__"
+                and len(node.test.comparators) == 1
+                and isinstance(node.test.comparators[0], ast.Constant)
+                and node.test.comparators[0].value == "__main__"
+            ):
+                main_lineno = node.lineno  # 1-indexed
                 break
-            except Exception:
-                continue
-    if not raw:
-        return ""
-    out_lines: List[str] = []
-    for line in raw.splitlines():
-        if re.match(r"^\s*(from\s+\S+\s+import\s+|import\s+)", line):
-            continue
-        out_lines.append(line)
-    return ("\n".join(out_lines).strip() + "\n") if out_lines else ""
+    except SyntaxError:
+        pass
+
+    lines = content.splitlines(keepends=True)
+
+    if main_lineno is not None:
+        before_lines = lines[: main_lineno - 1]
+        body_lines = lines[main_lineno:]  # body of the if __name__ block (still indented)
+    else:
+        before_lines = lines
+        body_lines = []
+
+    imports_lines: List[str] = []
+    predefined_lines: List[str] = []
+    map_lines: List[str] = []
+    state = "normal"
+
+    for line in before_lines:
+        stripped = line.strip()
+        if state == "normal":
+            if stripped == "# <lib>":
+                state = "in_lib"
+            elif _is_xatrahub_line(line):
+                imports_lines.append(line)
+            else:
+                map_lines.append(line)
+        elif state == "in_lib":
+            if stripped == "# </lib>":
+                state = "normal"
+            else:
+                predefined_lines.append(line)
+
+    # Strip 4-space indent from the runtime body lines
+    runtime_lines: List[str] = []
+    for line in body_lines:
+        if line.startswith("    "):
+            runtime_lines.append(line[4:])
+        elif line.startswith("\t"):
+            runtime_lines.append(line[1:])
+        else:
+            runtime_lines.append(line)
+
+    def _clean(lst: List[str]) -> str:
+        s = "".join(lst).strip()
+        return s + "\n" if s else ""
+
+    return {
+        "imports_code": _clean(imports_lines),
+        "predefined_code": _clean(predefined_lines),
+        "map_code": _clean(map_lines),
+        "runtime_code": _clean(runtime_lines),
+    }
+
+
+def _parse_xatra_lib_lib_file(content: str) -> Dict[str, str]:
+    """
+    Parse a lib/ file into:
+    - imports_code: abc = xatrahub(...) lines
+    - predefined_code: everything else
+    """
+    imports_lines: List[str] = []
+    other_lines: List[str] = []
+    for line in content.splitlines(keepends=True):
+        if _is_xatrahub_line(line, require_assignment=True):
+            imports_lines.append(line)
+        else:
+            other_lines.append(line)
+
+    def _clean(lst: List[str]) -> str:
+        s = "".join(lst).strip()
+        return s + "\n" if s else ""
+
+    return {
+        "imports_code": _clean(imports_lines),
+        "predefined_code": _clean(other_lines),
+    }
+
+
+def _seed_xatra_lib_artifacts(
+    conn: "sqlite3.Connection",
+    user_id: int,
+    now: str,
+    force: bool = False,
+    code_to_builder_fn=None,
+) -> None:
+    """
+    Seeds hub artifacts from xatra_lib/ directory.
+
+    - xatra_lib/map/*.py  → creates kind='map' artifacts
+    - xatra_lib/lib/*.py  → creates kind='lib' artifact + sibling kind='map' artifact
+    - xatra_lib/default_theme.py → used as theme_code for all created artifacts
+
+    If force=False, skips artifacts that already exist (but still fills in empty project.elements).
+    If force=True, overwrites the alpha_content of existing artifacts.
+    code_to_builder_fn: optional callable(CodeSyncRequest) → dict; used to parse map_code into
+    project.elements. When None, elements are left empty.
+    Caller is responsible for committing the transaction.
+    """
+    xatra_lib_dir = _xatra_lib_dir()
+    if not xatra_lib_dir.exists():
+        print("[xatra] xatra_lib/ not found; skipping artifact seeding.", file=sys.stderr)
+        return
+
+    default_theme_path = xatra_lib_dir / "default_theme.py"
+    theme_code = default_theme_path.read_text(encoding="utf-8") if default_theme_path.exists() else ""
+
+    def _parse_elements(map_code: str, predefined_code: str) -> list:
+        if code_to_builder_fn is None or not map_code.strip():
+            return []
+        try:
+            result = code_to_builder_fn(CodeSyncRequest(code=map_code, predefined_code=predefined_code))
+            return result.get("elements", []) if isinstance(result, dict) else []
+        except Exception:
+            return []
+
+    def _upsert(kind: str, name: str, alpha_content: str) -> None:
+        existing = conn.execute(
+            "SELECT id, alpha_content FROM hub_artifacts WHERE kind = ? AND name = ?", (kind, name)
+        ).fetchone()
+        if existing is None:
+            conn.execute(
+                """
+                INSERT INTO hub_artifacts(user_id, kind, name, alpha_content, alpha_metadata, created_at, updated_at)
+                VALUES(?, ?, ?, ?, '{}', ?, ?)
+                """,
+                (user_id, kind, name, alpha_content, now, now),
+            )
+            print(f"[xatra] Seeded {kind} artifact '{name}'")
+        elif force:
+            conn.execute(
+                "UPDATE hub_artifacts SET alpha_content = ?, updated_at = ? WHERE id = ?",
+                (alpha_content, now, existing["id"]),
+            )
+            print(f"[xatra] Reseeded {kind} artifact '{name}' (--force)")
+        elif kind == "map" and code_to_builder_fn is not None:
+            # Populate project.elements if currently empty, without overwriting other content.
+            try:
+                existing_content = _json_parse(existing["alpha_content"], {})
+                proj = existing_content.get("project", {}) if isinstance(existing_content, dict) else {}
+                if not proj.get("elements"):
+                    mc = existing_content.get("map_code", "") if isinstance(existing_content, dict) else ""
+                    pc = existing_content.get("predefined_code", "") if isinstance(existing_content, dict) else ""
+                    elements = _parse_elements(mc, pc)
+                    if elements:
+                        if not isinstance(existing_content, dict):
+                            existing_content = {}
+                        existing_content.setdefault("project", {})["elements"] = elements
+                        conn.execute(
+                            "UPDATE hub_artifacts SET alpha_content = ?, updated_at = ? WHERE id = ?",
+                            (json.dumps(existing_content, ensure_ascii=False), now, existing["id"]),
+                        )
+                        print(f"[xatra] Populated builder elements for map '{name}'")
+            except Exception as e:
+                print(f"[xatra] Warning: failed to populate elements for '{name}': {e}", file=sys.stderr)
+
+    def _build_map_content(imports_code: str, predefined_code: str, map_code: str, runtime_code: str) -> str:
+        elements = _parse_elements(map_code, predefined_code)
+        return json.dumps({
+            "imports_code": imports_code,
+            "theme_code": theme_code,
+            "predefined_code": predefined_code,
+            "map_code": map_code,
+            "runtime_code": runtime_code,
+            "runtime_imports_code": "",
+            "project": {
+                "elements": elements,
+                "options": {},
+                "importsCode": imports_code,
+                "themeCode": theme_code,
+                "predefinedCode": predefined_code,
+                "runtimeCode": runtime_code,
+                "runtimeImportsCode": "",
+            },
+        }, ensure_ascii=False)
+
+    # Process map/ files
+    map_dir = xatra_lib_dir / "map"
+    if map_dir.exists():
+        for py_file in sorted(map_dir.glob("*.py")):
+            name = py_file.stem
+            try:
+                parsed = _parse_xatra_lib_map_file(py_file.read_text(encoding="utf-8"))
+                _upsert("map", name, _build_map_content(
+                    imports_code=parsed["imports_code"],
+                    predefined_code=parsed["predefined_code"],
+                    map_code=parsed["map_code"],
+                    runtime_code=parsed["runtime_code"],
+                ))
+            except Exception as e:
+                print(f"[xatra] Warning: failed to seed map '{name}': {e}", file=sys.stderr)
+
+    # Process lib/ files — create both a lib artifact and a sibling map artifact
+    lib_dir = xatra_lib_dir / "lib"
+    if lib_dir.exists():
+        for py_file in sorted(lib_dir.glob("*.py")):
+            name = py_file.stem
+            try:
+                parsed = _parse_xatra_lib_lib_file(py_file.read_text(encoding="utf-8"))
+                _upsert("lib", name, json.dumps({"predefined_code": parsed["predefined_code"]}, ensure_ascii=False))
+                _upsert("map", name, _build_map_content(
+                    imports_code=parsed["imports_code"],
+                    predefined_code=parsed["predefined_code"],
+                    map_code="",
+                    runtime_code="",
+                ))
+            except Exception as e:
+                print(f"[xatra] Warning: failed to seed lib '{name}': {e}", file=sys.stderr)
 
 
 def _verify_password(password: str, password_hash: Optional[str]) -> bool:
@@ -445,102 +668,10 @@ def _init_hub_db():
         if result.rowcount > 0:
             print(f"[xatra] Admin account '{ADMIN_USERNAME}' created. Password: {admin_password}")
             print("[xatra] Set XATRA_ADMIN_PASSWORD env var to configure this at startup, or change it after first login.")
-        # Seed default public territory library.
+        # Seed hub artifacts from xatra_lib/ directory.
         user_row = conn.execute("SELECT id FROM hub_users WHERE username = ?", (ADMIN_USERNAME,)).fetchone()
         if user_row is not None:
-            territory_seed = _territory_library_seed_code()
-            seed_content = json.dumps({
-                "predefined_code": territory_seed or "from xatra.territory_library import *\n",
-                "map_name": "dtl",
-                "description": "Default territory library",
-            })
-            conn.execute(
-                """
-                INSERT OR IGNORE INTO hub_artifacts(user_id, kind, name, alpha_content, alpha_metadata, created_at, updated_at)
-                VALUES(?, 'lib', 'dtl', ?, ?, ?, ?)
-                """,
-                (user_row["id"], seed_content, json.dumps({"description": "Default territory library"}), now, now),
-            )
-            # Refresh lib 'dtl' if it still has placeholder/import-only content.
-            existing_lib = conn.execute(
-                """
-                SELECT id, alpha_content, alpha_metadata
-                FROM hub_artifacts
-                WHERE kind = 'lib' AND name = 'dtl'
-                """,
-            ).fetchone()
-            if existing_lib is not None and territory_seed.strip():
-                try:
-                    parsed_lib = _json_parse(existing_lib["alpha_content"], {})
-                    old_pre = str(parsed_lib.get("predefined_code") or "")
-                    meta = _json_parse(existing_lib["alpha_metadata"], {})
-                    placeholderish = (
-                        ('xatrahub(' in old_pre)
-                        or old_pre.strip() in {"", "from xatra.territory_library import *"}
-                        or str(meta.get("description", "")) in ("Default Indic territory library", "Default territory library")
-                    )
-                    if placeholderish:
-                        parsed_lib["predefined_code"] = territory_seed
-                        parsed_lib["map_name"] = "dtl"
-                        conn.execute(
-                            "UPDATE hub_artifacts SET alpha_content = ?, updated_at = ? WHERE id = ?",
-                            (json.dumps(parsed_lib, ensure_ascii=False), now, existing_lib["id"]),
-                        )
-                except Exception:
-                    print("[xatra] Warning: failed to refresh default lib seed.", file=sys.stderr)
-            # Seed default public map 'indic' if missing (uses new /lib/dtl/alpha import path).
-            map_seed_content = json.dumps({
-                "imports_code": 'indic = xatrahub("/lib/dtl/alpha")\n',
-                "runtime_imports_code": "",
-                "theme_code": "",
-                "predefined_code": territory_seed,
-                "map_code": 'import xatra\nxatra.TitleBox("<b>Indic Map</b>")\n',
-                "runtime_code": "",
-                "project": {
-                    "elements": [],
-                    "options": {
-                        "basemaps": [{"url_or_provider": "Esri.WorldTopoMap", "default": True}],
-                        "flag_color_sequences": [{"class_name": "", "colors": "", "step_h": 1.6180339887, "step_s": 0.0, "step_l": 0.0}],
-                        "admin_color_sequences": [{"colors": "", "step_h": 1.6180339887, "step_s": 0.0, "step_l": 0.0}],
-                        "data_colormap": {"type": "LinearSegmented", "colors": "yellow,orange,red"},
-                    },
-                    "predefinedCode": territory_seed,
-                    "importsCode": 'indic = xatrahub("/lib/dtl/alpha")\n',
-                    "runtimeImportsCode": "",
-                    "themeCode": "",
-                    "runtimeCode": "",
-                },
-            })
-            conn.execute(
-                """
-                INSERT OR IGNORE INTO hub_artifacts(user_id, kind, name, alpha_content, alpha_metadata, created_at, updated_at)
-                VALUES(?, 'map', 'indic', ?, ?, ?, ?)
-                """,
-                (user_row["id"], map_seed_content, json.dumps({}), now, now),
-            )
-            # Refresh indic map predefined_code if it was left empty.
-            existing_map = conn.execute(
-                "SELECT id, alpha_content FROM hub_artifacts WHERE kind = 'map' AND name = 'indic'"
-            ).fetchone()
-            if existing_map is not None:
-                try:
-                    parsed = _json_parse(existing_map["alpha_content"], {})
-                    old_pre = str(parsed.get("predefined_code") or "")
-                    old_project_pre = str((parsed.get("project") or {}).get("predefinedCode") or "")
-                    defaultish = (not old_pre.strip() and not old_project_pre.strip())
-                    if defaultish and territory_seed.strip():
-                        parsed["predefined_code"] = territory_seed
-                        project = parsed.get("project")
-                        if not isinstance(project, dict):
-                            project = {}
-                        project["predefinedCode"] = territory_seed
-                        parsed["project"] = project
-                        conn.execute(
-                            "UPDATE hub_artifacts SET alpha_content = ?, updated_at = ? WHERE id = ?",
-                            (json.dumps(parsed, ensure_ascii=False), now, existing_map["id"]),
-                        )
-                except Exception:
-                    print("[xatra] Warning: failed to refresh default map seed.", file=sys.stderr)
+            _seed_xatra_lib_artifacts(conn, user_row["id"], now, force=False)
         # Migration: maps no longer support descriptions; strip description keys from stored metadata.
         map_rows = conn.execute(
             "SELECT id, alpha_metadata FROM hub_artifacts WHERE kind = 'map'"
@@ -5447,6 +5578,28 @@ def public_hub_artifact_version(username: str, kind: str, name: str, version: st
 @app.get("/{username}/{kind}/{name}")
 def public_hub_artifact_alpha(username: str, kind: str, name: str, http_request: Request):
     return hub_get_artifact_version(username=username, kind=kind, name=name, version="alpha", http_request=http_request)
+
+@app.on_event("startup")
+def _startup_populate_builder_elements():
+    """Populate project.elements for seeded artifacts that have map_code but empty elements."""
+    try:
+        conn = _hub_db_conn()
+        try:
+            user_row = conn.execute("SELECT id FROM hub_users WHERE username = ?", (ADMIN_USERNAME,)).fetchone()
+            if user_row is not None:
+                _seed_xatra_lib_artifacts(
+                    conn,
+                    user_row["id"],
+                    _utc_now_iso(),
+                    force=False,
+                    code_to_builder_fn=sync_code_to_builder,
+                )
+                conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        print(f"[xatra] Warning: startup element seeding failed: {e}", file=sys.stderr)
+
 
 if __name__ == "__main__":
     import uvicorn

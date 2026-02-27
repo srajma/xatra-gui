@@ -1,0 +1,8 @@
+xatra.BaseOption("Esri.WorldTopoMap", default=True)
+xatra.BaseOption("OpenStreetMap")
+xatra.BaseOption("Esri.WorldImagery")
+xatra.BaseOption("OpenTopoMap")
+xatra.BaseOption("Esri.WorldPhysical")
+xatra.FlagColorSequence(LinearColorSequence(colors=None, step=Color.hsl(1.6180339887, 0, 0)))
+xatra.AdminColorSequence(LinearColorSequence(colors=None, step=Color.hsl(1.6180339887, 0, 0)))
+xatra.DataColormap(LinearSegmentedColormap.from_list("custom_cmap", ["yellow", "orange", "red"]))

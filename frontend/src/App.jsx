@@ -10,6 +10,7 @@ import { isPythonValue, getPythonExpr } from './utils/pythonValue';
 import {
   DEFAULT_INDIC_IMPORT,
   DEFAULT_INDIC_IMPORT_CODE,
+  DEFAULT_IMPORTS,
   createDefaultBuilderOptions,
   createDefaultBuilderElements,
 } from './lib/editorDefaults';
@@ -222,7 +223,7 @@ function App() {
   const [mapViews, setMapViews] = useState(0);
   const [mapFeatured, setMapFeatured] = useState(false);
   const [importsCode, setImportsCode] = useState(DEFAULT_INDIC_IMPORT_CODE);
-  const [hubImports, setHubImports] = useState([{ ...DEFAULT_INDIC_IMPORT }]);
+  const [hubImports, setHubImports] = useState(DEFAULT_IMPORTS.map((x) => ({ ...x })));
   const [runtimeImportsCode, setRuntimeImportsCode] = useState('');
   const [themeCode, setThemeCode] = useState('');
   const [runtimeCode, setRuntimeCode] = useState('');
@@ -631,8 +632,9 @@ ${DEFAULT_MAP_CODE}
 
   const ensureDefaultIndicImport = (items) => {
     const list = Array.isArray(items) ? [...items] : [];
-    const exists = list.some((imp) => imp.kind === 'lib' && imp.name === 'dtl');
-    if (!exists) list.unshift({ ...DEFAULT_INDIC_IMPORT });
+    const defaultNames = new Set(DEFAULT_IMPORTS.map((d) => d.name));
+    const hasAny = list.some((imp) => imp.kind === 'lib' && defaultNames.has(imp.name));
+    if (!hasAny) return [...DEFAULT_IMPORTS.map((x) => ({ ...x })), ...list];
     return list;
   };
 
@@ -826,7 +828,7 @@ ${DEFAULT_MAP_CODE}
         if (resp.status === 404 && isOwner && version === 'alpha') {
           const defElements = createDefaultBuilderElements();
           const defOptions = createDefaultBuilderOptions();
-          const defaultImports = [{ ...DEFAULT_INDIC_IMPORT }];
+          const defaultImports = DEFAULT_IMPORTS.map((x) => ({ ...x }));
           const defaultImportsCode = serializeHubImports(defaultImports);
           setMapName(name);
           setMapOwner(currentUser?.user?.username || owner || 'guest');
@@ -1135,7 +1137,7 @@ ${DEFAULT_MAP_CODE}
     const nextOwner = opts.owner || (currentUser.is_authenticated ? normalizedHubUsername : 'guest');
     const defElements = createDefaultBuilderElements();
     const defOptions = createDefaultBuilderOptions();
-    const defaults = [{ ...DEFAULT_INDIC_IMPORT }];
+    const defaults = DEFAULT_IMPORTS.map((x) => ({ ...x }));
     const defaultImportsCode = serializeHubImports(defaults);
 
     setMapOwner(nextOwner);
