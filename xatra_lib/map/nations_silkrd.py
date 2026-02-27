@@ -31,8 +31,8 @@ xatra.Flag(label="URAŚĀ", value=iran.URASA, note="Hazara")
 #  Chhibha comprising Punch, Rajauri and Bhimbhara. - VS Agarwala Ch II, Sec 4.""",
 #     )
 xatra.Flag(label="UḌḌIYĀNA", value=iran.UDDIYANA)
-xatra.Flag(label="DARADA", value=iran.DARADA)
-xatra.Flag(label="MARASA", value=iran.LADAKH)
+xatra.Flag(label="DARADA", value=ind.DARADA)
+xatra.Flag(label="MARASA", value=ind.LADAKH)
 xatra.Flag(label="GEDROSIA", value=iran.BALOCH)
 xatra.Flag(label="KAMBOJA", value=iran.KAMBOJA)
 xatra.Flag(label="MERU", value=iran.MERU)
@@ -55,8 +55,8 @@ xatra.Flag(label="ROURAN", value=iran.ROURAN)
 xatra.Flag(label="QIEMO", value=iran.QIEMO)
 xatra.Flag(label="KORLA", value=iran.KORLA)
 xatra.Flag(label="TURFAN", value=iran.TURFAN)
-xatra.Flag(label="BHOṬA", value=iran.TIBET)
-xatra.Flag(label="YYY_HIMALAYAN", classes="wild-tracts", value=iran.HIMALAYAN)
+xatra.Flag(label="BHOṬA", value=sb.TIBET)
+xatra.Flag(label="YYY_HIMALAYAN", classes="wild-tracts", value=ind.HIMALAYAN)
 xatra.CSS(r"""
 .names-unknown {fill: #444444; color: #444444 !important;}
 .wild-tracts {fill: #888888; color: #888888 !important;}

@@ -99,3 +99,6 @@ Indian interactions with the world.<br>
 <b>Raided:</b> Brief raids in the 7th (by Chalukyas? Or Chach of Sindh?) and 9th centuries (by the Pratiharas).<br>
 <b>Explored:</b> Countries that were visited by Indians in antiquity.<br>
 """)
+    
+    xatra.zoom(4)
+    xatra.focus(27.2156, 76.0254)

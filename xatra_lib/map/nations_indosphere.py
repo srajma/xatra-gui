@@ -1,4 +1,4 @@
-xatrahub("/map/nations_india")
+xatrahub("/map/nations_indic")
 xatrahub("/map/nations_silkrd")
 xatrahub("/map/nations_suvarnabhumi")
 xatrahub("/map/rivers_gangetic")
