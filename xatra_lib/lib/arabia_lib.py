@@ -49,5 +49,7 @@ GULF = (
 
 __TERRITORY_INDEX__ = [
     "MITANNI",
-    "SOCOTRA"
+    "SOCOTRA",
+    "LEVANT",
+    "GULF"
 ]

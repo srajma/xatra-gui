@@ -90,6 +90,7 @@ NEI_HIM = (
     | gadm("IND.23")
     | gadm("IND.33")
     | ASSAM_HIM
+    | disp.Z07
 )
 
 KAMBOJA = (

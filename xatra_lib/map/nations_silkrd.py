@@ -1,3 +1,5 @@
+ind = xatrahub("/lib/indic_lib")
+sb = xatrahub("/lib/sb_lib")
 iran = xatrahub("/lib/iran_lib")
 
 xatra.Flag(label="VṚJISTHĀNA", value=iran.VRJISTHANA, note="Vijayendra Kumar Mathur (1969), Aitihasik Sthanavali p 870: वृजिस्थान नामक एक ऐतिहासिक स्थान का उल्लेख प्रसिद्ध चीनी यात्री युवानच्वांग ने 'फो-लि शतंगना' नाम से किया है। सम्भवत: यह वर्तमान वज़ीरस्तान (पाकिस्तान) है।")
