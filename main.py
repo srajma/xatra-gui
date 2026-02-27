@@ -1322,7 +1322,7 @@ class CodeSyncRequest(BaseModel):
 
 class MapElement(BaseModel):
     type: str
-    label: Optional[str] = None
+    label: Optional[Any] = None
     value: Any = None
     args: Dict[str, Any] = {}
 

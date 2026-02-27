@@ -460,9 +460,15 @@ U (+): Territory: indic.LEVANT
 - [ ] Make Builder Scrollable even when greyed out (builder UI is greyed-out for other users' maps and for non-alpha versions of any map including one's own). I.e. only disable interactions that modify inputs, not things like scrolling and expanding/collapsing things
 - [ ] Add a little "info" icon on the map byline (the line containing the map author etc.). When clicked, it should create a nice popup with info like:
     - author name
+    - a description, editable by the author
+    - a selection between [Map | Territory library | Theme] toggle, settable by the author and set to "Map" by default. This should control:
+      1) which map gets immediately loaded and displayed when the map page is loaded. It should load the "Custom Library" sub-tab of "Territory Library" if "Territory Library" is selected; otherwise should load the Map Preview (which is currently the default behaviour).
+      2) which map is used for calculating the thumbnail. This currently uses a heuristic based on the lengths of the map code and custom territory library code; replace this heuristic with the value of this toggle. Again Territory library should use the "Custom Library" sub-tab of "Territory Library" for the thumbnail; otherwise the Map Preview.
+      Also modify the existing code for seeding default maps and libraries to set the seeded libraries in `xatra_lib/lib` to "Territory Library" (while those in `xatra_lib/map` should still be the default "Map")
     - list of forks (only 5 should be displayed by default; more can be loaded with a Load more button)
     - list of maps importing this map or its library or theme (ditto)
-    - datetime created; datetime created for each version; datetime last edited
+    - a vertical "map timeline": datetime created; datetime created for each version; datetime last edited
+    Make sure the popup box is keyboard-friendly (i.e. can be escaped with the escape key).
 
 
 Development difficulties
