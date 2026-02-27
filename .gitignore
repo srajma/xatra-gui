@@ -16,6 +16,7 @@ eggs/
 lib/
 lib64/
 !frontend/src/lib
+!xatra_lib/lib
 parts/
 sdist/
 var/

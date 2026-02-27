@@ -48,7 +48,7 @@ PRATIHARA_RAIDS = (
 
 # </lib>
 
-xatra.Flag(label="INDIAN CORE", value=ind.SUBCONTINENT_PROPER, classes="indian-core")
+xatra.Flag(label="INDIAN CORE", value=conts.SUBCONTINENT_PROPER, classes="indian-core")
 xatra.Flag(
     label="FUNDAMENTAL COLONIES",
     value=FUNDAMENTAL_COLONIES,
