@@ -589,6 +589,7 @@ For eventually publishing this as a website
 - [x] Admin can "feature" maps, making them appear on top
 - [ ] Migrate to Google OAuth instead of using our own accounts system
 - [ ] Collaborative editing/Github integration
+- [ ] Add github and discord links and any other info on /explore.
 - [ ] AI agent that makes maps for you --- only for paid users [have to think about exactly how to implement this]
 
 
