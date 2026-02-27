@@ -3513,7 +3513,9 @@ window.addEventListener('message', function(e) {
     if (didPrefetchTerritoryRef.current || !mapHtml) return;
     didPrefetchTerritoryRef.current = true;
     (async () => {
-      const tab = importedLibraryTabs[0] || { source: 'custom', hub_path: null };
+      const tab = (mapDisplayType === 'territory_library')
+        ? { source: 'custom', hub_path: null }
+        : (importedLibraryTabs[0] || { source: 'custom', hub_path: null });
       const src = tab.source || 'custom';
       await loadTerritoryLibraryCatalog(src, tab.hub_path);
       await renderTerritoryLibrary(src, { background: true, useDefaultSelection: true, showLoading: true, hubPath: tab.hub_path || null });

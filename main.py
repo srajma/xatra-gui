@@ -534,6 +534,7 @@ def _seed_xatra_lib_artifacts(
             # Also backfill display_type if alpha_metadata was provided.
             try:
                 existing_content = _json_parse(existing["alpha_content"], {})
+                desired_content = _json_parse(alpha_content, {})
                 existing_meta = _json_parse(existing["alpha_metadata"], {})
                 proj = existing_content.get("project", {}) if isinstance(existing_content, dict) else {}
                 content_changed = False
@@ -548,6 +549,33 @@ def _seed_xatra_lib_artifacts(
                         existing_content.setdefault("project", {})["elements"] = elements
                         content_changed = True
                         print(f"[xatra] Populated builder elements for map '{name}'")
+                # Backfill territory-library predefined code/index for old seeded rows that were
+                # created before __TERRITORY_INDEX__ support.
+                if isinstance(existing_content, dict) and isinstance(desired_content, dict):
+                    existing_predef = existing_content.get("predefined_code", "")
+                    desired_predef = desired_content.get("predefined_code", "")
+                    existing_map_code = existing_content.get("map_code", "")
+                    existing_runtime_code = existing_content.get("runtime_code", "")
+                    is_seed_like_library_map = (
+                        isinstance(existing_map_code, str)
+                        and not existing_map_code.strip()
+                        and isinstance(existing_runtime_code, str)
+                        and not existing_runtime_code.strip()
+                        and isinstance(existing_meta, dict)
+                        and str(existing_meta.get("display_type", "")).strip().lower() == "territory_library"
+                    )
+                    if (
+                        is_seed_like_library_map
+                        and isinstance(existing_predef, str)
+                        and isinstance(desired_predef, str)
+                    ):
+                        existing_idx = _extract_territory_index(existing_predef)
+                        desired_idx = _extract_territory_index(desired_predef)
+                        if (not existing_idx) and desired_idx:
+                            existing_content["predefined_code"] = desired_predef
+                            existing_content.setdefault("project", {})["predefinedCode"] = desired_predef
+                            content_changed = True
+                            print(f"[xatra] Backfilled __TERRITORY_INDEX__ for map '{name}'")
                 if alpha_metadata is not None:
                     for k, v in alpha_metadata.items():
                         if existing_meta.get(k) != v:
