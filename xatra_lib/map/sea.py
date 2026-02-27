@@ -19,9 +19,9 @@ def colon(name, desc=None):
 
 xatra.Flag(label="SUVARṆABHŪMĪ", value=conts.SEA)
 xatra.Flag(label="MEDITERRANEAN", value=conts.MEDITERRANEAN)
-xatra.Flag(label="GULF", value=arabia.GULF)
+xatra.Flag(label="GULF", value=arab.GULF)
 xatra.Flag(label="AFRICA_EAST_SPOTTY", value=conts.AFRICA_EAST_SPOTTY)
-xatra.Flag(label="LEVANT", value=arabia.LEVANT)
+xatra.Flag(label="LEVANT", value=arab.LEVANT)
 xatra.Flag(label="IRANIC", value=iran.IRANIC)
 xatra.Flag(label="JAMBUDVĪPA", value=conts.JAMBUDVIPA)
 xatra.Flag(label="SIMHALA", value=ind.SIMHALA)

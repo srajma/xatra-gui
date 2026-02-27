@@ -474,6 +474,7 @@ def _seed_xatra_lib_artifacts(
     now: str,
     force: bool = False,
     code_to_builder_fn=None,
+    parse_theme_fn=None,
 ) -> None:
     """
     Seeds hub artifacts from xatra_lib/ directory.
@@ -482,10 +483,13 @@ def _seed_xatra_lib_artifacts(
     - xatra_lib/lib/*.py  → creates kind='lib' artifact + sibling kind='map' artifact
     - xatra_lib/default_theme.py → used as theme_code for all created artifacts
 
-    If force=False, skips artifacts that already exist (but still fills in empty project.elements).
+    If force=False, skips artifacts that already exist (but still fills in empty project.elements
+    and project.options).
     If force=True, overwrites the alpha_content of existing artifacts.
     code_to_builder_fn: optional callable(CodeSyncRequest) → dict; used to parse map_code into
     project.elements. When None, elements are left empty.
+    parse_theme_fn: optional callable(theme_code: str) → dict; used to parse theme_code into
+    project.options (basemaps, css_rules, etc.). When None, options are left as {}.
     Caller is responsible for committing the transaction.
     """
     xatra_lib_dir = _xatra_lib_dir()
@@ -496,14 +500,18 @@ def _seed_xatra_lib_artifacts(
     default_theme_path = xatra_lib_dir / "default_theme.py"
     theme_code = default_theme_path.read_text(encoding="utf-8") if default_theme_path.exists() else ""
 
-    def _parse_elements(map_code: str, predefined_code: str) -> list:
-        if code_to_builder_fn is None or not map_code.strip():
-            return []
+    def _parse_builder_state(code: str, predefined_code: str) -> Dict[str, Any]:
+        """Parse code into builder state dict with elements and options. Returns {} on failure."""
+        if code_to_builder_fn is None or not code.strip():
+            return {}
         try:
-            result = code_to_builder_fn(CodeSyncRequest(code=map_code, predefined_code=predefined_code))
-            return result.get("elements", []) if isinstance(result, dict) else []
+            result = code_to_builder_fn(CodeSyncRequest(code=code, predefined_code=predefined_code))
+            return result if isinstance(result, dict) else {}
         except Exception:
-            return []
+            return {}
+
+    def _parse_elements(map_code: str, predefined_code: str) -> list:
+        return _parse_builder_state(map_code, predefined_code).get("elements", [])
 
     def _upsert(kind: str, name: str, alpha_content: str, alpha_metadata: Optional[Dict[str, Any]] = None) -> None:
         meta_json = json.dumps(alpha_metadata or {}, ensure_ascii=False)
@@ -529,9 +537,9 @@ def _seed_xatra_lib_artifacts(
             update_args.append(existing["id"])
             conn.execute(update_sql, update_args)
             print(f"[xatra] Reseeded {kind} artifact '{name}' (--force)")
-        elif kind == "map" and code_to_builder_fn is not None:
-            # Populate project.elements if currently empty, without overwriting other content.
-            # Also backfill display_type if alpha_metadata was provided.
+        elif kind == "map" and (code_to_builder_fn is not None or parse_theme_fn is not None):
+            # Populate project.elements / project.options if currently empty, without overwriting
+            # other content. Also backfill display_type if alpha_metadata was provided.
             try:
                 existing_content = _json_parse(existing["alpha_content"], {})
                 desired_content = _json_parse(alpha_content, {})
@@ -539,7 +547,7 @@ def _seed_xatra_lib_artifacts(
                 proj = existing_content.get("project", {}) if isinstance(existing_content, dict) else {}
                 content_changed = False
                 meta_changed = False
-                if not proj.get("elements"):
+                if not proj.get("elements") and code_to_builder_fn is not None:
                     mc = existing_content.get("map_code", "") if isinstance(existing_content, dict) else ""
                     pc = existing_content.get("predefined_code", "") if isinstance(existing_content, dict) else ""
                     elements = _parse_elements(mc, pc)
@@ -549,6 +557,24 @@ def _seed_xatra_lib_artifacts(
                         existing_content.setdefault("project", {})["elements"] = elements
                         content_changed = True
                         print(f"[xatra] Populated builder elements for map '{name}'")
+                if parse_theme_fn is not None and not proj.get("options") and isinstance(existing_content, dict):
+                    tc = existing_content.get("theme_code", "")
+                    new_options = parse_theme_fn(tc) if tc else {}
+                    if new_options:
+                        existing_content.setdefault("project", {})["options"] = new_options
+                        content_changed = True
+                        print(f"[xatra] Populated builder options for map '{name}'")
+                if code_to_builder_fn is not None and isinstance(existing_content, dict):
+                    proj2 = existing_content.get("project", {})
+                    if proj2.get("runtimeElements") is None or proj2.get("runtimeOptions") is None:
+                        rc = existing_content.get("runtime_code", "")
+                        if rc and rc.strip():
+                            runtime_state = _parse_builder_state(rc, "")
+                            if runtime_state:
+                                existing_content.setdefault("project", {})["runtimeElements"] = runtime_state.get("elements", [])
+                                existing_content.setdefault("project", {})["runtimeOptions"] = runtime_state.get("options", {})
+                                content_changed = True
+                                print(f"[xatra] Populated runtime builder state for map '{name}'")
                 # Backfill territory-library predefined code/index for old seeded rows that were
                 # created before __TERRITORY_INDEX__ support.
                 if isinstance(existing_content, dict) and isinstance(desired_content, dict):
@@ -601,6 +627,10 @@ def _seed_xatra_lib_artifacts(
         if file_theme_code.strip():
             combined_theme = (theme_code.rstrip("\n") + "\n\n" + file_theme_code.strip() + "\n").lstrip("\n")
         elements = _parse_elements(map_code, predefined_code)
+        options = parse_theme_fn(combined_theme) if parse_theme_fn else {}
+        runtime_state = _parse_builder_state(runtime_code, "")
+        runtime_elements = runtime_state.get("elements", [])
+        runtime_options = runtime_state.get("options", {})
         return json.dumps({
             "imports_code": imports_code,
             "theme_code": combined_theme,
@@ -610,7 +640,9 @@ def _seed_xatra_lib_artifacts(
             "runtime_imports_code": "",
             "project": {
                 "elements": elements,
-                "options": {},
+                "options": options,
+                "runtimeElements": runtime_elements,
+                "runtimeOptions": runtime_options,
                 "importsCode": imports_code,
                 "themeCode": combined_theme,
                 "predefinedCode": predefined_code,
@@ -5267,7 +5299,16 @@ def run_rendering_task(task_type, data, result_queue):
                 _, predefined_namespace = materialize_library_namespace(predefined_struct, builder_exec_globals, include_builtin=True)
                 if predefined_namespace:
                     builder_exec_globals.update(predefined_namespace)
-            if theme_code.strip():
+            # Apply theme_code only as a fallback: if data.options already has theme settings
+            # (basemaps, css_rules, etc.), those were already applied above and theme_code would
+            # cause duplication. Only apply theme_code when options has no theme content.
+            _opts = getattr(data, "options", {}) or {}
+            _options_has_theme = bool(
+                _opts.get("basemaps") or _opts.get("css_rules") or
+                _opts.get("flag_color_sequences") or _opts.get("admin_color_sequences") or
+                _opts.get("data_colormap")
+            )
+            if theme_code.strip() and not _options_has_theme:
                 apply_theme_options(_parse_theme_code_to_options(theme_code))
             if isinstance(runtime_options, dict):
                 if "zoom" in runtime_options and runtime_options["zoom"] is not None:
@@ -5813,7 +5854,7 @@ def public_hub_artifact_alpha(username: str, kind: str, name: str, http_request:
 
 @app.on_event("startup")
 def _startup_populate_builder_elements():
-    """Populate project.elements for seeded artifacts that have map_code but empty elements."""
+    """Populate project.elements and project.options for seeded artifacts that are missing them."""
     try:
         conn = _hub_db_conn()
         try:
@@ -5825,6 +5866,7 @@ def _startup_populate_builder_elements():
                     _utc_now_iso(),
                     force=False,
                     code_to_builder_fn=sync_code_to_builder,
+                    parse_theme_fn=_parse_theme_code_to_options,
                 )
                 conn.commit()
         finally:

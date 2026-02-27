@@ -20,6 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from main import (
     _hub_db_conn,
     _seed_xatra_lib_artifacts,
+    _parse_theme_code_to_options,
     _utc_now_iso,
     ADMIN_USERNAME,
     sync_code_to_builder,
@@ -38,7 +39,7 @@ def main():
             print(f"[seed_libs] Admin user '{ADMIN_USERNAME}' not found in database. Run the server first to initialise it.", file=sys.stderr)
             sys.exit(1)
         now = _utc_now_iso()
-        _seed_xatra_lib_artifacts(conn, user_row["id"], now, force=args.force, code_to_builder_fn=sync_code_to_builder)
+        _seed_xatra_lib_artifacts(conn, user_row["id"], now, force=args.force, code_to_builder_fn=sync_code_to_builder, parse_theme_fn=_parse_theme_code_to_options)
         conn.commit()
         print("[seed_libs] Done.")
     finally:
