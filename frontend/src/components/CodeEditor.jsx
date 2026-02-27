@@ -1,4 +1,4 @@
-import React, { useRef, useCallback, useState, useEffect } from 'react';
+import React, { useRef, useCallback, useEffect } from 'react';
 import Editor from '@monaco-editor/react';
 import { CloudUpload } from 'lucide-react';
 
@@ -46,6 +46,8 @@ const CodeEditor = ({
   setImportsCode,
   themeCode,
   setThemeCode,
+  runtimeImportsCode,
+  setRuntimeImportsCode,
   runtimeCode,
   setRuntimeCode,
   libraryVersionLabel,
@@ -255,6 +257,16 @@ const CodeEditor = ({
           <div className={headingClass}>
             <span>Do not expose to importers</span>
           </div>
+          <div className="px-2 py-1 text-[10px] uppercase tracking-wide text-slate-300 border border-slate-700 border-t-0 bg-slate-900">Imports</div>
+          <textarea
+            className="w-full min-h-[92px] p-2 border border-slate-700 border-t-0 bg-slate-950 text-slate-100 font-mono text-xs focus:outline-none"
+            value={runtimeImportsCode}
+            onChange={(e) => setRuntimeImportsCode(e.target.value)}
+            readOnly={readOnlyMap}
+            spellCheck={false}
+            placeholder='xatrahub("/lib/some_lib/alpha")'
+          />
+          <div className="px-2 py-1 text-[10px] uppercase tracking-wide text-slate-300 border border-slate-700 border-t-0 bg-slate-900">Code</div>
           <textarea
             className="w-full min-h-[120px] p-2 border border-slate-700 border-t-0 rounded-b bg-slate-950 text-slate-100 font-mono text-xs focus:outline-none"
             value={runtimeCode}

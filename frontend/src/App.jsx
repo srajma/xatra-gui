@@ -223,6 +223,7 @@ function App() {
   const [mapFeatured, setMapFeatured] = useState(false);
   const [importsCode, setImportsCode] = useState(DEFAULT_INDIC_IMPORT_CODE);
   const [hubImports, setHubImports] = useState([{ ...DEFAULT_INDIC_IMPORT }]);
+  const [runtimeImportsCode, setRuntimeImportsCode] = useState('');
   const [themeCode, setThemeCode] = useState('');
   const [runtimeCode, setRuntimeCode] = useState('');
   const [hubQuery, setHubQuery] = useState('');
@@ -836,6 +837,7 @@ ${DEFAULT_MAP_CODE}
           setRuntimeBuilderOptions({});
           setCode(DEFAULT_MAP_CODE);
           setThemeCode('');
+          setRuntimeImportsCode('');
           setRuntimeCode('');
           setPredefinedCode('');
           lastLibraryAlphaSavedRef.current = '';
@@ -851,6 +853,7 @@ ${DEFAULT_MAP_CODE}
             predCode: '',
             importsCode: defaultImportsCode,
             themeCode: '',
+            runtimeImportsCode: '',
             runtimeCode: '',
           });
           return;
@@ -873,6 +876,11 @@ ${DEFAULT_MAP_CODE}
         setThemeCode(parsed.theme_code || '');
         setPredefinedCode(parsed.predefined_code ?? '');
         setCode(parsed.map_code ?? '');
+        setRuntimeImportsCode(
+          typeof parsed.runtime_imports_code === 'string'
+            ? parsed.runtime_imports_code
+            : (typeof parsed?.project?.runtimeImportsCode === 'string' ? parsed.project.runtimeImportsCode : '')
+        );
         setRuntimeCode(parsed.runtime_code ?? '');
         if ((!parsed.project || !parsed.project.elements || !parsed.project.options) && Array.isArray(parsed.runtime_elements)) {
           setRuntimeBuilderElements(parsed.runtime_elements);
@@ -909,6 +917,10 @@ ${DEFAULT_MAP_CODE}
           predCode: parsed.predefined_code || '',
           importsCode: parsed.imports_code || '',
           themeCode: parsed.theme_code || '',
+          runtimeImportsCode:
+            (typeof parsed.runtime_imports_code === 'string'
+              ? parsed.runtime_imports_code
+              : (parsed.project?.runtimeImportsCode || '')),
           runtimeCode: parsed.runtime_code || '',
         });
       }
@@ -969,6 +981,7 @@ ${DEFAULT_MAP_CODE}
         lastThemeAlphaSavedRef.current = String(draft.project.themeCode || '');
         setThemeCode(draft.project.themeCode);
       }
+      if (typeof draft.project?.runtimeImportsCode === 'string') setRuntimeImportsCode(draft.project.runtimeImportsCode);
       if (typeof draft.project?.runtimeCode === 'string') setRuntimeCode(draft.project.runtimeCode);
       if (draft.project?.pickerOptions && typeof draft.project.pickerOptions === 'object') {
         setPickerOptions(draft.project.pickerOptions);
@@ -984,6 +997,7 @@ ${DEFAULT_MAP_CODE}
           predCode: draft.project.predefinedCode || '',
           importsCode: draft.project.importsCode || '',
           themeCode: draft.project.themeCode || '',
+          runtimeImportsCode: draft.project.runtimeImportsCode || '',
           runtimeCode: draft.project.runtimeCode || '',
         });
       }
@@ -1011,6 +1025,7 @@ ${DEFAULT_MAP_CODE}
             predefinedCode,
             importsCode,
             themeCode,
+            runtimeImportsCode,
             runtimeCode,
             pickerOptions,
           },
@@ -1018,7 +1033,7 @@ ${DEFAULT_MAP_CODE}
       }).catch(() => {});
     }, 800);
     return () => clearTimeout(t);
-  }, [normalizedMapName, builderElements, builderOptions, runtimeBuilderElements, runtimeBuilderOptions, code, predefinedCode, importsCode, themeCode, runtimeCode, pickerOptions, currentUser.is_authenticated]);
+  }, [normalizedMapName, builderElements, builderOptions, runtimeBuilderElements, runtimeBuilderOptions, code, predefinedCode, importsCode, themeCode, runtimeImportsCode, runtimeCode, pickerOptions, currentUser.is_authenticated]);
 
   const loadExplore = async (page = 1, query = exploreQuery, sort = exploreSort) => {
     setExploreLoading(true);
@@ -1131,6 +1146,7 @@ ${DEFAULT_MAP_CODE}
     setRuntimeBuilderOptions({});
     setCode(DEFAULT_MAP_CODE);
     setThemeCode('');
+    setRuntimeImportsCode('');
     setRuntimeCode('');
     setPredefinedCode('');
     setHubImports(defaults);
@@ -1152,6 +1168,7 @@ ${DEFAULT_MAP_CODE}
       predCode: '',
       importsCode: defaultImportsCode,
       themeCode: '',
+      runtimeImportsCode: '',
       runtimeCode: '',
     });
   };
@@ -2069,7 +2086,7 @@ ${DEFAULT_MAP_CODE}
       }
   };
 
-  const renderMapWithData = async ({ elements, options, runtimeElements = [], runtimeOptions = {}, mapCode, predCode, importsCode: iCode, themeCode: tCode, runtimeCode: rCode }) => {
+  const renderMapWithData = async ({ elements, options, runtimeElements = [], runtimeOptions = {}, predCode, importsCode: iCode, themeCode: tCode, runtimeImportsCode: riCode, runtimeCode: rCode }) => {
     setActivePreviewTab('main');
     setLoadingByView((prev) => ({ ...prev, main: true }));
     setError(null);
@@ -2082,6 +2099,7 @@ ${DEFAULT_MAP_CODE}
         runtime_options: runtimeOptions,
         predefined_code: predCode || undefined,
         imports_code: iCode || undefined,
+        runtime_imports_code: riCode || undefined,
         theme_code: tCode || undefined,
         runtime_code: rCode || undefined,
       };
@@ -2120,6 +2138,7 @@ ${DEFAULT_MAP_CODE}
             code,
             predefined_code: predefinedCode || undefined,
             imports_code: importsCode || undefined,
+            runtime_imports_code: runtimeImportsCode || undefined,
             theme_code: themeCode || undefined,
             runtime_code: runtimeCode || undefined,
           }
@@ -2130,6 +2149,7 @@ ${DEFAULT_MAP_CODE}
             runtime_options: runtimeBuilderOptions,
             predefined_code: predefinedCode || undefined,
             imports_code: importsCode || undefined,
+            runtime_imports_code: runtimeImportsCode || undefined,
             theme_code: themeCode || undefined,
             runtime_code: runtimeCode || undefined,
           };
@@ -2423,6 +2443,7 @@ window.addEventListener('message', function(e) {
           predefinedCode: typeof parsed.predefined_code === 'string' ? parsed.predefined_code : (predefinedCode || ''),
           importsCode,
           themeCode,
+          runtimeImportsCode,
           runtimeCode,
         };
         downloadFile(JSON.stringify(project, null, 2), "project.json", "application/json");
@@ -2439,6 +2460,7 @@ window.addEventListener('message', function(e) {
       predefinedCode,
       importsCode,
       themeCode,
+      runtimeImportsCode,
       runtimeCode,
     };
     downloadFile(JSON.stringify(project, null, 2), "project.json", "application/json");
@@ -2455,6 +2477,7 @@ window.addEventListener('message', function(e) {
       predefinedCode,
       importsCode,
       themeCode,
+      runtimeImportsCode,
       runtimeCode,
     };
     if (activeTab === 'builder') {
@@ -2474,6 +2497,7 @@ window.addEventListener('message', function(e) {
           predefinedCode: typeof parsed.predefined_code === 'string' ? parsed.predefined_code : (predefinedCode || ''),
           importsCode,
           themeCode,
+          runtimeImportsCode,
           runtimeCode,
         };
       } catch {
@@ -2482,6 +2506,7 @@ window.addEventListener('message', function(e) {
     }
     return JSON.stringify({
       imports_code: importsCode || '',
+      runtime_imports_code: runtimeImportsCode || '',
       theme_code: themeCode || '',
       predefined_code: predefinedCode || '',
       map_code: mapCodeText || '',
@@ -2857,9 +2882,11 @@ window.addEventListener('message', function(e) {
                setHubImports(parseImportsCodeToItems(project.importsCode));
              }
              if (typeof project.themeCode === 'string') setThemeCode(project.themeCode);
+             if (typeof project.runtimeImportsCode === 'string') setRuntimeImportsCode(project.runtimeImportsCode);
              if (typeof project.runtimeCode === 'string') setRuntimeCode(project.runtimeCode);
              if (project.pickerOptions && typeof project.pickerOptions === 'object') setPickerOptions(project.pickerOptions);
           }
+          if (typeof project.runtime_imports_code === 'string') setRuntimeImportsCode(project.runtime_imports_code);
           if (Array.isArray(project.runtime_elements)) setRuntimeBuilderElements(project.runtime_elements);
           if (project.runtime_options && typeof project.runtime_options === 'object') setRuntimeBuilderOptions(project.runtime_options);
           // Also check for picker_options at top-level (from buildMapArtifactContent format)
@@ -3248,7 +3275,8 @@ window.addEventListener('message', function(e) {
   };
 
   const parseRuntimeCodeToBuilder = async () => {
-    return parseCodeSegmentToBuilder(runtimeCode || '', '');
+    const combinedRuntimeCode = [runtimeImportsCode || '', runtimeCode || ''].filter((x) => String(x).trim()).join('\n\n');
+    return parseCodeSegmentToBuilder(combinedRuntimeCode, '');
   };
 
   const normalizePredefinedImports = () => {
@@ -3267,6 +3295,21 @@ window.addEventListener('message', function(e) {
     }
   };
 
+  const normalizeRuntimeImports = () => {
+    const lines = String(runtimeCode || '').split('\n');
+    const keep = [];
+    const moved = [];
+    lines.forEach((ln) => {
+      if (ln.includes('xatrahub(')) moved.push(ln);
+      else keep.push(ln);
+    });
+    if (moved.length) {
+      const mergedRuntimeImports = `${String(runtimeImportsCode || '').trim()}\n${moved.join('\n')}\n`.replace(/^\n+/, '');
+      setRuntimeImportsCode(mergedRuntimeImports);
+      setRuntimeCode(keep.join('\n'));
+    }
+  };
+
   const handleTabChange = async (nextTab) => {
     if (nextTab === activeTab) return;
     if (nextTab === 'code') {
@@ -3278,6 +3321,7 @@ window.addEventListener('message', function(e) {
     }
     if (activeTab === 'code' && nextTab === 'builder') {
       normalizePredefinedImports();
+      normalizeRuntimeImports();
       try {
         const parsed = await parseMainCodeToBuilder();
         const runtimeParsed = await parseRuntimeCodeToBuilder();
@@ -3356,7 +3400,7 @@ window.addEventListener('message', function(e) {
     }, 3000);
     return () => { if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [normalizedMapName, currentUser.is_authenticated, builderElements, builderOptions, runtimeBuilderElements, runtimeBuilderOptions, code, predefinedCode, importsCode, themeCode, runtimeCode]);
+  }, [normalizedMapName, currentUser.is_authenticated, builderElements, builderOptions, runtimeBuilderElements, runtimeBuilderOptions, code, predefinedCode, importsCode, themeCode, runtimeImportsCode, runtimeCode]);
 
   useEffect(() => {
     libraryAutoSavePrimedRef.current = false;
@@ -4626,6 +4670,7 @@ window.addEventListener('message', function(e) {
                 predefinedCode={predefinedCode} setPredefinedCode={setPredefinedCode}
                 importsCode={importsCode} setImportsCode={setImportsCode}
                 themeCode={themeCode} setThemeCode={setThemeCode}
+                runtimeImportsCode={runtimeImportsCode} setRuntimeImportsCode={setRuntimeImportsCode}
                 runtimeCode={runtimeCode} setRuntimeCode={setRuntimeCode}
                 libraryVersionLabel={String(selectedLibraryVersion)}
                 themeVersionLabel={String(selectedThemeVersion)}

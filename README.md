@@ -454,6 +454,10 @@ U (+): Territory: indic.LEVANT
   6) Check that the Builder -> Code and Code -> Builder conversion logic is correct for Icons (just check that it is; IDK if it is fine or not).
 
   ```
+- [x] Changes to importing libraries
+    1) Make it so that importing a lib also recursively imports the lib imports in that corresponding map, with cycle protection.
+    2) Make it so that runtime code's xatrahub() imports *are* parsed (and correspondingly in the Builder UI there should be an "Imports" section under "Do not expose to importers").
+
 
 Development difficulties
 - [x] keeping synchrony between things---this should be documented, i.e. "if you change this, then change this too"

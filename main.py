@@ -491,6 +491,7 @@ def _init_hub_db():
             # Seed default public map 'indic' if missing (uses new /lib/dtl/alpha import path).
             map_seed_content = json.dumps({
                 "imports_code": 'indic = xatrahub("/lib/dtl/alpha")\n',
+                "runtime_imports_code": "",
                 "theme_code": "",
                 "predefined_code": territory_seed,
                 "map_code": 'import xatra\nxatra.TitleBox("<b>Indic Map</b>")\n',
@@ -505,6 +506,7 @@ def _init_hub_db():
                     },
                     "predefinedCode": territory_seed,
                     "importsCode": 'indic = xatrahub("/lib/dtl/alpha")\n',
+                    "runtimeImportsCode": "",
                     "themeCode": "",
                     "runtimeCode": "",
                 },
@@ -678,7 +680,7 @@ def _update_content_paths(content: str, rename_map: Dict[tuple, str]) -> str:
     except Exception:
         return _update_xatrahub_paths_in_code(content, rename_map)
     modified = False
-    for key in ('imports_code', 'map_code', 'predefined_code', 'runtime_code', 'theme_code'):
+    for key in ('imports_code', 'runtime_imports_code', 'map_code', 'predefined_code', 'runtime_code', 'theme_code'):
         if isinstance(parsed.get(key), str):
             nv = _update_xatrahub_paths_in_code(parsed[key], rename_map)
             if nv != parsed[key]:
@@ -686,7 +688,7 @@ def _update_content_paths(content: str, rename_map: Dict[tuple, str]) -> str:
                 modified = True
     project = parsed.get('project')
     if isinstance(project, dict):
-        for key in ('importsCode', 'predefinedCode', 'themeCode', 'runtimeCode'):
+        for key in ('importsCode', 'runtimeImportsCode', 'predefinedCode', 'themeCode', 'runtimeCode'):
             if isinstance(project.get(key), str):
                 nv = _update_xatrahub_paths_in_code(project[key], rename_map)
                 if nv != project[key]:
@@ -771,7 +773,7 @@ def _migrate_to_global_names(conn: sqlite3.Connection) -> None:
             modified = False
             project = parsed.get('project')
             if isinstance(project, dict):
-                for key in ('importsCode', 'predefinedCode', 'themeCode', 'runtimeCode', 'code'):
+                for key in ('importsCode', 'runtimeImportsCode', 'predefinedCode', 'themeCode', 'runtimeCode', 'code'):
                     if isinstance(project.get(key), str):
                         nv = _update_xatrahub_paths_in_code(project[key], rename_map)
                         if nv != project[key]:
@@ -1098,6 +1100,7 @@ class CodeRequest(BaseModel):
     code: str
     predefined_code: Optional[str] = None
     imports_code: Optional[str] = None
+    runtime_imports_code: Optional[str] = None
     theme_code: Optional[str] = None
     runtime_code: Optional[str] = None
     trusted_user: bool = False
@@ -1117,6 +1120,7 @@ class BuilderRequest(BaseModel):
     options: Dict[str, Any] = {}
     predefined_code: Optional[str] = None
     imports_code: Optional[str] = None
+    runtime_imports_code: Optional[str] = None
     theme_code: Optional[str] = None
     runtime_code: Optional[str] = None
     runtime_elements: Optional[List[MapElement]] = None
@@ -2562,7 +2566,7 @@ def _sanitize_untrusted_map_content_for_storage(content: str) -> str:
         raise HTTPException(status_code=400, detail="Non-trusted map content must be a JSON object")
 
     payload = dict(parsed)
-    for key in ("imports_code", "theme_code", "predefined_code", "map_code", "code", "runtime_code"):
+    for key in ("imports_code", "runtime_imports_code", "theme_code", "predefined_code", "map_code", "code", "runtime_code"):
         if key in payload:
             payload[key] = ""
 
@@ -2578,7 +2582,7 @@ def _sanitize_untrusted_map_content_for_storage(content: str) -> str:
     project_dict["runtimeElements"] = _sanitize_untrusted_map_elements(project_dict.get("runtimeElements", []))
     project_dict["options"] = _strip_python_wrappers_for_storage(project_dict.get("options", {}) if isinstance(project_dict.get("options"), dict) else {})
     project_dict["runtimeOptions"] = _strip_python_wrappers_for_storage(project_dict.get("runtimeOptions", {}) if isinstance(project_dict.get("runtimeOptions"), dict) else {})
-    for key in ("importsCode", "themeCode", "predefinedCode", "code", "runtimeCode"):
+    for key in ("importsCode", "runtimeImportsCode", "themeCode", "predefinedCode", "code", "runtimeCode"):
         if key in project_dict:
             project_dict[key] = ""
     payload["project"] = project_dict
@@ -2592,7 +2596,7 @@ def _sanitize_untrusted_project_for_draft(project: Any) -> Dict[str, Any]:
     data["runtimeElements"] = _sanitize_untrusted_map_elements(data.get("runtimeElements", []))
     data["options"] = _strip_python_wrappers_for_storage(data.get("options", {}) if isinstance(data.get("options"), dict) else {})
     data["runtimeOptions"] = _strip_python_wrappers_for_storage(data.get("runtimeOptions", {}) if isinstance(data.get("runtimeOptions"), dict) else {})
-    for key in ("importsCode", "themeCode", "predefinedCode", "code", "runtimeCode"):
+    for key in ("importsCode", "runtimeImportsCode", "themeCode", "predefinedCode", "code", "runtimeCode"):
         if key in data:
             data[key] = ""
     return data
@@ -3360,6 +3364,7 @@ def draft_promote(body: DraftPromoteRequest, request: Request):
         trusted_user = _is_user_trusted(user)
         content_obj = {
             "imports_code":    project.get("importsCode", ""),
+            "runtime_imports_code": project.get("runtimeImportsCode", ""),
             "theme_code":      project.get("themeCode", ""),
             "predefined_code": project.get("predefinedCode", ""),
             "map_code":        project.get("code", ""),
@@ -3374,6 +3379,7 @@ def draft_promote(body: DraftPromoteRequest, request: Request):
                 "runtimeOptions":  project.get("runtimeOptions", {}),
                 "predefinedCode": project.get("predefinedCode", ""),
                 "importsCode":    project.get("importsCode", ""),
+                "runtimeImportsCode": project.get("runtimeImportsCode", ""),
                 "themeCode":      project.get("themeCode", ""),
                 "runtimeCode":    project.get("runtimeCode", ""),
             }
@@ -3962,7 +3968,7 @@ def _extract_python_payload_text(kind: str, content: str, metadata: Dict[str, An
                     return val
         if kind == "map":
             parts = []
-            for key in ("imports_code", "theme_code", "map_code", "code"):
+            for key in ("imports_code", "runtime_imports_code", "theme_code", "map_code", "code"):
                 val = parsed.get(key)
                 if isinstance(val, str) and val.strip():
                     parts.append(val)
@@ -4553,6 +4559,23 @@ def run_rendering_task(task_type, data, result_queue):
                     apply_theme_options(filter_theme_options(theme_opts, only, not_list))
                     return None
                 if kind == "lib":
+                    linked_map_filter_not = [
+                        "BaseOption", "CSS", "FlagColorSequence", "AdminColorSequence", "DataColormap",
+                        "zoom", "focus", "slider",
+                        "Flag", "River", "Path", "Point", "Text",
+                        "Admin", "AdminRivers", "Dataframe", "TitleBox", "Music", "Python",
+                    ]
+                    linked_name = str(loaded.get("name") or "").strip()
+                    linked_version = str(loaded.get("version") if loaded.get("version") is not None else "alpha").strip() or "alpha"
+                    if linked_name:
+                        try:
+                            # Pull recursive imports from the sibling map without importing its runtime-visible layers/options.
+                            exec_globals["xatrahub"](
+                                f"/map/{linked_name}/{linked_version}",
+                                filter_not=linked_map_filter_not,
+                            )
+                        except Exception:
+                            pass
                     struct = _extract_territory_library_struct(loaded.get("content", "") or "")
                     ns, _ = materialize_library_namespace(struct, exec_globals, include_builtin=True)
                     return ns
@@ -4631,15 +4654,20 @@ def run_rendering_task(task_type, data, result_queue):
         if task_type == "code":
             imports_code = getattr(data, "imports_code", "") or ""
             theme_code = getattr(data, "theme_code", "") or ""
+            runtime_imports_code = getattr(data, "runtime_imports_code", "") or ""
             runtime_code = getattr(data, "runtime_code", "") or ""
             predefined_code = getattr(data, "predefined_code", "") or ""
             main_payload = parse_code_segment_to_builder_payload(getattr(data, "code", "") or "", predefined_code)
-            runtime_payload = parse_code_segment_to_builder_payload(runtime_code or "", "")
+            runtime_segment = "\n\n".join([
+                x for x in [runtime_imports_code, runtime_code] if isinstance(x, str) and x.strip()
+            ])
+            runtime_payload = parse_code_segment_to_builder_payload(runtime_segment, "")
             data = SimpleNamespace(
                 elements=main_payload.get("elements", []),
                 options=main_payload.get("options", {}),
                 predefined_code=predefined_code,
                 imports_code=imports_code,
+                runtime_imports_code=runtime_imports_code,
                 theme_code=theme_code,
                 runtime_code="",
                 runtime_elements=runtime_payload.get("elements", []),
@@ -4859,12 +4887,16 @@ def run_rendering_task(task_type, data, result_queue):
             register_xatrahub(builder_exec_globals)
 
             imports_code = getattr(data, "imports_code", "") or ""
+            runtime_imports_code = getattr(data, "runtime_imports_code", "") or ""
             theme_code = getattr(data, "theme_code", "") or ""
             runtime_code = getattr(data, "runtime_code", "") or ""
+            runtime_imports_effective = "\n\n".join([
+                x for x in [runtime_imports_code, runtime_code] if isinstance(x, str) and x.strip()
+            ])
             runtime_elements = getattr(data, "runtime_elements", None)
             runtime_options = getattr(data, "runtime_options", None)
             if not isinstance(runtime_elements, list) or not isinstance(runtime_options, dict):
-                parsed_runtime = parse_code_segment_to_builder_payload(runtime_code or "", "")
+                parsed_runtime = parse_code_segment_to_builder_payload(runtime_imports_effective, "")
                 runtime_elements = parsed_runtime.get("elements", [])
                 runtime_options = parsed_runtime.get("options", {})
             apply_imports_code_parsed(imports_code, builder_exec_globals)
@@ -5180,9 +5212,17 @@ def run_rendering_task(task_type, data, result_queue):
                         if code_line.strip():
                             exec(code_line, builder_exec_globals)
 
-            if pending_import_elements:
-                _apply_builder_elements(pending_import_elements)
+            def _flush_pending_import_elements():
+                nonlocal pending_import_elements
+                if pending_import_elements:
+                    _apply_builder_elements(pending_import_elements)
+                    pending_import_elements = []
+
+            _flush_pending_import_elements()
             _apply_builder_elements(data.elements)
+            if runtime_imports_effective.strip():
+                apply_imports_code_parsed(runtime_imports_effective, builder_exec_globals)
+            _flush_pending_import_elements()
             _apply_builder_elements(runtime_elements)
 
         m.TitleBox("<i>made with <a href='https://github.com/srajma/xatra'>xatra</a></i>")
@@ -5364,6 +5404,7 @@ def render_code(request: CodeRequest, http_request: Request):
     _enforce_python_input_limits(request.code or "", "code")
     _enforce_python_input_limits(request.predefined_code or "", "predefined_code")
     _enforce_python_input_limits(request.imports_code or "", "imports_code")
+    _enforce_python_input_limits(request.runtime_imports_code or "", "runtime_imports_code")
     _enforce_python_input_limits(request.theme_code or "", "theme_code")
     _enforce_python_input_limits(request.runtime_code or "", "runtime_code")
     conn = _hub_db_conn()
@@ -5382,6 +5423,7 @@ def render_code(request: CodeRequest, http_request: Request):
 def render_builder(request: BuilderRequest, http_request: Request):
     _enforce_python_input_limits(request.predefined_code or "", "predefined_code")
     _enforce_python_input_limits(request.imports_code or "", "imports_code")
+    _enforce_python_input_limits(request.runtime_imports_code or "", "runtime_imports_code")
     _enforce_python_input_limits(request.theme_code or "", "theme_code")
     _enforce_python_input_limits(request.runtime_code or "", "runtime_code")
     conn = _hub_db_conn()
