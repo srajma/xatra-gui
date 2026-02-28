@@ -542,7 +542,7 @@ For eventually publishing this as a website
 - [ ] Efficiency and scalability concerns [for now, just answer in words, don't implement anything]
   - Can this website handle, idk, approx 1000 users making maps? How can we estimate the resources etc. that will cost and the servers we will need? (I'm totally new to this, I have no idea if this makes sense).
   - Is it inefficient that for every change the user makes to the map, it has to be re-rendered from ground up by xatra? Are there better solutions? Do note that the maps can get pretty long (e.g. maps of global territorial evolution over history, etc.)
-  - Should we be using PostGIS in the xatra package instead of raw Python operations?
+  - Simplified rendering by default; full rendering only when needed (e.g. when exporting map)
 
   ```
   Short answer: with current architecture, 1000 total users is fine, but 1000 concurrent map renders is not.
