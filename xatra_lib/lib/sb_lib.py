@@ -50,7 +50,7 @@ BURMA = BURMA_UPPER | BURMA_LOWER
 
 # southeast asia
 SIAM_THA = gadm("THA")
-SIAM = SIAM_THA
+SIAM = SIAM_THA | SIAM_BURMA_INTERM
 LAOS = gadm("LAO")
 KHMER = gadm("KHM")
 CHAM = (
