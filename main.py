@@ -5157,6 +5157,7 @@ def run_rendering_task(task_type, data, result_queue):
         if effective_task_type == 'picker':
             apply_basemaps(getattr(data, "basemaps", None))
             valid_entries: List[Tuple[str, int]] = []
+            picker_bounds: Optional[Tuple[float, float, float, float]] = None  # min_lat, min_lng, max_lat, max_lng
             for entry in (getattr(data, "entries", None) or []):
                 country = str(getattr(entry, "country", "") or "").strip()
                 if not country:
@@ -5180,10 +5181,34 @@ def run_rendering_task(task_type, data, result_queue):
             for country, level in valid_entries:
                 try:
                     m.Admin(gadm=country, level=level)
+                    try:
+                        territory = gadm(country)
+                        geom = territory.to_geometry() if territory is not None else None
+                        if geom is not None and not geom.is_empty:
+                            min_lng, min_lat, max_lng, max_lat = geom.bounds
+                            if picker_bounds is None:
+                                picker_bounds = (min_lat, min_lng, max_lat, max_lng)
+                            else:
+                                picker_bounds = (
+                                    min(picker_bounds[0], min_lat),
+                                    min(picker_bounds[1], min_lng),
+                                    max(picker_bounds[2], max_lat),
+                                    max(picker_bounds[3], max_lng),
+                                )
+                    except Exception:
+                        # Focus fallback is best-effort; admin rendering is the source of truth.
+                        pass
                 except Exception as e:
                     print(f"[xatra] Warning: picker Admin({country}, level={level}) failed: {e}", file=sys.stderr)
             if data.adminRivers and valid_entries:
                 m.AdminRivers()
+            if picker_bounds is not None:
+                center_lat = (picker_bounds[0] + picker_bounds[2]) / 2.0
+                center_lng = (picker_bounds[1] + picker_bounds[3]) / 2.0
+                try:
+                    m.focus(center_lat, center_lng)
+                except Exception:
+                    pass
         elif effective_task_type == 'territory_library':
             apply_basemaps(getattr(data, "basemaps", None))
             import xatra.territory_library as territory_library
