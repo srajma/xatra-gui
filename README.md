@@ -470,6 +470,8 @@ U (+): Territory: indic.LEVANT
     - a vertical "map timeline": datetime created; datetime created for each version; datetime last edited
     Make sure the popup box is keyboard-friendly (i.e. can be escaped with the escape key).
 - [ ] Admin Reference Map opens to some random place in Africa even though xatra is coded to auto-focus on the center of the Flag and Admin elements only (see ../xatra.master/README.md)
+- [ ] Random "Failed to render" error messages 
+- [ ] Reverse the order of how map layers appear in the Builder, i.e. new ones should be added at the _top_ of the layer list instead of the bottom and the buttons to add new layers should be positioned above all the layers. Do this for both the main layer list and the one in "Do not expose to importers". And make the layer 
 
 Development difficulties
 - [x] keeping synchrony between things---this should be documented, i.e. "if you change this, then change this too"
