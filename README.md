@@ -543,6 +543,7 @@ For eventually publishing this as a website
   - Can this website handle, idk, approx 1000 users making maps? How can we estimate the resources etc. that will cost and the servers we will need? (I'm totally new to this, I have no idea if this makes sense).
   - Is it inefficient that for every change the user makes to the map, it has to be re-rendered from ground up by xatra? Are there better solutions? Do note that the maps can get pretty long (e.g. maps of global territorial evolution over history, etc.)
   - Simplified rendering by default; full rendering only when needed (e.g. when exporting map)
+  - Cache rendered maps and show them until next time that the user edits and renders. In particular, keep a cached version of the default map preview, reference map and territory libraries that are loaded for any new map; and also when rendering an imported territory library for the first time (i.e. before the user ever presses the button to update the territory library map) use the cached rendered "Custom Library" map for that import (and if no such cached version exists or the territory library has been edited since the last cache; then re-render it and cache the new one).
 
   ```
   Short answer: with current architecture, 1000 total users is fine, but 1000 concurrent map renders is not.
@@ -592,6 +593,7 @@ For eventually publishing this as a website
 - [ ] Migrate to Google OAuth instead of using our own accounts system
 - [ ] Collaborative editing/Github integration
 - [ ] Add github and discord links and any other info on /explore.
+- [ ] Host tile servers ourselves?
 - [ ] AI agent that makes maps for you --- only for paid users [have to think about exactly how to implement this]
 
 
