@@ -9,6 +9,7 @@ const Builder = ({
   onSaveTerritory, predefinedCode, onStartReferencePick, addLayerSignal, onConsumeAddLayerSignal,
   hubImports, onOpenImportModal, onRemoveHubImport, getImportVersionOptions, onSwitchHubImportVersion,
   runtimeElements = [], runtimeSetElements = null, runtimeOptions = {}, runtimeSetOptions = null,
+  runtimeHubImports = [], onOpenRuntimeImportModal = null, onRemoveRuntimeHubImport = null, onSwitchRuntimeHubImportVersion = null,
   trustedUser = false,
   readOnly = false,
   isDarkMode = false,
@@ -329,6 +330,58 @@ const Builder = ({
       <details className="bg-white p-4 rounded-lg border border-gray-200 shadow-sm" open={false}>
         <summary className="cursor-pointer text-sm font-semibold text-gray-900 select-none">Do not expose to importers</summary>
         <div className="mt-4 space-y-4">
+          <div className={readOnly ? 'pointer-events-none' : ''}>
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-sm font-semibold text-gray-900">Imports</h3>
+              <button
+                type="button"
+                onClick={onOpenRuntimeImportModal}
+                className="text-xs px-2 py-1 border border-gray-200 rounded bg-gray-50 hover:bg-gray-100 inline-flex items-center gap-1"
+              >
+                <Import size={12} /> Import from existing map
+              </button>
+            </div>
+            {(runtimeHubImports || []).length === 0 ? (
+              <div className="text-xs text-gray-500">No imports yet.</div>
+            ) : (
+              <div className="space-y-1">
+                {(runtimeHubImports || []).map((imp, idx) => (
+                  <div key={`${imp.kind}-${imp.path}-${idx}`} className="flex items-center justify-between px-2 py-1 rounded border border-gray-100 bg-gray-50">
+                    <div className="text-[11px] font-mono text-gray-700 flex-1 min-w-0">
+                      {imp.kind} /{imp.name}
+                    </div>
+                    <div className="flex items-center gap-1 mr-2">
+                      <select
+                        value={imp._draft_version || imp.selected_version || 'alpha'}
+                        onChange={(e) => onSwitchRuntimeHubImportVersion?.(idx, e.target.value, false)}
+                        className="text-[11px] border rounded px-1 py-0.5"
+                      >
+                        {(getImportVersionOptions?.(imp) || [{ value: 'alpha', label: 'alpha' }]).map((opt) => (
+                          <option key={opt.value} value={opt.value}>{opt.label}</option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() => onSwitchRuntimeHubImportVersion?.(idx, imp._draft_version || imp.selected_version || 'alpha', true)}
+                        disabled={!imp._draft_version || imp._draft_version === (imp.selected_version || 'alpha')}
+                        className="text-[11px] px-1.5 py-0.5 border rounded disabled:opacity-40 hover:bg-gray-100"
+                      >
+                        Switch version
+                      </button>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => onRemoveRuntimeHubImport?.(idx)}
+                      className="p-1 rounded hover:bg-red-50 text-red-600"
+                      title="Remove import"
+                    >
+                      <Trash2 size={12} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
           <div className={readOnly ? 'pointer-events-none' : ''}>
             <GlobalOptions
               options={runtimeOptions || {}}

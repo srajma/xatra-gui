@@ -3,6 +3,7 @@ sb = xatrahub("/lib/sb_lib")
 conts = xatrahub("/lib/continents_lib")
 arab = xatrahub("/lib/arabia_lib")
 iran = xatrahub("/lib/iran_lib")
+sinic = xatrahub("/lib/sinic_lib")
 xatrahub("/map/sea_suvarnabhumi")
 
 CITY_ICON = Icon.geometric("circle", color="blue", icon_size=6, icon_anchor=3)
@@ -27,6 +28,7 @@ xatra.Flag(label="JAMBUDVĪPA", value=conts.JAMBUDVIPA)
 xatra.Flag(label="SIMHALA", value=ind.SIMHALA)
 xatra.Flag(label="CHINA", value=sinic.CHINA_PROPER | sb.NORTH_VIETNAM)
 xatra.Flag(label="UTTARAKURU", value=iran.TARIM)
+xatra.Flag(label="HIMALAYAN", value=ind.HIMALAYAN)
 xatra.Flag(label="BHUTA", value=sb.TIBET)
 xatra.Point(
     label="Dvīpa Sukhadara",

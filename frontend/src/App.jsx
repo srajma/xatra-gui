@@ -119,6 +119,7 @@ function App() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuFocusIndex, setMenuFocusIndex] = useState(0);
   const [importModalOpen, setImportModalOpen] = useState(false);
+  const [importModalTarget, setImportModalTarget] = useState('main'); // 'main' | 'runtime'
   const [newMapDialogOpen, setNewMapDialogOpen] = useState(false);
   const [newMapDialogName, setNewMapDialogName] = useState('');
   const [newMapDialogChecking, setNewMapDialogChecking] = useState(false);
@@ -231,6 +232,7 @@ function App() {
   const [importsCode, setImportsCode] = useState(DEFAULT_INDIC_IMPORT_CODE);
   const [hubImports, setHubImports] = useState(DEFAULT_IMPORTS.map((x) => ({ ...x })));
   const [runtimeImportsCode, setRuntimeImportsCode] = useState('');
+  const [runtimeHubImports, setRuntimeHubImports] = useState([]);
   const [runtimeThemeCode, setRuntimeThemeCode] = useState('');
   const [runtimePredefinedCode, setRuntimePredefinedCode] = useState('');
   const [themeCode, setThemeCode] = useState('');
@@ -749,23 +751,29 @@ ${DEFAULT_MAP_CODE}
       setError(`Cannot import ${item.kind}: ${err.message}`);
       return;
     }
-    const exists = (hubImports || []).some((imp) => imp.kind === item.kind && imp.name === item.name);
-    if (exists) return;
-    const next = [
-      ...(hubImports || []),
-      {
-        kind: item.kind,
-        username: item.username,
-        name: item.name,
-        path,
-        selected_version: selectedVersion,
-        _draft_version: selectedVersion,
-        alias: item.kind === 'lib' ? `${item.name}_lib`.replace(/[^a-zA-Z0-9_]/g, '_') : '',
-        filter_not: item.kind === 'lib' ? [] : computeFilterNot(),
-      },
-    ];
-    setHubImports(next);
-    setImportsCode(serializeHubImports(next));
+    const newEntry = {
+      kind: item.kind,
+      username: item.username,
+      name: item.name,
+      path,
+      selected_version: selectedVersion,
+      _draft_version: selectedVersion,
+      alias: item.kind === 'lib' ? `${item.name}_lib`.replace(/[^a-zA-Z0-9_]/g, '_') : '',
+      filter_not: item.kind === 'lib' ? [] : computeFilterNot(),
+    };
+    if (importModalTarget === 'runtime') {
+      const exists = (runtimeHubImports || []).some((imp) => imp.kind === item.kind && imp.name === item.name);
+      if (exists) return;
+      const next = [...(runtimeHubImports || []), newEntry];
+      setRuntimeHubImports(next);
+      setRuntimeImportsCode(serializeHubImports(next));
+    } else {
+      const exists = (hubImports || []).some((imp) => imp.kind === item.kind && imp.name === item.name);
+      if (exists) return;
+      const next = [...(hubImports || []), newEntry];
+      setHubImports(next);
+      setImportsCode(serializeHubImports(next));
+    }
   };
 
   const searchHubRegistry = async () => {
@@ -908,11 +916,11 @@ ${DEFAULT_MAP_CODE}
         setThemeCode(parsed.theme_code || '');
         setPredefinedCode(parsed.predefined_code ?? '');
         setCode(parsed.map_code ?? '');
-        setRuntimeImportsCode(
-          typeof parsed.runtime_imports_code === 'string'
-            ? parsed.runtime_imports_code
-            : (typeof parsed?.project?.runtimeImportsCode === 'string' ? parsed.project.runtimeImportsCode : '')
-        );
+        const loadedRuntimeImportsCode = typeof parsed.runtime_imports_code === 'string'
+          ? parsed.runtime_imports_code
+          : (typeof parsed?.project?.runtimeImportsCode === 'string' ? parsed.project.runtimeImportsCode : '');
+        setRuntimeImportsCode(loadedRuntimeImportsCode);
+        setRuntimeHubImports(parseImportsCodeToItems(loadedRuntimeImportsCode));
         setRuntimeThemeCode(
           typeof parsed.runtime_theme_code === 'string'
             ? parsed.runtime_theme_code
@@ -1039,7 +1047,10 @@ ${DEFAULT_MAP_CODE}
         lastThemeAlphaSavedRef.current = String(draft.project.themeCode || '');
         setThemeCode(draft.project.themeCode);
       }
-      if (typeof draft.project?.runtimeImportsCode === 'string') setRuntimeImportsCode(draft.project.runtimeImportsCode);
+      if (typeof draft.project?.runtimeImportsCode === 'string') {
+        setRuntimeImportsCode(draft.project.runtimeImportsCode);
+        setRuntimeHubImports(parseImportsCodeToItems(draft.project.runtimeImportsCode));
+      }
       if (typeof draft.project?.runtimeThemeCode === 'string') setRuntimeThemeCode(draft.project.runtimeThemeCode);
       if (typeof draft.project?.runtimePredefinedCode === 'string') setRuntimePredefinedCode(draft.project.runtimePredefinedCode);
       if (typeof draft.project?.runtimeCode === 'string') setRuntimeCode(draft.project.runtimeCode);
@@ -1318,6 +1329,25 @@ ${DEFAULT_MAP_CODE}
     };
     setHubImports(next);
     setImportsCode(serializeHubImports(next));
+  };
+
+  const switchRuntimeHubImportVersion = (idx, version, applyNow = false) => {
+    const next = [...(runtimeHubImports || [])];
+    if (!next[idx]) return;
+    if (!applyNow) {
+      next[idx] = { ...next[idx], _draft_version: version };
+      setRuntimeHubImports(next);
+      return;
+    }
+    const selected = version || next[idx]._draft_version || next[idx].selected_version || 'alpha';
+    next[idx] = {
+      ...next[idx],
+      selected_version: selected,
+      path: buildImportPath(next[idx], selected),
+      _draft_version: selected,
+    };
+    setRuntimeHubImports(next);
+    setRuntimeImportsCode(serializeHubImports(next));
   };
 
   useEffect(() => {
@@ -2955,7 +2985,10 @@ window.addEventListener('message', function(e) {
                setHubImports(parseImportsCodeToItems(project.importsCode));
              }
              if (typeof project.themeCode === 'string') setThemeCode(project.themeCode);
-             if (typeof project.runtimeImportsCode === 'string') setRuntimeImportsCode(project.runtimeImportsCode);
+             if (typeof project.runtimeImportsCode === 'string') {
+               setRuntimeImportsCode(project.runtimeImportsCode);
+               setRuntimeHubImports(parseImportsCodeToItems(project.runtimeImportsCode));
+             }
              if (typeof project.runtimeThemeCode === 'string') setRuntimeThemeCode(project.runtimeThemeCode);
              if (typeof project.runtimePredefinedCode === 'string') setRuntimePredefinedCode(project.runtimePredefinedCode);
              if (typeof project.runtimeCode === 'string') setRuntimeCode(project.runtimeCode);
@@ -3408,6 +3441,7 @@ window.addEventListener('message', function(e) {
         if (runtimeParsed.options && typeof runtimeParsed.options === 'object') setRuntimeBuilderOptions(runtimeParsed.options);
         if (typeof parsed.predefined_code === 'string') setPredefinedCode(parsed.predefined_code);
         setHubImports(parseImportsCodeToItems(importsCode));
+        setRuntimeHubImports(parseImportsCodeToItems(runtimeImportsCode));
       } catch (err) {
         setError(`Code → Builder sync failed: ${err.message}`);
         return;
@@ -4930,7 +4964,7 @@ window.addEventListener('message', function(e) {
               addLayerSignal={addLayerSignal}
               onConsumeAddLayerSignal={() => setAddLayerSignal(null)}
               hubImports={hubImports}
-              onOpenImportModal={() => { setImportModalOpen(true); searchHubRegistry(); }}
+              onOpenImportModal={() => { setImportModalTarget('main'); setImportModalOpen(true); searchHubRegistry(); }}
               onRemoveHubImport={(idx) => {
                 const next = [...hubImports];
                 next.splice(idx, 1);
@@ -4943,6 +4977,15 @@ window.addEventListener('message', function(e) {
               runtimeSetElements={setRuntimeBuilderElements}
               runtimeOptions={runtimeBuilderOptions}
               runtimeSetOptions={setRuntimeBuilderOptions}
+              runtimeHubImports={runtimeHubImports}
+              onOpenRuntimeImportModal={() => { setImportModalTarget('runtime'); setImportModalOpen(true); searchHubRegistry(); }}
+              onRemoveRuntimeHubImport={(idx) => {
+                const next = [...runtimeHubImports];
+                next.splice(idx, 1);
+                setRuntimeHubImports(next);
+                setRuntimeImportsCode(serializeHubImports(next));
+              }}
+              onSwitchRuntimeHubImportVersion={switchRuntimeHubImportVersion}
               trustedUser={!!currentUser?.user?.is_trusted}
               readOnly={isReadOnlyMap}
               isDarkMode={isDarkMode}

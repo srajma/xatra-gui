@@ -145,6 +145,9 @@ HUB_RESERVED_USERNAMES = {
     "map",
     "lib",
     "css",
+    "theme",
+    "thm",
+    "default",
     "user",
     "hub",
     "auth",
@@ -296,7 +299,7 @@ def _is_xatrahub_line(line: str, require_assignment: bool = False) -> bool:
     return bool(re.match(r'^(?:\w+\s*=\s*)?xatrahub\s*\(', stripped))
 
 
-_THEME_CALL_NAMES = frozenset({"CSS", "BaseOption", "FlagColorSequence", "AdminColorSequence", "DataColormap"})
+_THEME_CALL_NAMES = frozenset({"CSS", "BaseOption", "FlagColorSequence", "AdminColorSequence", "DataColormap", "zoom", "focus", "slider"})
 
 
 def _is_xatrahub_node(node: ast.stmt) -> bool:
@@ -2797,6 +2800,36 @@ def _parse_theme_code_to_options(theme_code: str) -> Dict[str, Any]:
                 cmap = _parse_data_colormap_expr(call.args[0])
                 if cmap:
                     options["data_colormap"] = cmap
+            continue
+        if method == "zoom":
+            if call.args:
+                zoom_val = _python_value(call.args[0])
+                if zoom_val is not None:
+                    try:
+                        options["zoom"] = int(zoom_val)
+                    except (TypeError, ValueError):
+                        pass
+            continue
+        if method == "focus":
+            if len(call.args) >= 2:
+                lat = _python_value(call.args[0])
+                lng = _python_value(call.args[1])
+                if lat is not None and lng is not None:
+                    try:
+                        options["focus"] = [float(lat), float(lng)]
+                    except (TypeError, ValueError):
+                        pass
+            continue
+        if method == "slider":
+            start_val = _python_value(kwargs["start"]) if kwargs.get("start") else None
+            end_val = _python_value(kwargs["end"]) if kwargs.get("end") else None
+            speed_val = _python_value(kwargs["speed"]) if kwargs.get("speed") else None
+            if call.args:
+                if len(call.args) >= 1:
+                    start_val = _python_value(call.args[0])
+                if len(call.args) >= 2:
+                    end_val = _python_value(call.args[1])
+            options["slider"] = {"start": start_val, "end": end_val, "speed": speed_val}
             continue
     if flag_rows:
         options["flag_color_sequences"] = flag_rows
