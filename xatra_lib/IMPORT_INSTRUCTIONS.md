@@ -51,3 +51,5 @@ Map data/code sections structure:
   - Custom Territory Library
   - Custom Theme
   - Map Code
+
+All these sections should show up under both Builder and Code.
