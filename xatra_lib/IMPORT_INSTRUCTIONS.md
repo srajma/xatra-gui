@@ -4,6 +4,7 @@ To forcibly re-seed the database, run
 uv run seed_libs.py --force
 ```
 
+
 ---------
 
 ## prompt that created and describes the seeding
@@ -34,3 +35,19 @@ sb = xatrahub("/lib/sb_lib")
 ```
 
 Typically the script should check if a map of that name already exists and only create it if it doesn't---but it should have a `--force` option to overwrite existing maps (specifically their "alpha" versions, leaving the numbered versions as-is). The script should be run every time the database is initialized for the first time.
+
+
+
+---------
+
+Map data/code sections structure:
+- Python Imports (not really data, just the same read-only snippet in all cases)
+- xatrahub imports (both `xatrahub(xyz)` and `abc = xatrahub(xyz)` code)
+- Custom Territory Library
+- Custom Theme
+- Map Code
+- Runtime Code (stuff under `if __name__ == "__main__"`)
+  - xatrahub imports
+  - Custom Territory Library
+  - Custom Theme
+  - Map Code
