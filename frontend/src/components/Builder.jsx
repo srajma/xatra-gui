@@ -14,7 +14,8 @@ const Builder = ({
   readOnly = false,
   isDarkMode = false,
 }) => {
-  const layersEndRef = useRef(null);
+  const layersContainerRef = useRef(null);
+  const runtimeLayersContainerRef = useRef(null);
   const prevElementsLengthRef = useRef(elements.length);
   const pendingFocusNewLayerRef = useRef(false);
   const focusTimeoutsRef = useRef([]);
@@ -80,18 +81,18 @@ const Builder = ({
     const newElement = _newElementForType(type);
 
     if (opts.focusFirstField) pendingFocusNewLayerRef.current = true;
-    setElements([...elements, newElement]);
+    setElements([newElement, ...elements]);
   };
 
   const addRuntimeElement = (type) => {
     if (readOnly || typeof runtimeSetElements !== 'function') return;
     const newElement = _newElementForType(type);
-    runtimeSetElements([...(runtimeElements || []), newElement]);
+    runtimeSetElements([newElement, ...(runtimeElements || [])]);
   };
 
   useEffect(() => {
-    if (elements.length > prevElementsLengthRef.current && layersEndRef.current) {
-      layersEndRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    if (elements.length > prevElementsLengthRef.current && layersContainerRef.current) {
+      layersContainerRef.current.scrollTo({ top: 0, behavior: 'smooth' });
       if (pendingFocusNewLayerRef.current) {
         // Clear any previous pending focus timeouts
         focusTimeoutsRef.current.forEach(clearTimeout);
@@ -100,9 +101,9 @@ const Builder = ({
           const id = window.setTimeout(() => {
             focusTimeoutsRef.current = focusTimeoutsRef.current.filter((t) => t !== id);
             const cards = document.querySelectorAll('#layers-container .xatra-layer-card');
-            const lastCard = cards[cards.length - 1];
-            if (!lastCard) return;
-            const firstField = lastCard.querySelector('[data-focus-primary="true"], input, textarea, select');
+            const firstCard = cards[0];
+            if (!firstCard) return;
+            const firstField = firstCard.querySelector('[data-focus-primary="true"], input, textarea, select');
             if (firstField && typeof firstField.focus === 'function') {
               firstField.focus();
               if (typeof firstField.select === 'function' && (firstField.tagName === 'INPUT' || firstField.tagName === 'TEXTAREA')) {
@@ -257,40 +258,8 @@ const Builder = ({
           <h3 className="text-sm font-semibold text-gray-900">Layers</h3>
         </div>
 
-        <div className="space-y-3 overflow-auto max-h-[70vh]" id="layers-container">
-          {elements.map((el, index) => (
-            <LayerItem
-              key={index}
-              element={el}
-              index={index}
-              elements={elements}
-              updateElement={updateElement}
-              updateArg={updateArg}
-              replaceElement={replaceElement}
-              removeElement={removeElement}
-              lastMapClick={lastMapClick}
-              activePicker={activePicker}
-              setActivePicker={setActivePicker}
-              draftPoints={draftPoints}
-              setDraftPoints={setDraftPoints}
-              onSaveTerritory={onSaveTerritory}
-              predefinedCode={predefinedCode}
-              onStartReferencePick={onStartReferencePick}
-              hubImports={hubImports}
-              trustedUser={trustedUser}
-              isDarkMode={isDarkMode}
-              readOnly={readOnly}
-            />
-          ))}
-          
-          {elements.length === 0 && (
-            <div className="text-center py-8 border-2 border-dashed border-gray-200 rounded-lg text-gray-400 text-sm">
-              No layers added yet. Add one below.
-            </div>
-          )}
-
-          {/* Add layer panel at bottom so new layers appear above it */}
-          <div ref={layersEndRef} className={`grid grid-cols-3 gap-2 pt-2 sm:grid-cols-4 ${readOnly ? 'pointer-events-none' : ''}`}>
+        <div ref={layersContainerRef} className="space-y-3 overflow-auto max-h-[70vh]" id="layers-container">
+          <div className={`grid grid-cols-3 gap-2 pt-1 sm:grid-cols-4 ${readOnly ? 'pointer-events-none' : ''}`}>
              <button data-kind="flag" onClick={() => addElement('flag', { focusFirstField: true })} className="xatra-add-layer-btn flex flex-col items-center justify-center p-2 bg-blue-50 text-blue-700 rounded hover:bg-blue-100 text-[10px] gap-1 border border-blue-100">
                <Map size={14}/> Flag
              </button>
@@ -324,6 +293,37 @@ const Builder = ({
                </button>
              )}
           </div>
+
+          {elements.map((el, index) => (
+            <LayerItem
+              key={index}
+              element={el}
+              index={index}
+              elements={elements}
+              updateElement={updateElement}
+              updateArg={updateArg}
+              replaceElement={replaceElement}
+              removeElement={removeElement}
+              lastMapClick={lastMapClick}
+              activePicker={activePicker}
+              setActivePicker={setActivePicker}
+              draftPoints={draftPoints}
+              setDraftPoints={setDraftPoints}
+              onSaveTerritory={onSaveTerritory}
+              predefinedCode={predefinedCode}
+              onStartReferencePick={onStartReferencePick}
+              hubImports={hubImports}
+              trustedUser={trustedUser}
+              isDarkMode={isDarkMode}
+              readOnly={readOnly}
+            />
+          ))}
+          
+          {elements.length === 0 && (
+            <div className="text-center py-8 border-2 border-dashed border-gray-200 rounded-lg text-gray-400 text-sm">
+              No layers added yet. Add one above.
+            </div>
+          )}
         </div>
       </section>
 
@@ -394,7 +394,22 @@ const Builder = ({
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-sm font-semibold text-gray-900">Runtime Layers</h3>
             </div>
-            <div className="space-y-3 overflow-auto max-h-[60vh]" id="runtime-layers-container">
+            <div ref={runtimeLayersContainerRef} className="space-y-3 overflow-auto max-h-[60vh]" id="runtime-layers-container">
+              <div className={`grid grid-cols-3 gap-2 pt-1 sm:grid-cols-4 ${readOnly ? 'pointer-events-none' : ''}`}>
+                <button onClick={() => addRuntimeElement('flag')} className="xatra-add-layer-btn flex flex-col items-center justify-center p-2 bg-blue-50 text-blue-700 rounded hover:bg-blue-100 text-[10px] gap-1 border border-blue-100"><Map size={14}/> Flag</button>
+                <button onClick={() => addRuntimeElement('river')} className="xatra-add-layer-btn flex flex-col items-center justify-center p-2 bg-cyan-50 text-cyan-700 rounded hover:bg-cyan-100 text-[10px] gap-1 border border-cyan-100"><span className="text-lg leading-3">~</span> River</button>
+                <button onClick={() => addRuntimeElement('point')} className="xatra-add-layer-btn flex flex-col items-center justify-center p-2 bg-purple-50 text-purple-700 rounded hover:bg-purple-100 text-[10px] gap-1 border border-purple-100"><MapPin size={14}/> Point</button>
+                <button onClick={() => addRuntimeElement('text')} className="xatra-add-layer-btn flex flex-col items-center justify-center p-2 bg-gray-50 text-gray-700 rounded hover:bg-gray-100 text-[10px] gap-1 border border-gray-100"><Type size={14}/> Text</button>
+                <button onClick={() => addRuntimeElement('path')} className="xatra-add-layer-btn flex flex-col items-center justify-center p-2 bg-orange-50 text-orange-700 rounded hover:bg-orange-100 text-[10px] gap-1 border border-orange-100"><GitMerge size={14}/> Path</button>
+                <button onClick={() => addRuntimeElement('admin')} className="xatra-add-layer-btn flex flex-col items-center justify-center p-2 bg-indigo-50 text-indigo-700 rounded hover:bg-indigo-100 text-[10px] gap-1 border border-indigo-100"><Users size={14}/> Admin</button>
+                <button onClick={() => addRuntimeElement('dataframe')} className="xatra-add-layer-btn flex flex-col items-center justify-center p-2 bg-green-50 text-green-700 rounded hover:bg-green-100 text-[10px] gap-1 border border-green-100"><Table size={14}/> Data</button>
+                <button onClick={() => addRuntimeElement('titlebox')} className="xatra-add-layer-btn flex flex-col items-center justify-center p-2 bg-fuchsia-50 text-fuchsia-700 rounded hover:bg-fuchsia-100 text-[10px] gap-1 border border-fuchsia-100"><Heading size={14}/> TitleBox</button>
+                <button onClick={() => addRuntimeElement('music')} className="xatra-add-layer-btn flex flex-col items-center justify-center p-2 bg-pink-50 text-pink-700 rounded hover:bg-pink-100 text-[10px] gap-1 border border-pink-100"><Music size={14}/> Music</button>
+                {trustedUser && (
+                  <button onClick={() => addRuntimeElement('python')} className="xatra-add-layer-btn flex flex-col items-center justify-center p-2 bg-amber-50 text-amber-700 rounded hover:bg-amber-100 text-[10px] gap-1 border border-amber-100"><Code2 size={14}/> Python</button>
+                )}
+              </div>
+
               {(runtimeElements || []).map((el, index) => (
                 <LayerItem
                   key={`runtime-${index}`}
@@ -420,23 +435,9 @@ const Builder = ({
               ))}
               {(runtimeElements || []).length === 0 && (
                 <div className="text-center py-8 border-2 border-dashed border-gray-200 rounded-lg text-gray-400 text-sm">
-                  No runtime layers yet.
+                  No runtime layers yet. Add one above.
                 </div>
               )}
-              <div className={`grid grid-cols-3 gap-2 pt-2 sm:grid-cols-4 ${readOnly ? 'pointer-events-none' : ''}`}>
-                <button onClick={() => addRuntimeElement('flag')} className="xatra-add-layer-btn flex flex-col items-center justify-center p-2 bg-blue-50 text-blue-700 rounded hover:bg-blue-100 text-[10px] gap-1 border border-blue-100"><Map size={14}/> Flag</button>
-                <button onClick={() => addRuntimeElement('river')} className="xatra-add-layer-btn flex flex-col items-center justify-center p-2 bg-cyan-50 text-cyan-700 rounded hover:bg-cyan-100 text-[10px] gap-1 border border-cyan-100"><span className="text-lg leading-3">~</span> River</button>
-                <button onClick={() => addRuntimeElement('point')} className="xatra-add-layer-btn flex flex-col items-center justify-center p-2 bg-purple-50 text-purple-700 rounded hover:bg-purple-100 text-[10px] gap-1 border border-purple-100"><MapPin size={14}/> Point</button>
-                <button onClick={() => addRuntimeElement('text')} className="xatra-add-layer-btn flex flex-col items-center justify-center p-2 bg-gray-50 text-gray-700 rounded hover:bg-gray-100 text-[10px] gap-1 border border-gray-100"><Type size={14}/> Text</button>
-                <button onClick={() => addRuntimeElement('path')} className="xatra-add-layer-btn flex flex-col items-center justify-center p-2 bg-orange-50 text-orange-700 rounded hover:bg-orange-100 text-[10px] gap-1 border border-orange-100"><GitMerge size={14}/> Path</button>
-                <button onClick={() => addRuntimeElement('admin')} className="xatra-add-layer-btn flex flex-col items-center justify-center p-2 bg-indigo-50 text-indigo-700 rounded hover:bg-indigo-100 text-[10px] gap-1 border border-indigo-100"><Users size={14}/> Admin</button>
-                <button onClick={() => addRuntimeElement('dataframe')} className="xatra-add-layer-btn flex flex-col items-center justify-center p-2 bg-green-50 text-green-700 rounded hover:bg-green-100 text-[10px] gap-1 border border-green-100"><Table size={14}/> Data</button>
-                <button onClick={() => addRuntimeElement('titlebox')} className="xatra-add-layer-btn flex flex-col items-center justify-center p-2 bg-fuchsia-50 text-fuchsia-700 rounded hover:bg-fuchsia-100 text-[10px] gap-1 border border-fuchsia-100"><Heading size={14}/> TitleBox</button>
-                <button onClick={() => addRuntimeElement('music')} className="xatra-add-layer-btn flex flex-col items-center justify-center p-2 bg-pink-50 text-pink-700 rounded hover:bg-pink-100 text-[10px] gap-1 border border-pink-100"><Music size={14}/> Music</button>
-                {trustedUser && (
-                  <button onClick={() => addRuntimeElement('python')} className="xatra-add-layer-btn flex flex-col items-center justify-center p-2 bg-amber-50 text-amber-700 rounded hover:bg-amber-100 text-[10px] gap-1 border border-amber-100"><Code2 size={14}/> Python</button>
-                )}
-              </div>
             </div>
           </section>
         </div>

@@ -42,6 +42,18 @@ const IMPORTABLE_LAYER_TYPES = [
   'DataColormap', 'zoom', 'focus', 'slider', 'Python',
 ];
 const THUMBNAIL_LIBRARY_MAX_NAMES = 48;
+const DEFAULT_PICKER_OPTIONS = {
+  entries: [
+    { country: 'IND', level: 2 },
+    { country: 'PAK', level: 3 },
+    { country: 'BGD', level: 2 },
+    { country: 'NPL', level: 3 },
+    { country: 'BTN', level: 1 },
+    { country: 'LKA', level: 1 },
+    { country: 'AFG', level: 2 },
+  ],
+  adminRivers: true,
+};
 
 const apiFetch = (path, options = {}) => {
   const headers = options.headers || {};
@@ -66,6 +78,25 @@ const getApiErrorMessage = (payload, fallback = 'Request failed') => {
   if (typeof payload?.error === 'string' && payload.error.trim()) return payload.error;
   if (typeof payload?.message === 'string' && payload.message.trim()) return payload.message;
   return fallback;
+};
+
+const buildPickerRenderOptions = (options = {}) => {
+  const entriesInput = Array.isArray(options.entries) ? options.entries : [];
+  const entries = entriesInput
+    .map((entry) => {
+      const country = String(entry?.country || '').trim();
+      if (!country) return null;
+      const parsedLevel = Number.parseInt(String(entry?.level ?? 1), 10);
+      return {
+        country,
+        level: Number.isFinite(parsedLevel) ? parsedLevel : 1,
+      };
+    })
+    .filter(Boolean);
+  return {
+    entries: entries.length ? entries : DEFAULT_PICKER_OPTIONS.entries.map((entry) => ({ ...entry })),
+    adminRivers: !!options.adminRivers,
+  };
 };
 
 const parsePath = (pathname) => {
@@ -257,18 +288,10 @@ ${DEFAULT_MAP_CODE}
   const localThemeAlphaRef = useRef(null);
 
   // Picker State
-  const [pickerOptions, setPickerOptions] = useState({
-    entries: [
-      { country: 'IND', level: 2 },
-      { country: 'PAK', level: 3 },
-      { country: 'BGD', level: 2 },
-      { country: 'NPL', level: 3 },
-      { country: 'BTN', level: 1 },
-      { country: 'LKA', level: 1 },
-      { country: 'AFG', level: 2 },
-    ],
-    adminRivers: true
-  });
+  const [pickerOptions, setPickerOptions] = useState(() => ({
+    entries: DEFAULT_PICKER_OPTIONS.entries.map((entry) => ({ ...entry })),
+    adminRivers: DEFAULT_PICKER_OPTIONS.adminRivers,
+  }));
   
   const [lastMapClick, setLastMapClick] = useState(null);
   const [activePicker, setActivePicker] = useState(null); // { id, type, context }
@@ -296,6 +319,9 @@ ${DEFAULT_MAP_CODE}
   const menuFocusIndexRef = useRef(0);
   const librarySubTabsRef = useRef(null);
   const editorInitKeyRef = useRef('');
+  const mainRenderRequestRef = useRef(0);
+  const pickerRenderRequestRef = useRef(0);
+  const libraryRenderRequestRef = useRef(0);
 
   const injectTerritoryLabelOverlayPatch = (html) => {
     if (!html || typeof html !== 'string') return html;
@@ -2093,11 +2119,12 @@ ${DEFAULT_MAP_CODE}
     }
   };
 
-  const renderPickerMap = async ({ showLoading = true } = {}) => {
+  const renderPickerMap = async ({ showLoading = true, background = false } = {}) => {
+      const requestId = ++pickerRenderRequestRef.current;
       if (showLoading) setLoadingByView((prev) => ({ ...prev, picker: true }));
       try {
           const payload = {
-            ...pickerOptions,
+            ...buildPickerRenderOptions(pickerOptions),
             basemaps: builderOptions.basemaps || [],
           };
           const response = await fetch(`${API_BASE}/render/picker`, {
@@ -2107,14 +2134,18 @@ ${DEFAULT_MAP_CODE}
               body: JSON.stringify(payload)
           });
           const data = await response.json();
+          if (requestId !== pickerRenderRequestRef.current) return;
           if (!response.ok || data.error) {
               throw new Error(getApiErrorMessage(data, 'Failed to render picker preview'));
           }
           if (data.html) setPickerHtml(data.html);
       } catch (err) {
-          setError(err.message);
+          if (requestId !== pickerRenderRequestRef.current) return;
+          if (!background) setError(err.message);
       } finally {
-          if (showLoading) setLoadingByView((prev) => ({ ...prev, picker: false }));
+          if (requestId === pickerRenderRequestRef.current && showLoading) {
+            setLoadingByView((prev) => ({ ...prev, picker: false }));
+          }
       }
   };
 
@@ -2154,8 +2185,9 @@ ${DEFAULT_MAP_CODE}
 
   const renderTerritoryLibrary = async (
     source = territoryLibrarySource,
-    { useDefaultSelection = false, showLoading = true, hubPath = null } = {}
+    { useDefaultSelection = false, showLoading = true, hubPath = null, background = false } = {}
   ) => {
+      const requestId = ++libraryRenderRequestRef.current;
       if (showLoading) setLoadingByView((prev) => ({ ...prev, library: true }));
       try {
           const body = {
@@ -2173,21 +2205,26 @@ ${DEFAULT_MAP_CODE}
               body: JSON.stringify(body),
           });
           const data = await response.json();
+          if (requestId !== libraryRenderRequestRef.current) return;
           if (!response.ok || data.error) {
-              setError(getApiErrorMessage(data, 'Failed to render territory library'));
+              if (!background) setError(getApiErrorMessage(data, 'Failed to render territory library'));
           } else if (data.html) {
               setTerritoryLibraryHtml(injectThumbnailCapture(injectTerritoryLabelOverlayPatch(data.html)));
               const names = dedupeNames(Array.isArray(data.available_names) ? data.available_names : []);
               if (names.length) setTerritoryLibraryNames(names);
           }
       } catch (err) {
-          setError(err.message);
+          if (requestId !== libraryRenderRequestRef.current) return;
+          if (!background) setError(err.message);
       } finally {
-          if (showLoading) setLoadingByView((prev) => ({ ...prev, library: false }));
+          if (requestId === libraryRenderRequestRef.current && showLoading) {
+            setLoadingByView((prev) => ({ ...prev, library: false }));
+          }
       }
   };
 
   const renderMapWithData = async ({ elements, options, runtimeElements = [], runtimeOptions = {}, predCode, importsCode: iCode, themeCode: tCode, runtimeImportsCode: riCode, runtimeThemeCode: rtcCode, runtimePredefinedCode: rpcCode, runtimeCode: rCode }) => {
+    const requestId = ++mainRenderRequestRef.current;
     setActivePreviewTab('main');
     setLoadingByView((prev) => ({ ...prev, main: true }));
     setError(null);
@@ -2212,6 +2249,7 @@ ${DEFAULT_MAP_CODE}
         body: JSON.stringify(body),
       });
       const data = await response.json();
+      if (requestId !== mainRenderRequestRef.current) return;
       if (!response.ok || data.error) {
         setError(getApiErrorMessage(data, 'Failed to render map'));
         console.error(data.traceback);
@@ -2222,13 +2260,17 @@ ${DEFAULT_MAP_CODE}
         setError('Render completed but returned no HTML.');
       }
     } catch (err) {
+      if (requestId !== mainRenderRequestRef.current) return;
       setError(err.message);
     } finally {
-      setLoadingByView((prev) => ({ ...prev, main: false }));
+      if (requestId === mainRenderRequestRef.current) {
+        setLoadingByView((prev) => ({ ...prev, main: false }));
+      }
     }
   };
 
   const renderMap = async () => {
+    const requestId = ++mainRenderRequestRef.current;
     const taskType = activeTab === 'code' ? 'code' : 'builder';
     setActivePreviewTab('main');
     setMainRenderTask(taskType);
@@ -2268,6 +2310,7 @@ ${DEFAULT_MAP_CODE}
       });
       
       const data = await response.json();
+      if (requestId !== mainRenderRequestRef.current) return;
       if (!response.ok || data.error) {
         setError(getApiErrorMessage(data, 'Failed to render map'));
         console.error(data.traceback);
@@ -2278,10 +2321,13 @@ ${DEFAULT_MAP_CODE}
         setError('Render completed but returned no HTML.');
       }
     } catch (err) {
+      if (requestId !== mainRenderRequestRef.current) return;
       setError(err.message);
     } finally {
-      setLoadingByView((prev) => ({ ...prev, main: false }));
-      setMainRenderTask(null);
+      if (requestId === mainRenderRequestRef.current) {
+        setLoadingByView((prev) => ({ ...prev, main: false }));
+        setMainRenderTask(null);
+      }
     }
   };
 

@@ -5156,9 +5156,33 @@ def run_rendering_task(task_type, data, result_queue):
         
         if effective_task_type == 'picker':
             apply_basemaps(getattr(data, "basemaps", None))
-            for entry in data.entries:
-                m.Admin(gadm=entry.country, level=entry.level)
-            if data.adminRivers:
+            valid_entries: List[Tuple[str, int]] = []
+            for entry in (getattr(data, "entries", None) or []):
+                country = str(getattr(entry, "country", "") or "").strip()
+                if not country:
+                    continue
+                try:
+                    level = int(getattr(entry, "level", 1))
+                except Exception:
+                    level = 1
+                valid_entries.append((country, level))
+            if not valid_entries:
+                # Keep picker previews stable even with malformed/blank picker state.
+                valid_entries = [
+                    ("IND", 2),
+                    ("PAK", 3),
+                    ("BGD", 2),
+                    ("NPL", 3),
+                    ("BTN", 1),
+                    ("LKA", 1),
+                    ("AFG", 2),
+                ]
+            for country, level in valid_entries:
+                try:
+                    m.Admin(gadm=country, level=level)
+                except Exception as e:
+                    print(f"[xatra] Warning: picker Admin({country}, level={level}) failed: {e}", file=sys.stderr)
+            if data.adminRivers and valid_entries:
                 m.AdminRivers()
         elif effective_task_type == 'territory_library':
             apply_basemaps(getattr(data, "basemaps", None))
