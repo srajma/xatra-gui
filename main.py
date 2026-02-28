@@ -327,13 +327,15 @@ def _is_theme_call_node(node: ast.stmt) -> bool:
 
 def _parse_xatra_lib_map_file(content: str) -> Dict[str, str]:
     """
-    Parse a map/ file into five sections:
+    Parse a map/ file into sections:
     - imports_code: xatrahub(...) or abc = xatrahub(...) calls (top-level, outside # <lib>)
     - predefined_code: content between # <lib> and # </lib> delimiters
     - map_code: remaining top-level statements
     - theme_code: xatra.CSS/BaseOption/FlagColorSequence/AdminColorSequence/DataColormap calls
-                  (from both top-level and if __name__ body)
-    - runtime_code: body of if __name__ == '__main__': minus theme calls (indent stripped)
+                  (from top-level only)
+    - runtime_code: non-xatrahub, non-theme body of if __name__ == '__main__': (indent stripped)
+    - runtime_imports_code: xatrahub calls inside if __name__ body (indent stripped)
+    - runtime_theme_code: theme calls inside if __name__ body (NOT merged with main theme_code)
     """
     lines = content.splitlines(keepends=True)
 
@@ -408,6 +410,8 @@ def _parse_xatra_lib_map_file(content: str) -> Dict[str, str]:
                 map_segs.append(line)
 
     # --- Step 4: classify if __name__ body using AST ---
+    runtime_imports_segs: List[str] = []
+    runtime_theme_segs: List[str] = []
     runtime_segs: List[str] = []
     body_lines: List[str] = []
     for line in raw_body_lines:
@@ -424,8 +428,10 @@ def _parse_xatra_lib_map_file(content: str) -> Dict[str, str]:
         for node in body_tree.body:
             seg = ast.get_source_segment(body_content, node) or ast.unparse(node)
             seg = seg.rstrip("\n") + "\n"
-            if _is_theme_call_node(node):
-                theme_segs.append(seg)
+            if _is_xatrahub_node(node):
+                runtime_imports_segs.append(seg)
+            elif _is_theme_call_node(node):
+                runtime_theme_segs.append(seg)  # kept separate from main theme_code
             else:
                 runtime_segs.append(seg)
     except SyntaxError:
@@ -441,6 +447,8 @@ def _parse_xatra_lib_map_file(content: str) -> Dict[str, str]:
         "map_code": _clean(map_segs),
         "theme_code": _clean(theme_segs),
         "runtime_code": _clean(runtime_segs),
+        "runtime_imports_code": _clean(runtime_imports_segs),
+        "runtime_theme_code": _clean(runtime_theme_segs),
     }
 
 
@@ -564,17 +572,42 @@ def _seed_xatra_lib_artifacts(
                         existing_content.setdefault("project", {})["options"] = new_options
                         content_changed = True
                         print(f"[xatra] Populated builder options for map '{name}'")
+                if isinstance(existing_content, dict) and isinstance(desired_content, dict):
+                    proj2 = existing_content.get("project", {})
+                    # Backfill runtime_imports_code if the existing row has it as empty string
+                    # (old rows from before runtime_imports_code was returned by the parser)
+                    desired_ric = desired_content.get("runtime_imports_code", "")
+                    if desired_ric and desired_ric.strip() and not existing_content.get("runtime_imports_code", "").strip():
+                        existing_content["runtime_imports_code"] = desired_ric
+                        existing_content.setdefault("project", {})["runtimeImportsCode"] = desired_ric
+                        content_changed = True
+                        print(f"[xatra] Backfilled runtime_imports_code for map '{name}'")
+                    # Backfill runtime_theme_code if missing
+                    desired_rtc = desired_content.get("runtime_theme_code", "")
+                    if desired_rtc and desired_rtc.strip() and not existing_content.get("runtime_theme_code", "").strip():
+                        existing_content["runtime_theme_code"] = desired_rtc
+                        existing_content.setdefault("project", {})["runtimeThemeCode"] = desired_rtc
+                        content_changed = True
+                        print(f"[xatra] Backfilled runtime_theme_code for map '{name}'")
                 if code_to_builder_fn is not None and isinstance(existing_content, dict):
                     proj2 = existing_content.get("project", {})
                     if proj2.get("runtimeElements") is None or proj2.get("runtimeOptions") is None:
                         rc = existing_content.get("runtime_code", "")
-                        if rc and rc.strip():
+                        ric = existing_content.get("runtime_imports_code", "")
+                        rtc = existing_content.get("runtime_theme_code", "")
+                        # For runtimeOptions, parse from runtime_theme_code (if present) rather than runtime_code
+                        if parse_theme_fn and rtc and rtc.strip():
+                            new_runtime_options = parse_theme_fn(rtc)
+                            existing_content.setdefault("project", {})["runtimeOptions"] = new_runtime_options
+                            content_changed = True
+                        elif rc and rc.strip():
                             runtime_state = _parse_builder_state(rc, "")
                             if runtime_state:
                                 existing_content.setdefault("project", {})["runtimeElements"] = runtime_state.get("elements", [])
                                 existing_content.setdefault("project", {})["runtimeOptions"] = runtime_state.get("options", {})
                                 content_changed = True
-                                print(f"[xatra] Populated runtime builder state for map '{name}'")
+                        if content_changed:
+                            print(f"[xatra] Populated runtime builder state for map '{name}'")
                 # Backfill territory-library predefined code/index for old seeded rows that were
                 # created before __TERRITORY_INDEX__ support.
                 if isinstance(existing_content, dict) and isinstance(desired_content, dict):
@@ -621,6 +654,8 @@ def _seed_xatra_lib_artifacts(
         map_code: str,
         runtime_code: str,
         file_theme_code: str = "",
+        runtime_imports_code: str = "",
+        runtime_theme_code: str = "",
     ) -> str:
         # Combine default_theme.py with any map-specific theme calls (CSS etc.)
         combined_theme = theme_code
@@ -630,14 +665,16 @@ def _seed_xatra_lib_artifacts(
         options = parse_theme_fn(combined_theme) if parse_theme_fn else {}
         runtime_state = _parse_builder_state(runtime_code, "")
         runtime_elements = runtime_state.get("elements", [])
-        runtime_options = runtime_state.get("options", {})
+        runtime_options = parse_theme_fn(runtime_theme_code) if (parse_theme_fn and runtime_theme_code.strip()) else {}
         return json.dumps({
             "imports_code": imports_code,
             "theme_code": combined_theme,
             "predefined_code": predefined_code,
             "map_code": map_code,
             "runtime_code": runtime_code,
-            "runtime_imports_code": "",
+            "runtime_imports_code": runtime_imports_code,
+            "runtime_theme_code": runtime_theme_code,
+            "runtime_predefined_code": "",
             "project": {
                 "elements": elements,
                 "options": options,
@@ -647,7 +684,9 @@ def _seed_xatra_lib_artifacts(
                 "themeCode": combined_theme,
                 "predefinedCode": predefined_code,
                 "runtimeCode": runtime_code,
-                "runtimeImportsCode": "",
+                "runtimeImportsCode": runtime_imports_code,
+                "runtimeThemeCode": runtime_theme_code,
+                "runtimePredefinedCode": "",
             },
         }, ensure_ascii=False)
 
@@ -664,6 +703,8 @@ def _seed_xatra_lib_artifacts(
                     map_code=parsed["map_code"],
                     runtime_code=parsed["runtime_code"],
                     file_theme_code=parsed.get("theme_code", ""),
+                    runtime_imports_code=parsed.get("runtime_imports_code", ""),
+                    runtime_theme_code=parsed.get("runtime_theme_code", ""),
                 ))
             except Exception as e:
                 print(f"[xatra] Warning: failed to seed map '{name}': {e}", file=sys.stderr)
@@ -1388,6 +1429,8 @@ class CodeRequest(BaseModel):
     runtime_imports_code: Optional[str] = None
     theme_code: Optional[str] = None
     runtime_code: Optional[str] = None
+    runtime_theme_code: Optional[str] = None
+    runtime_predefined_code: Optional[str] = None
     trusted_user: bool = False
 
 class CodeSyncRequest(BaseModel):
@@ -1408,6 +1451,8 @@ class BuilderRequest(BaseModel):
     runtime_imports_code: Optional[str] = None
     theme_code: Optional[str] = None
     runtime_code: Optional[str] = None
+    runtime_theme_code: Optional[str] = None
+    runtime_predefined_code: Optional[str] = None
     runtime_elements: Optional[List[MapElement]] = None
     runtime_options: Optional[Dict[str, Any]] = None
     trusted_user: bool = False
@@ -5051,12 +5096,15 @@ def run_rendering_task(task_type, data, result_queue):
             theme_code = getattr(data, "theme_code", "") or ""
             runtime_imports_code = getattr(data, "runtime_imports_code", "") or ""
             runtime_code = getattr(data, "runtime_code", "") or ""
+            runtime_theme_code = getattr(data, "runtime_theme_code", "") or ""
+            runtime_predefined_code = getattr(data, "runtime_predefined_code", "") or ""
             predefined_code = getattr(data, "predefined_code", "") or ""
+            combined_predefined = "\n\n".join([x for x in [predefined_code, runtime_predefined_code] if x.strip()])
             main_payload = parse_code_segment_to_builder_payload(getattr(data, "code", "") or "", predefined_code)
             runtime_segment = "\n\n".join([
-                x for x in [runtime_imports_code, runtime_code] if isinstance(x, str) and x.strip()
+                x for x in [runtime_imports_code, runtime_theme_code, runtime_code] if isinstance(x, str) and x.strip()
             ])
-            runtime_payload = parse_code_segment_to_builder_payload(runtime_segment, "")
+            runtime_payload = parse_code_segment_to_builder_payload(runtime_segment, combined_predefined)
             data = SimpleNamespace(
                 elements=main_payload.get("elements", []),
                 options=main_payload.get("options", {}),
@@ -5065,6 +5113,8 @@ def run_rendering_task(task_type, data, result_queue):
                 runtime_imports_code=runtime_imports_code,
                 theme_code=theme_code,
                 runtime_code="",
+                runtime_theme_code=runtime_theme_code,
+                runtime_predefined_code=runtime_predefined_code,
                 runtime_elements=runtime_payload.get("elements", []),
                 runtime_options=runtime_payload.get("options", {}),
                 trusted_user=trusted_user,
@@ -5261,9 +5311,8 @@ def run_rendering_task(task_type, data, result_queue):
                     m.DataColormap(dc)
 
             predefined_namespace = {}
-            predefined_struct = _extract_territory_library_struct(
-                getattr(data, "predefined_code", "") or ""
-            )
+            predefined_code = getattr(data, "predefined_code", "") or ""
+            predefined_struct = _extract_territory_library_struct(predefined_code)
 
             builder_exec_globals = {
                 "xatra": xatra,
@@ -5285,13 +5334,19 @@ def run_rendering_task(task_type, data, result_queue):
             runtime_imports_code = getattr(data, "runtime_imports_code", "") or ""
             theme_code = getattr(data, "theme_code", "") or ""
             runtime_code = getattr(data, "runtime_code", "") or ""
+            runtime_theme_code = getattr(data, "runtime_theme_code", "") or ""
+            runtime_predefined_code = getattr(data, "runtime_predefined_code", "") or ""
             runtime_imports_effective = "\n\n".join([
                 x for x in [runtime_imports_code, runtime_code] if isinstance(x, str) and x.strip()
             ])
             runtime_elements = getattr(data, "runtime_elements", None)
             runtime_options = getattr(data, "runtime_options", None)
             if not isinstance(runtime_elements, list) or not isinstance(runtime_options, dict):
-                parsed_runtime = parse_code_segment_to_builder_payload(runtime_imports_effective, "")
+                runtime_for_parse = "\n\n".join([
+                    x for x in [runtime_imports_code, runtime_theme_code, runtime_code] if isinstance(x, str) and x.strip()
+                ])
+                combined_runtime_predef = "\n\n".join([x for x in [predefined_code, runtime_predefined_code] if x.strip()])
+                parsed_runtime = parse_code_segment_to_builder_payload(runtime_for_parse, combined_runtime_predef)
                 runtime_elements = parsed_runtime.get("elements", [])
                 runtime_options = parsed_runtime.get("options", {})
             apply_imports_code_parsed(imports_code, builder_exec_globals)
@@ -5299,6 +5354,16 @@ def run_rendering_task(task_type, data, result_queue):
                 _, predefined_namespace = materialize_library_namespace(predefined_struct, builder_exec_globals, include_builtin=True)
                 if predefined_namespace:
                     builder_exec_globals.update(predefined_namespace)
+            # Also materialize runtime_predefined_code into exec globals if provided
+            if runtime_predefined_code.strip():
+                runtime_predef_struct = _extract_territory_library_struct(runtime_predefined_code)
+                if runtime_predef_struct.get("territories"):
+                    try:
+                        _, runtime_predef_ns = materialize_library_namespace(runtime_predef_struct, builder_exec_globals, include_builtin=True)
+                        if runtime_predef_ns:
+                            builder_exec_globals.update(runtime_predef_ns)
+                    except Exception:
+                        pass
             # Apply theme_code only as a fallback: if data.options already has theme settings
             # (basemaps, css_rules, etc.), those were already applied above and theme_code would
             # cause duplication. Only apply theme_code when options has no theme content.
@@ -5342,6 +5407,14 @@ def run_rendering_task(task_type, data, result_queue):
                         if start is not None or end is not None:
                             m.slider(start=start, end=end, speed=speed if speed else 5.0)
                 apply_theme_options(_normalize_theme_options_struct(runtime_options))
+            # Apply runtime_theme_code as fallback if runtime_options has no theme content
+            _runtime_options_has_theme = bool(
+                runtime_options.get("basemaps") or runtime_options.get("css_rules") or
+                runtime_options.get("flag_color_sequences") or runtime_options.get("admin_color_sequences") or
+                runtime_options.get("data_colormap")
+            ) if isinstance(runtime_options, dict) else False
+            if runtime_theme_code.strip() and not _runtime_options_has_theme:
+                apply_theme_options(_parse_theme_code_to_options(runtime_theme_code))
 
             def _is_empty_builder_arg(value):
                 if value is None:
@@ -5811,6 +5884,8 @@ def render_code(request: CodeRequest, http_request: Request):
     _enforce_python_input_limits(request.runtime_imports_code or "", "runtime_imports_code")
     _enforce_python_input_limits(request.theme_code or "", "theme_code")
     _enforce_python_input_limits(request.runtime_code or "", "runtime_code")
+    _enforce_python_input_limits(request.runtime_theme_code or "", "runtime_theme_code")
+    _enforce_python_input_limits(request.runtime_predefined_code or "", "runtime_predefined_code")
     conn = _hub_db_conn()
     try:
         request.trusted_user = _is_user_trusted(_request_user(conn, http_request))
@@ -5830,6 +5905,8 @@ def render_builder(request: BuilderRequest, http_request: Request):
     _enforce_python_input_limits(request.runtime_imports_code or "", "runtime_imports_code")
     _enforce_python_input_limits(request.theme_code or "", "theme_code")
     _enforce_python_input_limits(request.runtime_code or "", "runtime_code")
+    _enforce_python_input_limits(request.runtime_theme_code or "", "runtime_theme_code")
+    _enforce_python_input_limits(request.runtime_predefined_code or "", "runtime_predefined_code")
     conn = _hub_db_conn()
     try:
         request.trusted_user = _is_user_trusted(_request_user(conn, http_request))

@@ -231,6 +231,8 @@ function App() {
   const [importsCode, setImportsCode] = useState(DEFAULT_INDIC_IMPORT_CODE);
   const [hubImports, setHubImports] = useState(DEFAULT_IMPORTS.map((x) => ({ ...x })));
   const [runtimeImportsCode, setRuntimeImportsCode] = useState('');
+  const [runtimeThemeCode, setRuntimeThemeCode] = useState('');
+  const [runtimePredefinedCode, setRuntimePredefinedCode] = useState('');
   const [themeCode, setThemeCode] = useState('');
   const [runtimeCode, setRuntimeCode] = useState('');
   const [hubQuery, setHubQuery] = useState('');
@@ -864,6 +866,8 @@ ${DEFAULT_MAP_CODE}
           setCode(DEFAULT_MAP_CODE);
           setThemeCode('');
           setRuntimeImportsCode('');
+          setRuntimeThemeCode('');
+          setRuntimePredefinedCode('');
           setRuntimeCode('');
           setPredefinedCode('');
           lastLibraryAlphaSavedRef.current = '';
@@ -880,6 +884,8 @@ ${DEFAULT_MAP_CODE}
             importsCode: defaultImportsCode,
             themeCode: '',
             runtimeImportsCode: '',
+            runtimeThemeCode: '',
+            runtimePredefinedCode: '',
             runtimeCode: '',
           });
           return;
@@ -906,6 +912,16 @@ ${DEFAULT_MAP_CODE}
           typeof parsed.runtime_imports_code === 'string'
             ? parsed.runtime_imports_code
             : (typeof parsed?.project?.runtimeImportsCode === 'string' ? parsed.project.runtimeImportsCode : '')
+        );
+        setRuntimeThemeCode(
+          typeof parsed.runtime_theme_code === 'string'
+            ? parsed.runtime_theme_code
+            : (typeof parsed?.project?.runtimeThemeCode === 'string' ? parsed.project.runtimeThemeCode : '')
+        );
+        setRuntimePredefinedCode(
+          typeof parsed.runtime_predefined_code === 'string'
+            ? parsed.runtime_predefined_code
+            : (typeof parsed?.project?.runtimePredefinedCode === 'string' ? parsed.project.runtimePredefinedCode : '')
         );
         setRuntimeCode(parsed.runtime_code ?? '');
         if ((!parsed.project || !parsed.project.elements || !parsed.project.options) && Array.isArray(parsed.runtime_elements)) {
@@ -947,6 +963,14 @@ ${DEFAULT_MAP_CODE}
             (typeof parsed.runtime_imports_code === 'string'
               ? parsed.runtime_imports_code
               : (parsed.project?.runtimeImportsCode || '')),
+          runtimeThemeCode:
+            (typeof parsed.runtime_theme_code === 'string'
+              ? parsed.runtime_theme_code
+              : (parsed.project?.runtimeThemeCode || '')),
+          runtimePredefinedCode:
+            (typeof parsed.runtime_predefined_code === 'string'
+              ? parsed.runtime_predefined_code
+              : (parsed.project?.runtimePredefinedCode || '')),
           runtimeCode: parsed.runtime_code || '',
         });
       }
@@ -1016,6 +1040,8 @@ ${DEFAULT_MAP_CODE}
         setThemeCode(draft.project.themeCode);
       }
       if (typeof draft.project?.runtimeImportsCode === 'string') setRuntimeImportsCode(draft.project.runtimeImportsCode);
+      if (typeof draft.project?.runtimeThemeCode === 'string') setRuntimeThemeCode(draft.project.runtimeThemeCode);
+      if (typeof draft.project?.runtimePredefinedCode === 'string') setRuntimePredefinedCode(draft.project.runtimePredefinedCode);
       if (typeof draft.project?.runtimeCode === 'string') setRuntimeCode(draft.project.runtimeCode);
       if (draft.project?.pickerOptions && typeof draft.project.pickerOptions === 'object') {
         setPickerOptions(draft.project.pickerOptions);
@@ -1032,6 +1058,8 @@ ${DEFAULT_MAP_CODE}
           importsCode: draft.project.importsCode || '',
           themeCode: draft.project.themeCode || '',
           runtimeImportsCode: draft.project.runtimeImportsCode || '',
+          runtimeThemeCode: draft.project.runtimeThemeCode || '',
+          runtimePredefinedCode: draft.project.runtimePredefinedCode || '',
           runtimeCode: draft.project.runtimeCode || '',
         });
       }
@@ -1060,6 +1088,8 @@ ${DEFAULT_MAP_CODE}
             importsCode,
             themeCode,
             runtimeImportsCode,
+            runtimeThemeCode,
+            runtimePredefinedCode,
             runtimeCode,
             pickerOptions,
           },
@@ -1067,7 +1097,7 @@ ${DEFAULT_MAP_CODE}
       }).catch(() => {});
     }, 800);
     return () => clearTimeout(t);
-  }, [normalizedMapName, builderElements, builderOptions, runtimeBuilderElements, runtimeBuilderOptions, code, predefinedCode, importsCode, themeCode, runtimeImportsCode, runtimeCode, pickerOptions, currentUser.is_authenticated]);
+  }, [normalizedMapName, builderElements, builderOptions, runtimeBuilderElements, runtimeBuilderOptions, code, predefinedCode, importsCode, themeCode, runtimeImportsCode, runtimeThemeCode, runtimePredefinedCode, runtimeCode, pickerOptions, currentUser.is_authenticated]);
 
   const loadExplore = async (page = 1, query = exploreQuery, sort = exploreSort) => {
     setExploreLoading(true);
@@ -1181,6 +1211,8 @@ ${DEFAULT_MAP_CODE}
     setCode(DEFAULT_MAP_CODE);
     setThemeCode('');
     setRuntimeImportsCode('');
+    setRuntimeThemeCode('');
+    setRuntimePredefinedCode('');
     setRuntimeCode('');
     setPredefinedCode('');
     setHubImports(defaults);
@@ -2125,7 +2157,7 @@ ${DEFAULT_MAP_CODE}
       }
   };
 
-  const renderMapWithData = async ({ elements, options, runtimeElements = [], runtimeOptions = {}, predCode, importsCode: iCode, themeCode: tCode, runtimeImportsCode: riCode, runtimeCode: rCode }) => {
+  const renderMapWithData = async ({ elements, options, runtimeElements = [], runtimeOptions = {}, predCode, importsCode: iCode, themeCode: tCode, runtimeImportsCode: riCode, runtimeThemeCode: rtcCode, runtimePredefinedCode: rpcCode, runtimeCode: rCode }) => {
     setActivePreviewTab('main');
     setLoadingByView((prev) => ({ ...prev, main: true }));
     setError(null);
@@ -2140,6 +2172,8 @@ ${DEFAULT_MAP_CODE}
         imports_code: iCode || undefined,
         runtime_imports_code: riCode || undefined,
         theme_code: tCode || undefined,
+        runtime_theme_code: rtcCode || undefined,
+        runtime_predefined_code: rpcCode || undefined,
         runtime_code: rCode || undefined,
       };
       const response = await apiFetch(endpoint, {
@@ -2172,7 +2206,7 @@ ${DEFAULT_MAP_CODE}
     setError(null);
     try {
       const endpoint = activeTab === 'code' ? '/render/code' : '/render/builder';
-      const body = activeTab === 'code' 
+      const body = activeTab === 'code'
         ? {
             code,
             predefined_code: predefinedCode || undefined,
@@ -2180,6 +2214,8 @@ ${DEFAULT_MAP_CODE}
             runtime_imports_code: runtimeImportsCode || undefined,
             theme_code: themeCode || undefined,
             runtime_code: runtimeCode || undefined,
+            runtime_theme_code: runtimeThemeCode || undefined,
+            runtime_predefined_code: runtimePredefinedCode || undefined,
           }
         : {
             elements: builderElements,
@@ -2191,6 +2227,8 @@ ${DEFAULT_MAP_CODE}
             runtime_imports_code: runtimeImportsCode || undefined,
             theme_code: themeCode || undefined,
             runtime_code: runtimeCode || undefined,
+            runtime_theme_code: runtimeThemeCode || undefined,
+            runtime_predefined_code: runtimePredefinedCode || undefined,
           };
 
       const response = await apiFetch(endpoint, {
@@ -2467,6 +2505,8 @@ window.addEventListener('message', function(e) {
           importsCode,
           themeCode,
           runtimeImportsCode,
+          runtimeThemeCode,
+          runtimePredefinedCode,
           runtimeCode,
         };
         downloadFile(JSON.stringify(project, null, 2), "project.json", "application/json");
@@ -2484,6 +2524,8 @@ window.addEventListener('message', function(e) {
       importsCode,
       themeCode,
       runtimeImportsCode,
+      runtimeThemeCode,
+      runtimePredefinedCode,
       runtimeCode,
     };
     downloadFile(JSON.stringify(project, null, 2), "project.json", "application/json");
@@ -2492,6 +2534,7 @@ window.addEventListener('message', function(e) {
   const buildMapArtifactContent = async () => {
     let mapCodeText = code;
     let runtimeCodeText = runtimeCode;
+    let runtimeThemeCodeText = runtimeThemeCode;
     let projectPayload = {
       elements: builderElements,
       options: builderOptions,
@@ -2501,13 +2544,16 @@ window.addEventListener('message', function(e) {
       importsCode,
       themeCode,
       runtimeImportsCode,
+      runtimeThemeCode,
+      runtimePredefinedCode,
       runtimeCode,
     };
     if (activeTab === 'builder') {
       const mainGen = generatePythonCode(builderElements, builderOptions, { commitMain: false });
       mapCodeText = mainGen.code || '';
       const runtimeGen = generatePythonCode(runtimeBuilderElements, runtimeBuilderOptions, { commitMain: false });
-      runtimeCodeText = [runtimeGen.themeCode || '', runtimeGen.code || ''].filter((x) => String(x).trim()).join('\n');
+      runtimeCodeText = runtimeGen.code || '';
+      runtimeThemeCodeText = runtimeGen.themeCode || '';
     } else {
       try {
         const parsed = await parseMainCodeToBuilder();
@@ -2521,6 +2567,8 @@ window.addEventListener('message', function(e) {
           importsCode,
           themeCode,
           runtimeImportsCode,
+          runtimeThemeCode,
+          runtimePredefinedCode,
           runtimeCode,
         };
       } catch {
@@ -2530,6 +2578,8 @@ window.addEventListener('message', function(e) {
     return JSON.stringify({
       imports_code: importsCode || '',
       runtime_imports_code: runtimeImportsCode || '',
+      runtime_theme_code: runtimeThemeCodeText || '',
+      runtime_predefined_code: runtimePredefinedCode || '',
       theme_code: themeCode || '',
       predefined_code: predefinedCode || '',
       map_code: mapCodeText || '',
@@ -2906,10 +2956,14 @@ window.addEventListener('message', function(e) {
              }
              if (typeof project.themeCode === 'string') setThemeCode(project.themeCode);
              if (typeof project.runtimeImportsCode === 'string') setRuntimeImportsCode(project.runtimeImportsCode);
+             if (typeof project.runtimeThemeCode === 'string') setRuntimeThemeCode(project.runtimeThemeCode);
+             if (typeof project.runtimePredefinedCode === 'string') setRuntimePredefinedCode(project.runtimePredefinedCode);
              if (typeof project.runtimeCode === 'string') setRuntimeCode(project.runtimeCode);
              if (project.pickerOptions && typeof project.pickerOptions === 'object') setPickerOptions(project.pickerOptions);
           }
           if (typeof project.runtime_imports_code === 'string') setRuntimeImportsCode(project.runtime_imports_code);
+          if (typeof project.runtime_theme_code === 'string') setRuntimeThemeCode(project.runtime_theme_code);
+          if (typeof project.runtime_predefined_code === 'string') setRuntimePredefinedCode(project.runtime_predefined_code);
           if (Array.isArray(project.runtime_elements)) setRuntimeBuilderElements(project.runtime_elements);
           if (project.runtime_options && typeof project.runtime_options === 'object') setRuntimeBuilderOptions(project.runtime_options);
           // Also check for picker_options at top-level (from buildMapArtifactContent format)
@@ -3274,9 +3328,9 @@ window.addEventListener('message', function(e) {
 
   const generateRuntimeCodeFromBuilder = () => {
     const result = generatePythonCode(runtimeBuilderElements, runtimeBuilderOptions, { commitMain: false });
-    const runtimeText = [result.themeCode || '', result.code || ''].filter((x) => String(x).trim()).join('\n');
-    setRuntimeCode(runtimeText);
-    return runtimeText;
+    setRuntimeThemeCode(result.themeCode || '');
+    setRuntimeCode(result.code || '');
+    return result;
   };
 
   const parseCodeSegmentToBuilder = async (segmentCode, segmentPredefined = '') => {
@@ -3298,8 +3352,8 @@ window.addEventListener('message', function(e) {
   };
 
   const parseRuntimeCodeToBuilder = async () => {
-    const combinedRuntimeCode = [runtimeImportsCode || '', runtimeCode || ''].filter((x) => String(x).trim()).join('\n\n');
-    return parseCodeSegmentToBuilder(combinedRuntimeCode, '');
+    const combinedRuntimeCode = [runtimeImportsCode || '', runtimeThemeCode || '', runtimeCode || ''].filter((x) => String(x).trim()).join('\n\n');
+    return parseCodeSegmentToBuilder(combinedRuntimeCode, runtimePredefinedCode || '');
   };
 
   const normalizePredefinedImports = () => {
@@ -3423,7 +3477,7 @@ window.addEventListener('message', function(e) {
     }, 3000);
     return () => { if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [normalizedMapName, currentUser.is_authenticated, builderElements, builderOptions, runtimeBuilderElements, runtimeBuilderOptions, code, predefinedCode, importsCode, themeCode, runtimeImportsCode, runtimeCode]);
+  }, [normalizedMapName, currentUser.is_authenticated, builderElements, builderOptions, runtimeBuilderElements, runtimeBuilderOptions, code, predefinedCode, importsCode, themeCode, runtimeImportsCode, runtimeThemeCode, runtimePredefinedCode, runtimeCode]);
 
   useEffect(() => {
     libraryAutoSavePrimedRef.current = false;
@@ -4901,6 +4955,8 @@ window.addEventListener('message', function(e) {
                 importsCode={importsCode} setImportsCode={setImportsCode}
                 themeCode={themeCode} setThemeCode={setThemeCode}
                 runtimeImportsCode={runtimeImportsCode} setRuntimeImportsCode={setRuntimeImportsCode}
+                runtimeThemeCode={runtimeThemeCode} setRuntimeThemeCode={setRuntimeThemeCode}
+                runtimePredefinedCode={runtimePredefinedCode} setRuntimePredefinedCode={setRuntimePredefinedCode}
                 runtimeCode={runtimeCode} setRuntimeCode={setRuntimeCode}
                 libraryVersionLabel={String(selectedLibraryVersion)}
                 themeVersionLabel={String(selectedThemeVersion)}

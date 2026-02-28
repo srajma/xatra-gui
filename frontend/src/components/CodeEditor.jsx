@@ -48,6 +48,10 @@ const CodeEditor = ({
   setThemeCode,
   runtimeImportsCode,
   setRuntimeImportsCode,
+  runtimeThemeCode,
+  setRuntimeThemeCode,
+  runtimePredefinedCode,
+  setRuntimePredefinedCode,
   runtimeCode,
   setRuntimeCode,
   libraryVersionLabel,
@@ -257,7 +261,7 @@ const CodeEditor = ({
           <div className={headingClass}>
             <span>Do not expose to importers</span>
           </div>
-          <div className="px-2 py-1 text-[10px] uppercase tracking-wide text-slate-300 border border-slate-700 border-t-0 bg-slate-900">Imports</div>
+          <div className="px-2 py-1 text-[10px] uppercase tracking-wide text-slate-300 border border-slate-700 border-t-0 bg-slate-900">xatrahub Imports</div>
           <textarea
             className="w-full min-h-[92px] p-2 border border-slate-700 border-t-0 bg-slate-950 text-slate-100 font-mono text-xs focus:outline-none"
             value={runtimeImportsCode}
@@ -266,7 +270,23 @@ const CodeEditor = ({
             spellCheck={false}
             placeholder='xatrahub("/lib/some_lib/alpha")'
           />
-          <div className="px-2 py-1 text-[10px] uppercase tracking-wide text-slate-300 border border-slate-700 border-t-0 bg-slate-900">Code</div>
+          <div className="px-2 py-1 text-[10px] uppercase tracking-wide text-slate-300 border border-slate-700 border-t-0 bg-slate-900">Custom Territory Library</div>
+          <textarea
+            className="w-full min-h-[92px] p-2 border border-slate-700 border-t-0 bg-slate-950 text-slate-100 font-mono text-xs focus:outline-none"
+            value={runtimePredefinedCode}
+            onChange={(e) => setRuntimePredefinedCode(e.target.value)}
+            readOnly={readOnlyMap}
+            spellCheck={false}
+          />
+          <div className="px-2 py-1 text-[10px] uppercase tracking-wide text-slate-300 border border-slate-700 border-t-0 bg-slate-900">Custom Theme</div>
+          <textarea
+            className="w-full min-h-[92px] p-2 border border-slate-700 border-t-0 bg-slate-950 text-slate-100 font-mono text-xs focus:outline-none"
+            value={runtimeThemeCode}
+            onChange={(e) => setRuntimeThemeCode(e.target.value)}
+            readOnly={readOnlyMap}
+            spellCheck={false}
+          />
+          <div className="px-2 py-1 text-[10px] uppercase tracking-wide text-slate-300 border border-slate-700 border-t-0 bg-slate-900">Map Code</div>
           <textarea
             className="w-full min-h-[120px] p-2 border border-slate-700 border-t-0 rounded-b bg-slate-950 text-slate-100 font-mono text-xs focus:outline-none"
             value={runtimeCode}
